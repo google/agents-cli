@@ -20,9 +20,11 @@ requires-python = ">=3.11"
 dependencies = [
     "mkdocs==1.6.1",
     "mkdocs-material==9.7.6",
-    "mkdocs-click==0.9.0",
-    "google-agents-cli",
+    # TODO(b/503795717): re-enable once google-agents-cli is published to PyPI
+    # "mkdocs-click==0.9.0",
+    # "google-agents-cli",
 ]
 
-[tool.uv.sources]
-google-agents-cli = { path = "..", editable = true }
+# TODO(b/503795717): re-enable once google-agents-cli is published to PyPI
+# [tool.uv.sources]
+# google-agents-cli = { path = "..", editable = true }

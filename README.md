@@ -115,7 +115,7 @@ See the [full tutorial](https://google.github.io/agents-cli/guide/quickstart-tut
 ## How it works
 
 <div align="center">
-  <img src="docs/src/assets/agents-cli-demo.gif" alt="agents-cli demo" width="100%" />
+  <img src="https://raw.githubusercontent.com/google/agents-cli/assets/agents-cli-demo.gif" alt="agents-cli demo" width="100%" />
 </div>
 
 ---

@@ -12,7 +12,7 @@ description: >
 metadata:
   author: Google
   license: Apache-2.0
-  version: 0.0.4
+  version: 0.0.5
   requires:
     bins:
       - agents-cli
@@ -110,8 +110,11 @@ agents-cli infra single-project
 | `--status` | Check the status of a pending `--no-wait` deployment | Agent Engine, Cloud Run |
 | `--list` | List existing deployments and exit | All |
 | `--dry-run` / `-n` | Print what would be executed without running it | All |
+| `--no-confirm-project` | Skip project confirmation prompt | All |
 
 Run `agents-cli deploy --help` for the full flag reference. Cloud Run also accepts extra `gcloud` flags after `--` (e.g., `-- --timeout=600`).
+
+> **Project Confirmation:** If the project is resolved automatically (not passed via `--project`), the command will prompt for confirmation in interactive mode. Since agents typically run in non-interactive mode, you MUST pass `--no-confirm-project` to proceed if you are relying on automatic project resolution.
 
 ---
 
@@ -226,7 +229,7 @@ See the **agents-cli-observability** skill for observability configuration (Clou
 
 ## Testing Your Deployed Agent
 
-The quickest way to test a deployed agent is `agents-cli run --remote "your prompt"` — it handles auth, sessions, and streaming automatically (supports Agent Engine and Cloud Run).
+The quickest way to test a deployed agent is `agents-cli run --url <service-url> --mode <a2a|adk> "your prompt"` — it handles auth, sessions, and streaming automatically (supports Agent Engine and Cloud Run).
 
 For advanced testing (custom headers, session reuse, scripting, load tests), see `references/testing-deployed-agents.md`.
 

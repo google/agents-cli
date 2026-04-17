@@ -12,7 +12,7 @@ description: >
 metadata:
   author: Google
   license: Apache-2.0
-  version: 0.0.4
+  version: 0.0.5
   requires:
     bins:
       - agents-cli
@@ -25,8 +25,8 @@ metadata:
 
 **agents-cli** is a CLI and skills toolkit for building, evaluating, and deploying agents on Google Cloud using the [Agent Development Kit (ADK)](https://adk.dev/). It works with any coding agent — Gemini CLI, Claude Code, Codex, or others. Install with `uvx google-agents-cli setup`.
 
-> Requires: google-agents-cli ~= 0.0.4
-> If version is behind, run: uv tool install "google-agents-cli~=0.0.4"
+> Requires: google-agents-cli ~= 0.0.5
+> If version is behind, run: uv tool install "google-agents-cli~=0.0.5"
 > Check version: agents-cli info
 > [Install uv](https://docs.astral.sh/uv/getting-started/installation/index.md) first if needed.
 
@@ -80,6 +80,7 @@ Do NOT proceed to planning, scaffolding, or coding. Ask the user the questions b
 - If **retrieval or search over data** mentioned (RAG, semantic search, vector search, embeddings, similarity search, data ingestion) → **Datastore?** Options: `vertex_ai_vector_search` (embeddings, similarity search) or `vertex_ai_search` (document search, search engine).
 - If agent should be **available to other agents** → **A2A protocol?** Enables the agent as an A2A-compatible service.
 - If **full deployment** chosen → **CI/CD runner?** GitHub Actions (default) or Google Cloud Build?
+- If agent should **remember user preferences or facts across sessions** → **Memory Bank?** Long-term memory across conversations. See `/google-agents-cli-adk-code`.
 - If **Cloud Run** or **GKE** chosen → **Session storage?** In-memory (default), Cloud SQL (persistent), or Agent Engine (managed).
 - If **deployment with CI/CD** chosen → **Git repository?** Does one already exist, or should one be created? If creating, public or private?
 
@@ -168,7 +169,7 @@ If the user asks for interactive testing, suggest `agents-cli playground` — it
 
 For ADK API patterns and code examples, use `/google-agents-cli-adk-code`.
 
-> **NEVER write pytest tests that assert on LLM output content** (e.g., checking for keywords in responses, verifying persona, validating tone). LLM outputs are non-deterministic — these tests are flaky by nature and belong in eval, not pytest. Use `agents-cli run` for quick checks and `agents-cli eval` for systematic validation.
+> **NEVER write pytest tests that assert on LLM output content** (e.g., checking for keywords in responses, verifying persona, validating tone). LLM outputs are non-deterministic — these tests are flaky by nature and belong in eval, not pytest. Use `agents-cli run` for quick checks and `agents-cli eval run` for systematic validation.
 
 ## Phase 3.5: Provision Datastore (RAG projects only)
 
@@ -183,15 +184,15 @@ It contains the evalset schema, config format, and critical gotchas. Do NOT skip
 
 **Do NOT skip this phase.** After building the agent, you MUST proceed to evaluation. Do NOT write pytest tests to validate agent behavior — that is what eval is for.
 
-**`uv run pytest` vs `agents-cli eval` — know the difference:**
+**`uv run pytest` vs `agents-cli eval run` — know the difference:**
 - **`uv run pytest`** — Tests *code correctness*: imports work, functions return expected types, API contracts hold. Does NOT test whether the agent behaves well.
-- **`agents-cli eval`** — Tests *agent behavior*: response quality, tool usage, persona consistency, safety compliance. This is what validates your agent actually works.
+- **`agents-cli eval run`** — Tests *agent behavior*: response quality, tool usage, persona consistency, safety compliance. This is what validates your agent actually works.
 - **`agents-cli run "prompt"`** — Quick one-off smoke test during development. Use this for fast iteration, not pytest.
 
 **NEVER write pytest tests that check LLM response content** (e.g., asserting pirate keywords appear, checking if the agent mentions allergies). LLM outputs are non-deterministic. Use eval with LLM-as-judge criteria instead.
 
 1. **Start small**: Begin with 1-2 sample eval cases, not a full suite
-2. Run evaluations: `agents-cli eval`
+2. Run evaluations: `agents-cli eval run`
 3. Discuss results with the user
 4. Fix issues and iterate on the core cases first
 5. Only after core cases pass, add edge cases and new scenarios
@@ -234,7 +235,7 @@ Agents routinely skip steps with plausible-sounding excuses. Recognize these and
 | "The user's request is clear enough, no need to clarify" | You're guessing at requirements. Phase 0 exists to confirm intent before scaffolding — even one question can prevent a full rework. |
 | "The agent responded correctly in `agents-cli run`, so eval isn't needed" | One prompt is not a test suite. Eval catches regressions, edge cases, and tool trajectory issues that a single run never will. |
 | "I'll use a newer/better model" | The scaffolded model was chosen deliberately. Changing it without being asked violates code preservation (Principle 1) and often breaks things — wrong location, deprecated version, or 404. Your training data is likely out of date — rely on the skills and the model listing command, not your knowledge of model names. |
-| "I can skip the scaffold and set up manually" | Manual setup misses eval boilerplate, CI/CD config, and `pyproject.toml` conventions. Use `agents-cli init` even for quick experiments. |
+| "I can skip the scaffold and set up manually" | Manual setup misses eval boilerplate, CI/CD config, and `pyproject.toml` conventions. Use `agents-cli create` even for quick experiments. |
 
 ## Principle 1: Code Preservation & Isolation
 
@@ -354,7 +355,6 @@ When you need specific infrastructure files (Terraform, CI/CD, Dockerfile) but d
 |---|---|
 | `agents-cli playground` | Interactive local testing (ADK web playground) |
 | `agents-cli run "prompt"` | Run agent with a single prompt (non-interactive) |
-| `agents-cli playground --port PORT` | Start playground on a custom port |
 | `agents-cli lint` | Check code quality |
 | `agents-cli lint --fix` | Auto-fix linting issues |
 | `agents-cli lint --mypy` | Also run mypy type checking |
@@ -364,10 +364,10 @@ When you need specific infrastructure files (Terraform, CI/CD, Dockerfile) but d
 
 | Command | Purpose |
 |---|---|
-| `agents-cli eval` | Run evaluation against evalsets |
-| `agents-cli eval --evalset F` | Run a specific evalset |
-| `agents-cli eval --all` | Run all evalsets |
-| `agents-cli compare BASE CAND` | Compare two eval result files |
+| `agents-cli eval run` | Run evaluation against evalsets |
+| `agents-cli eval run --evalset F` | Run a specific evalset |
+| `agents-cli eval run --all` | Run all evalsets |
+| `agents-cli eval compare BASE CAND` | Compare two eval result files |
 
 ### Deployment & Infrastructure
 

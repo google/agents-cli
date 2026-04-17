@@ -13,7 +13,7 @@ description: >
 metadata:
   author: Google
   license: Apache-2.0
-  version: 0.0.4
+  version: 0.0.5
   requires:
     bins:
       - agents-cli
@@ -24,7 +24,7 @@ metadata:
 
 > **Requires:** `agents-cli` (`uv tool install google-agents-cli`) — [install uv](https://docs.astral.sh/uv/getting-started/installation/index.md) first if needed.
 
-> **Scaffolded project?** If you used `/google-agents-cli-scaffold`, you already have `agents-cli eval`, `tests/eval/evalsets/`, and `tests/eval/eval_config.json`. Start with `agents-cli eval` and iterate from there.
+> **Scaffolded project?** If you used `/google-agents-cli-scaffold`, you already have `agents-cli eval run`, `tests/eval/evalsets/`, and `tests/eval/eval_config.json`. Start with `agents-cli eval run` and iterate from there.
 
 ## Reference Files
 
@@ -44,7 +44,7 @@ Evaluation is iterative. When a score is below threshold, diagnose the cause, fi
 ### How to iterate
 
 1. **Start small**: Begin with 1-2 eval cases, not the full suite
-2. **Run eval**: `agents-cli eval`
+2. **Run eval**: `agents-cli eval run`
 3. **Read the scores** — identify what failed and why
 4. **Fix the code** — adjust prompts, tool logic, instructions, or the evalset
 5. **Rerun eval** — verify the fix worked
@@ -100,20 +100,20 @@ For the complete metrics reference with config examples, match types, and custom
 
 ```bash
 # Scaffolded projects — agents-cli:
-agents-cli eval --evalset tests/eval/evalsets/my_evalset.json
+agents-cli eval run --evalset tests/eval/evalsets/my_evalset.json
 
 # With explicit config file:
-agents-cli eval --evalset tests/eval/evalsets/my_evalset.json --config tests/eval/eval_config.json
+agents-cli eval run --evalset tests/eval/evalsets/my_evalset.json --config tests/eval/eval_config.json
 
 # Run all evalsets in tests/eval/evalsets/:
-agents-cli eval --all
+agents-cli eval run --all
 ```
 
-**`agents-cli eval` options:** `--evalset PATH`, `--config PATH`, `--all`
+**`agents-cli eval run` options:** `--evalset PATH`, `--config PATH`, `--all`
 
 **Compare two result files:**
 ```bash
-agents-cli compare baseline.json candidate.json
+agents-cli eval compare baseline.json candidate.json
 ```
 
 ---
@@ -334,8 +334,8 @@ Don't assert that eval passes — show the evidence. Concrete output prevents fa
 
 - **After running eval:** Paste the scores table output so the user can see exactly what passed and failed.
 - **After fixing a failure:** Show before/after scores for the specific case you fixed, and confirm no other cases regressed.
-- **Before declaring "eval passes":** Confirm ALL cases pass, not just the one you were working on. Run `agents-cli eval` (or `agents-cli eval --all`) one final time.
-- **Before moving to deploy:** Show the final `agents-cli eval` output with all cases above threshold. This is the gate — no exceptions.
+- **Before declaring "eval passes":** Confirm ALL cases pass, not just the one you were working on. Run `agents-cli eval run` (or `agents-cli eval run --all`) one final time.
+- **Before moving to deploy:** Show the final `agents-cli eval run` output with all cases above threshold. This is the gate — no exceptions.
 
 ---
 

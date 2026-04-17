@@ -135,7 +135,7 @@ agents-cli infra single-project  # Runs terraform apply in deployment/terraform/
 
 ### Remote State (Default)
 
-By default, `setup-cicd` creates a GCS bucket for remote Terraform state:
+By default, `infra cicd` creates a GCS bucket for remote Terraform state:
 
 ```hcl
 # Auto-configured backend in deployment/terraform/cicd/backend.tf
@@ -157,6 +157,8 @@ Use the `--local-state` flag with `infra cicd` to skip remote backend setup and 
 agents-cli infra cicd \
   --staging-project STAGING_PROJECT \
   --prod-project PROD_PROJECT \
+  --repository-name REPO_NAME \
+  --create \
   --local-state
 ```
 

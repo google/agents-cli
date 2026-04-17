@@ -12,7 +12,7 @@ description: >
 metadata:
   author: Google
   license: Apache-2.0
-  version: 0.0.4
+  version: 0.0.5
   requires:
     bins:
       - agents-cli
@@ -167,7 +167,9 @@ agents-cli data-ingestion    # Ingest data into the datastore
 ```
 Use `infra datastore` — **not** `infra single-project`. Both provision the datastore, but `infra datastore` is faster because it skips unrelated Terraform. Without this step, the agent won't have data to search over.
 
-**Verifying your agent works:** Use `agents-cli run "test prompt"` for quick smoke tests, then `agents-cli eval` for systematic validation. Do NOT write pytest tests that assert on LLM response content — that belongs in eval.
+> **Vector Search region:** `vector_search_location` defaults to `us-central1`, separate from `region` (`us-east1`). It sets both the Vector Search collection region and the BQ ingestion dataset region, kept colocated to avoid cross-region data movement. Override per-invocation with `agents-cli data-ingestion --vector-search-location <region>`.
+
+**Verifying your agent works:** Use `agents-cli run "test prompt"` for quick smoke tests, then `agents-cli eval run` for systematic validation. Do NOT write pytest tests that assert on LLM response content — that belongs in eval.
 
 ---
 

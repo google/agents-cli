@@ -12,7 +12,7 @@ description: >
 metadata:
   author: Google
   license: Apache-2.0
-  version: 0.0.4
+  version: 0.0.5
   requires:
     bins:
       - agents-cli
@@ -93,7 +93,6 @@ root_agent = Agent(
     before_agent_callback=initialize_state,
 )
 ```
-
 ---
 
 ## Reference Files
@@ -101,7 +100,6 @@ root_agent = Agent(
 | File | When to read |
 |------|-------------|
 | `references/adk-python.md` | ADK Python API — agents, tools, callbacks, plugins, state, artifacts, context caching, session rewind |
-| `references/reference-implementations.md` | Full working samples from `adk-samples` — see index below |
 | `references/adk-2.0.md` | **ADK 2.0 Workflow API (experimental pre-GA, opt-in)** — graph-based workflows, nodes, edges, HITL, parallel processing |
 
 ### ADK 2.0 Workflows — Opt-in
@@ -112,7 +110,7 @@ root_agent = Agent(
 >
 > 1. **What it is**: ADK 2.0 introduces a graph-based Workflow API — nodes (functions, LLM agents, tools) connected by edges with conditional routing, fan-out/fan-in parallelism, and human-in-the-loop interrupts.
 > 2. **When it helps**: Complex multi-step pipelines needing deterministic control flow, parallel processing of list items, structured approval gates, or retry logic — cases where SequentialAgent/ParallelAgent/LoopAgent feel limiting.
-> 3. **Risks**: Pre-GA — APIs may change before GA. Requires `google-adk >= 2.0.0` and **Python >= 3.11** (scaffolded projects default to 3.10). Incompatible with Live Streaming. Scaffolded projects need `pyproject.toml` changes before upgrade — see the reference file for step-by-step instructions.
+> 3. **Risks**: Pre-GA — APIs may change before GA. Requires `google-adk >= 2.0.0` and **Python >= 3.11**. Incompatible with Live Streaming. Scaffolded projects need `pyproject.toml` changes before upgrade — see the reference file for step-by-step instructions.
 >
 > **Only read `references/adk-2.0.md` after the user explicitly opts in.** If they decline or are unsure, use the standard ADK 1.x orchestration patterns from `references/adk-python.md` (SequentialAgent, ParallelAgent, LoopAgent, BaseAgent).
 

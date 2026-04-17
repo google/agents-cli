@@ -1,20 +1,17 @@
 # ADK 2.0 Workflow API Cheatsheet
 
 > **Experimental (Pre-GA)** — The Workflow API requires ADK 2.0 (`google-adk >= 2.0.0`). APIs may change before GA.
-> Python only. **Incompatible with Live Streaming.** Requires **Python >= 3.11** (ADK 1.x supported 3.10).
+> Python only. **Incompatible with Live Streaming.** Requires **Python >= 3.11**.
 >
 > **WARNING:** Do NOT allow ADK 2.0 projects to share persistent storage with ADK 1.x projects — this can cause data loss or corruption.
 
 ### Upgrading a scaffolded project to ADK 2.0
 
-Scaffolded projects pin `google-adk<2.0.0` and `requires-python>=3.10` — both must be updated before ADK 2.0 can install. Simply running `pip install --pre google-adk` or `uv add --prerelease=allow google-adk` will silently stay on 1.x.
+Scaffolded projects pin `google-adk<2.0.0` — this must be updated before ADK 2.0 can install. Simply running `pip install --pre google-adk` or `uv add --prerelease=allow google-adk` will silently stay on 1.x.
 
 **Step 1 — Update `pyproject.toml`:**
 
 ```toml
-# Change requires-python (ADK 2.0 drops Python 3.10 support)
-requires-python = ">=3.11,<3.14"
-
 # Under [project] > dependencies, remove the <2.0.0 upper bound:
 "google-adk>=2.0.0a1",          # was: "google-adk>=1.15.0,<2.0.0"
 

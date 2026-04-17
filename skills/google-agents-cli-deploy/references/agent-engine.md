@@ -41,7 +41,7 @@ Written by `deploy.py` after successful deployment:
 }
 ```
 
-Used by: subsequent deploys (update vs create), testing notebook, `agents-cli run --remote`. Cloud Run does not use this file.
+Used by: subsequent deploys (update vs create), testing notebook, `agents-cli run --url`. Cloud Run does not use this file.
 
 If deployment times out but the engine was created, manually populate this file with the engine resource ID.
 
@@ -61,14 +61,11 @@ If deployment times out but the engine was created, manually populate this file 
 # Local mode (uses local agent instance)
 agents-cli playground
 
-# Query your deployed Agent Engine remotely
-agents-cli run --remote "Hello, what can you do?"
-
-# Use a custom metadata file path (Agent Engine only)
-agents-cli run --remote --metadata-file path/to/deployment_metadata.json "Hello"
+# Query your deployed Agent Engine remotely (ADK agent)
+agents-cli run --url https://LOCATION-aiplatform.googleapis.com/v1/projects/PROJECT/locations/LOCATION/reasoningEngines/ID --mode adk "Hello, what can you do?"
 ```
 
-`--remote` supports **Agent Engine** (reads `deployment_metadata.json`) and **Cloud Run** (discovers service URL via gcloud). GKE is not yet supported.
+`--mode` is required with `--url`: use `adk` for the ADK streaming API (`:streamQuery`) or `a2a` for the A2A protocol. Add `-v` for full JSON event payloads. Auth is auto-detected via Google Cloud credentials.
 
 To query Agent Engine programmatically:
 

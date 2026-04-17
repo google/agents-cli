@@ -101,7 +101,7 @@ Override default simulator behavior in `eval_config.json`:
 
 ```bash
 # Run evaluations
-agents-cli eval --evalset <path_to_evalset.json>
+agents-cli eval run --evalset <path_to_evalset.json>
 ```
 
 **Scenarios file format:**

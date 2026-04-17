@@ -200,7 +200,7 @@ refinement_loop = LoopAgent(
 )
 ```
 
-For a production LoopAgent with EscalationChecker, BuiltInPlanner, and grounding citations, see `references/reference-implementations.md`.
+For a production LoopAgent with EscalationChecker, BuiltInPlanner, and grounding citations, see `/google-agents-cli-workflow` Phase 1.
 
 ---
 
@@ -384,7 +384,7 @@ agent = Agent(tools=[load_web_page], ...)
 # Code execution (model-internal)
 agent = Agent(code_executor=BuiltInCodeExecutor(), ...)
 
-# Managed sandbox (Vertex AI Code Interpreter) — see references/reference-implementations.md
+# Managed sandbox (Vertex AI Code Interpreter) — see /google-agents-cli-workflow Phase 1
 # from google.adk.code_executors import VertexAiCodeExecutor
 # agent = Agent(code_executor=VertexAiCodeExecutor(optimize_data_file=True, stateful=True), ...)
 
@@ -469,6 +469,11 @@ McpToolset(
 ---
 
 ## 8. Context, State, and Memory
+
+| Need | Solution |
+|---|---|
+| Within one conversation (task data, form state) | Session state — see [State Prefixes](#state-prefixes) and [Session Service Options](#session-service-options) below |
+| Across conversations (remember interactions, learn over time) | Memory Bank — see [Memory](#memory-long-term-knowledge) below |
 
 ### State Prefixes
 
@@ -558,16 +563,29 @@ await memory_service.add_session_to_memory(session)
 results = await memory_service.search_memory(app_name, user_id, "query")
 ```
 
-#### Memory Bank (Production)
+#### Memory Bank (Long-term Memory)
 
-Managed cross-session memory that persists user preferences and facts across sessions. See the [`memory-bank` sample](https://github.com/google/adk-samples/tree/main/python/agents/memory-bank) for the full pattern.
+Managed cross-session memory that persists user preferences, remembers facts across sessions, and learns from conversations over time. See the [`memory-bank` sample](https://github.com/google/adk-samples/tree/main/python/agents/memory-bank) for a complete implementation.
 
 ```python
+from google.adk.agents.callback_context import CallbackContext
+from google.adk.tools.preload_memory_tool import PreloadMemoryTool
+
+# PreloadMemoryTool retrieves memories at the start of each turn and injects
+# them into the system instruction. Alternative: LoadMemoryTool() — the model
+# calls it on-demand when it decides memories are needed.
 root_agent = Agent(
     ...,
-    tools=[PreloadMemoryTool()],  # or LoadMemoryTool() for on-demand recall
+    tools=[PreloadMemoryTool()],
     after_agent_callback=generate_memories_callback,
 )
+
+# Alternative: callback_context.add_events_to_memory(events=...) to send only
+# a subset of events, which is better for incremental processing.
+async def generate_memories_callback(callback_context: CallbackContext):
+    """Sends the session's events to Memory Bank for memory generation."""
+    await callback_context.add_session_to_memory()
+    return None
 ```
 
 ### Context Caching
@@ -817,7 +835,7 @@ Data flows between sequential sub-agents via conversation history and `output_ke
 
 - [ADK Documentation](https://adk.dev/llms.txt)
 - [ADK Samples](https://github.com/google/adk-samples)
-- `references/reference-implementations.md` — curated production patterns (VertexAiCodeExecutor, BuiltInPlanner, grounding metadata, rate limiting, state capture)
+- `/google-agents-cli-workflow` Phase 1 — curated production patterns (VertexAiCodeExecutor, BuiltInPlanner, grounding metadata, rate limiting, state capture)
 
 ---
 

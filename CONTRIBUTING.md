@@ -1,6 +1,6 @@
 # Contributing to agents-cli
 
-We welcome contributions to agents-cli! If you'd like to report a bug, suggest a feature, or discuss a change, please [open an issue](https://github.com/googlecloudplatform/agents-cli/issues) on GitHub. Pull requests are not currently accepted.
+We welcome contributions to agents-cli! If you'd like to report a bug, suggest a feature, or discuss a change, please [open an issue](https://github.com/google/agents-cli/issues) on GitHub. Pull requests are not currently accepted.
 
 When opening an issue, include:
 - A clear description of the problem or suggestion

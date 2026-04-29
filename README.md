@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://github.com/google/agents-cli/blob/main/docs/src/assets/logo_sm.png" alt="agents-cli logo" width="120" />
+  <img src="https://raw.githubusercontent.com/google/agents-cli/main/docs/src/assets/logo_sm.png" alt="agents-cli logo" width="120" />
   <h1><code>agents-cli</code></h1>
   <p>The CLI and skills for building agents on Gemini Enterprise Agent Platform.</p>
 
@@ -127,7 +127,7 @@ See the [full tutorial](https://google.github.io/agents-cli/guide/quickstart-tut
 
 The Google Cloud agent stack that `agents-cli` builds on:
 
-![Architecture](https://github.com/google/agents-cli/blob/main/docs/src/assets/architecture.png "Architecture")
+![Architecture](https://raw.githubusercontent.com/google/agents-cli/main/docs/src/assets/architecture.png "Architecture")
 
 ## FAQ
 

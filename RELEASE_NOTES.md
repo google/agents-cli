@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-05-15
+- Moved agent-cli project config into a language-independent agents-cli-manifest.yaml file
+  - Old config embedded in pyproject.toml can be automatically migrated with `agents-cli scaffold upgrade`
+- Added `eval optimize` command
+- add --network-attachment and --dns-peering-* flags to deploy
+- Misc startup performance improvements
+- Avoid crashes related to terminal encodings
+  - Fixes https://github.com/google/agents-cli/issues/15
+- Smarter tool path resolution, especially for Windows
+  - Fixes https://github.com/google/agents-cli/issues/14
+- Updated dependency version locks
+  - Fixes https://github.com/google/agents-cli/issues/13
+- Added manifest support for Claude and Gemini CLI plugin support
+- Fix some bugs around preserving the right config metadata when scaffolding and enhancing and/or upgrading
+- Misc doc and skill fixes
+- Visual Explainer page for Agents CLI lifecycle at https://google.github.io/agents-cli/
+- Cleaned up some dead template code
+
 ## [0.1.3] - 2026-05-06
 - Default `infra` commands to terraform plan instead of apply
 - Fix `playground` to work for Cloud Shell and other similar envs and be more transparent about the underlying command

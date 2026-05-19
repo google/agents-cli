@@ -85,12 +85,14 @@ extra_css:
 
 extra_javascript:
   - javascripts/persona.js
+  - javascripts/lifecycle.js
 
 nav:
   - Home: index.md
   - Guide:
     - Overview:
       - Getting Started: guide/getting-started.md
+      - The Lifecycle: guide/lifecycle.md
       - "Tutorial: Build Your First Agent": guide/quickstart-tutorial.md
       - "Tutorial: Manual Workflow": guide/hands-on-tutorial.md
       - Use Cases: guide/use-cases.md

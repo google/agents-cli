@@ -12,7 +12,7 @@ description: >
 metadata:
   author: Google
   license: Apache-2.0
-  version: 0.1.3
+  version: 0.2.0
   requires:
     bins:
       - agents-cli
@@ -25,8 +25,8 @@ metadata:
 
 **agents-cli** is a CLI and skills toolkit for building, evaluating, and deploying agents on Google Cloud using the [Agent Development Kit (ADK)](https://adk.dev/). It works with any coding agent — Gemini CLI, Claude Code, Codex, or others. Install with `uvx google-agents-cli setup`.
 
-> Requires: google-agents-cli ~= 0.1.3
-> If version is behind, run: uv tool install "google-agents-cli~=0.1.3"
+> Requires: google-agents-cli ~= 0.2.0
+> If version is behind, run: uv tool install "google-agents-cli~=0.2.0"
 > Check version: agents-cli info
 > [Install uv](https://docs.astral.sh/uv/getting-started/installation/index.md) first if needed.
 
@@ -36,7 +36,7 @@ Re-read the relevant skill **before** each phase — not after you've already st
 
 | Phase | Skill | When to load |
 |-------|-------|--------------|
-| 0 — Understand | — | No skill needed — read `DESIGN_SPEC.md` or clarify goals with the user |
+| 0 — Understand | — | No skill needed — read `.agents-cli-spec.md` if present, else clarify goals with the user |
 | 1 — Study samples | — | Check Notable Samples table below — clone and study matching samples before scaffolding |
 | 2 — Scaffold | `/google-agents-cli-scaffold` | Before creating or enhancing a project |
 | 3 — Build | `/google-agents-cli-adk-code` | Before writing agent code — API patterns, tools, callbacks, state |
@@ -77,7 +77,7 @@ The `vertexai` Python SDK package name is unchanged.
 
 Before writing or scaffolding anything, understand what you're building.
 
-If `DESIGN_SPEC.md` already exists, read it — it is your primary source of truth. Otherwise:
+If `.agents-cli-spec.md` exists in the current directory, read it — it is your primary source of truth. Otherwise:
 
 Do NOT proceed to planning, scaffolding, or coding. Ask the user the questions below and wait for their answers. You MUST have the user's answers before moving on. Do not assume, research, or fill in the blanks yourself. The user's intent drives everything — skipping this step leads to wasted work.
 
@@ -97,10 +97,10 @@ Do NOT proceed to planning, scaffolding, or coding. Ask the user the questions b
 - If **Cloud Run** or **GKE** chosen → **Session storage?** In-memory (default), Cloud SQL (persistent), or Agent Platform Sessions (managed).
 - If **deployment with CI/CD** chosen → **Git repository?** Does one already exist, or should one be created? If creating, public or private?
 
-Once you have the user's answers, write a `DESIGN_SPEC.md` with the user's approval. See `/google-agents-cli-scaffold` for how these choices map to CLI flags. At minimum include these sections — expand with more detail if the user wants a thorough spec:
+Once you have the user's answers, write the spec to `.agents-cli-spec.md` in the current directory and get the user's approval. See `/google-agents-cli-scaffold` for how these choices map to CLI flags. At minimum include these sections — expand with more detail if the user wants a thorough spec:
 
 ```markdown
-# DESIGN_SPEC.md
+# Agent Spec
 
 ## Overview
 Describe the agent's purpose and how it works.
@@ -248,7 +248,7 @@ Agents routinely skip steps with plausible-sounding excuses. Recognize these and
 | "The user's request is clear enough, no need to clarify" | You're guessing at requirements. Phase 0 exists to confirm intent before scaffolding — even one question can prevent a full rework. |
 | "The agent responded correctly in `agents-cli run`, so eval isn't needed" | One prompt is not a test suite. Eval catches regressions, edge cases, and tool trajectory issues that a single run never will. |
 | "I'll use a newer/better model" | The scaffolded model was chosen deliberately. Changing it without being asked violates code preservation (Principle 1) and often breaks things — wrong location, deprecated version, or 404. Your training data is likely out of date — rely on the skills and the model listing command, not your knowledge of model names. |
-| "I can skip the scaffold and set up manually" | Manual setup misses eval boilerplate, CI/CD config, and `pyproject.toml` conventions. Use `agents-cli create` even for quick experiments. |
+| "I can skip the scaffold and set up manually" | Manual setup misses eval boilerplate, CI/CD config, and project configuration manifest conventions. Use `agents-cli create` even for quick experiments. |
 
 ## Principle 1: Code Preservation & Isolation
 
@@ -317,7 +317,7 @@ Before finalizing any code replacement, verify the following:
 When something breaks, follow this sequence — don't skip steps or shotgun fixes:
 
 1. **Reproduce** — Run the exact command that failed. Save the full error output. If you can't reproduce it, you can't fix it.
-2. **Localize** — Narrow the cause: is it the agent code, a tool, the config, or the environment? Use `agents-cli run "prompt"` to isolate agent behavior from deployment issues.
+2. **Localize** — Narrow the cause: is it the agent code, a tool, the config, or the environment? Use `agents-cli run "prompt"` to isolate agent behavior from deployment issues. Add `-v` (`--verbose`) to print the full JSON event payloads — useful for inspecting tool calls, intermediate steps, and silent failures.
 3. **Fix one thing** — Change one variable at a time. If you change the instruction AND the tool AND the config simultaneously, you won't know what fixed it (or what broke something else).
 4. **Verify** — Rerun the exact reproduction command. Don't assume the fix worked.
 5. **Guard** — If it was a non-obvious bug, add an eval case to catch regressions.
@@ -367,7 +367,7 @@ When you need specific infrastructure files (Terraform, CI/CD, Dockerfile) but d
 | Command | Purpose |
 |---|---|
 | `agents-cli playground` | Interactive local testing (ADK web playground) |
-| `agents-cli run "prompt"` | Run agent with a single prompt (non-interactive) |
+| `agents-cli run "prompt"` | Run agent with a single prompt (non-interactive). Add `-v` for full JSON event payloads. |
 | `agents-cli lint` | Check code quality |
 | `agents-cli lint --fix` | Auto-fix linting issues |
 | `agents-cli lint --mypy` | Also run mypy type checking |
@@ -397,7 +397,7 @@ When you need specific infrastructure files (Terraform, CI/CD, Dockerfile) but d
 |---|---|
 | `agents-cli info` | Show CLI install path, skills location, and project config |
 
-Use `agents-cli info` to discover the **CLI install path** — this is where the CLI source code lives. Read files under that path to understand CLI internals, command implementations, or template logic. The command only shows project details when run inside a generated agent project (i.e., one with `[tool.agents-cli]` in `pyproject.toml`).
+Use `agents-cli info` to discover the **CLI install path** — this is where the CLI source code lives. Read files under that path to understand CLI internals, command implementations, or template logic. The command only shows project details when run inside a generated agent project (i.e., one with `agents-cli-manifest.yaml` in the project root directory).
 
 ### Authentication
 

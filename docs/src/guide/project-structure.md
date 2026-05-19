@@ -29,7 +29,8 @@ my-agent/
 │   └── unit/
 │       └── test_dummy.py         # Placeholder for unit tests
 │
-├── pyproject.toml                # Project config, dependencies, agents-cli settings
+├── pyproject.toml                # Project config and dependencies
+├── agents-cli-manifest.yaml      # Configuration for agents-cli
 ├── GEMINI.md                     # Guidance file for coding agents
 ├── Makefile                      # Shortcut commands (make dev, make eval, etc.)
 ├── .env                          # Environment variables (project ID, location)
@@ -89,7 +90,7 @@ The four key parts:
 
 ### `pyproject.toml`
 
-Contains project metadata and agents-cli configuration:
+Contains Python project metadata and dependencies:
 
 ```toml title="pyproject.toml"
 [project]
@@ -100,18 +101,22 @@ dependencies = [
     "google-adk>=1.15.0,<2.0.0",
     # ... other dependencies
 ]
-
-[tool.agents-cli]
-agent_directory = "app"
-name = "my-agent"
-
-[tool.agents-cli.create_params]
-deployment_target = "none"
-session_type = "in_memory"
 ```
 
-- **`[tool.agents-cli]`** — tells `agents-cli` commands where your agent code is.
-- **`[tool.agents-cli.create_params]`** — records how the project was created. Used by `agents-cli scaffold upgrade` to preserve your configuration.
+### `agents-cli-manifest.yaml`
+
+Contains agents-cli project metadata and configuration:
+
+```yaml title="agents-cli-manifest.yaml"
+name: my-agent
+agent_directory: app
+create_params:
+  deployment_target: none
+  session_type: in_memory
+```
+
+- **`agent_directory`** — tells `agents-cli` commands where your agent code is.
+- **`create_params`** — records how the project was created. Used by `agents-cli scaffold upgrade` to preserve your configuration.
 
 ### `tests/eval/evalsets/basic.evalset.json`
 

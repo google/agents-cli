@@ -12,7 +12,7 @@ description: >
 metadata:
   author: Google
   license: Apache-2.0
-  version: 0.1.3
+  version: 0.2.0
   requires:
     bins:
       - agents-cli
@@ -49,7 +49,7 @@ Choose the right deployment target based on your requirements:
 |----------|-------------|-----------|-----|
 | **Languages** | Python | Python | Python (+ others via custom containers) |
 | **Scaling** | Managed auto-scaling (configurable min/max, concurrency) | Fully configurable (min/max instances, concurrency, CPU allocation) | Full Kubernetes scaling (HPA, VPA, node auto-provisioning) |
-| **Networking** | VPC-SC and PSC supported | Full VPC support, direct VPC egress, IAP, ingress rules | Full Kubernetes networking|
+| **Networking** | VPC-SC and PSC-I supported (private VPC connectivity via network attachments) | Full VPC support, direct VPC egress, IAP, ingress rules | Full Kubernetes networking|
 | **Session state** | Native `VertexAiSessionService` (persistent, managed) | In-memory (dev), Cloud SQL, or Agent Platform Sessions backend | In-memory (dev), Cloud SQL, or Agent Platform Sessions backend |
 | **Batch/event processing** | Not supported | Native trigger endpoints (Pub/Sub, Eventarc); see `/google-agents-cli-adk-code` | Custom (Kubernetes Jobs, Pub/Sub) |
 | **Cost model** | vCPU-iours + memory-iours (not billed when idle) | Per-instance-second + min instance costs | Node pool costs (always-on or auto-provisioned) |
@@ -104,6 +104,10 @@ agents-cli infra single-project
 | `--secrets` | Comma-separated `ENV=SECRET` or `ENV=SECRET:VERSION` pairs | Agent Runtime |
 | `--update-env-vars` | Comma-separated `KEY=VALUE` environment variables | Agent Runtime, Cloud Run |
 | `--agent-identity` | Enable [agent identity](https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/runtime/agent-identity) (Preview) | Agent Runtime |
+| `--network-attachment` | Network attachment resource name for [PSC interface](https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/runtime/private-service-connect-interface) (enables private VPC connectivity) | Agent Runtime |
+| `--dns-peering-domain` | DNS peering domain suffix, e.g. `my-internal.corp.` (requires `--network-attachment`) | Agent Runtime |
+| `--dns-peering-project` | Project ID hosting the Cloud DNS managed zone for DNS peering (requires `--network-attachment`) | Agent Runtime |
+| `--dns-peering-network` | VPC network name in the target project for DNS peering (requires `--network-attachment`) | Agent Runtime |
 | `--memory` | Memory limit (default: `4Gi`) | Cloud Run |
 | `--port` | Container port | Cloud Run |
 | `--iap` | Enable Identity-Aware Proxy | Cloud Run |

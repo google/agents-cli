@@ -24,22 +24,23 @@
 
 ### Config Key
 
-The `pyproject.toml` section changed from `[tool.agent-starter-pack]` to `[tool.agents-cli]`:
+The configuration moved from `[tool.agent-starter-pack]` in `pyproject.toml` to a dedicated `agents-cli-manifest.yaml`:
 
+**Before (`pyproject.toml`)**
 ```toml
-# Before
 [tool.agent-starter-pack]
 agent_directory = "app"
 
 [tool.agent-starter-pack.create_params]
 deployment_target = "cloud_run"
+```
 
-# After
-[tool.agents-cli]
-agent_directory = "app"
-
-[tool.agents-cli.create_params]
-deployment_target = "cloud_run"
+**After (`agents-cli-manifest.yaml`)**
+```yaml
+name: my-agent
+agent_directory: app
+create_params:
+  deployment_target: cloud_run
 ```
 
 ### Template Coverage
@@ -70,6 +71,8 @@ uvx google-agents-cli setup
 ```bash
 sed -i '' 's/tool.agent-starter-pack/tool.agents-cli/g' pyproject.toml
 ```
+
+The next time config is read, it will trigger a migration to `agents-cli-manifest.yaml` and remove the `tool.agents-cli` section from `pyproject.toml`.
 
 **Step 3: Verify**
 

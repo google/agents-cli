@@ -1656,3 +1656,553 @@ nav.md-nav--primary .md-nav__item--section > .md-nav__link {
   background-color: rgba(66, 133, 244, 0.08);
 }
 
+
+/* ==========================================================================
+   Lifecycle page — interactive animations.
+   Used by docs/src/javascripts/lifecycle.js and docs/src/guide/lifecycle.md.
+   Inherits theme from --md-* vars so light/dark modes work for free.
+   ========================================================================== */
+
+.lifecycle-anim {
+  margin: 1.5em 0;
+  border-radius: 12px;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  background: var(--md-default-bg-color);
+  overflow: hidden;
+  font-family: var(--md-text-font-family);
+}
+
+/* shared utilities */
+.lc-mono   { font-family: var(--md-code-font-family); font-size: 11px; }
+.lc-muted  { color: var(--md-default-fg-color--light); }
+.lc-btn {
+  display: inline-flex; align-items: center; gap: .5em;
+  padding: .55em 1em; border-radius: 999px;
+  font-family: inherit; font-size: 13px; font-weight: 500;
+  background: var(--md-primary-fg-color); color: #fff;
+  border: 1px solid transparent; cursor: pointer;
+  transition: transform 150ms ease;
+}
+.lc-btn:hover:not(:disabled) { transform: translateY(-1px); }
+.lc-btn:disabled { opacity: .55; cursor: default; }
+.lc-btn--ghost {
+  background: var(--md-default-bg-color);
+  color: var(--md-default-fg-color);
+  border: 1px solid var(--md-default-fg-color--lightest);
+}
+.lc-fade-in { animation: lc-fade-in .25s ease-out both; }
+@keyframes lc-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* 1. transcript */
+.lc-transcript { display: flex; flex-direction: column; min-height: 460px; }
+.lc-transcript__head {
+  padding: .55em 1em; font-family: var(--md-code-font-family); font-size: 11px;
+  display: flex; justify-content: space-between; align-items: center;
+  background: color-mix(in srgb, var(--md-code-bg-color) 60%, var(--md-default-bg-color));
+  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+  color: var(--md-default-fg-color--light);
+}
+.lc-transcript__status {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .14em;
+  padding: .15em .55em; border-radius: 4px;
+  background: color-mix(in srgb, var(--md-primary-fg-color) 14%, transparent);
+  color: var(--md-primary-fg-color);
+}
+.lc-transcript__body {
+  flex: 1; overflow-y: auto; padding: 1em;
+  display: flex; flex-direction: column; gap: .75em;
+}
+.lc-transcript__foot {
+  padding: .75em 1em; display: flex; align-items: center; gap: .75em; flex-wrap: wrap;
+  border-top: 1px solid var(--md-default-fg-color--lightest);
+  background: color-mix(in srgb, var(--md-code-bg-color) 30%, var(--md-default-bg-color));
+}
+.lc-row { display: flex; }
+.lc-row--right { justify-content: flex-end; }
+.lc-bubble {
+  max-width: 80%; padding: .55em .85em; border-radius: 14px;
+  font-size: 14px; line-height: 1.5;
+}
+.lc-bubble--user {
+  background: color-mix(in srgb, var(--md-primary-fg-color) 12%, transparent);
+  color: var(--md-default-fg-color); border-bottom-right-radius: 6px;
+}
+.lc-bubble--agent {
+  background: var(--md-code-bg-color); color: var(--md-default-fg-color);
+  border-bottom-left-radius: 6px;
+}
+.lc-tool {
+  max-width: 90%; padding: .5em .75em; border-radius: 10px;
+  background: var(--md-code-bg-color);
+  border: 1px dashed var(--md-default-fg-color--lightest);
+  font-family: var(--md-code-font-family); font-size: 12px;
+}
+.lc-tool__sig { color: var(--md-default-fg-color--light); }
+.lc-tool__name { color: var(--md-primary-fg-color); }
+.lc-tool__result { margin-top: .35em; color: var(--md-default-fg-color--light); }
+
+/* 2. lifecycle loop — 4 cards, one cycles "active" every ~1.6s */
+.lc-loop { padding: 1.25em 1em; display: flex; flex-direction: column; gap: 1em; }
+.lc-loop__grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: .75em;
+}
+.lc-loop__card {
+  position: relative; padding: .9em 1em;
+  border-radius: 10px;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  background: var(--md-default-bg-color);
+  transition: background 250ms ease, border-color 250ms ease, transform 250ms ease;
+}
+.lc-loop__card--active {
+  border-color: var(--md-primary-fg-color);
+  background: color-mix(in srgb, var(--md-primary-fg-color) 9%, var(--md-default-bg-color));
+  transform: translateY(-2px);
+}
+.lc-loop__card--active::before {
+  content: ""; position: absolute; top: -3px; right: -3px;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--md-primary-fg-color);
+  animation: lc-loop-pulse 1.6s ease-out infinite;
+}
+@keyframes lc-loop-pulse {
+  0%   { box-shadow: 0 0 0 0   color-mix(in srgb, var(--md-primary-fg-color) 50%, transparent); }
+  70%  { box-shadow: 0 0 0 10px transparent; }
+  100% { box-shadow: 0 0 0 0   transparent; }
+}
+.lc-loop__step {
+  font-family: var(--md-code-font-family); font-size: 10px;
+  text-transform: uppercase; letter-spacing: .14em;
+  color: var(--md-default-fg-color--light); margin-bottom: .35em;
+}
+.lc-loop__verb {
+  font-family: var(--md-code-font-family); font-size: 14px; font-weight: 600;
+  color: var(--md-default-fg-color); margin-bottom: .2em;
+}
+.lc-loop__prompt { color: var(--md-primary-fg-color); }
+.lc-loop__desc { font-size: 12px; color: var(--md-default-fg-color--light); }
+.lc-loop__foot {
+  display: flex; align-items: center; gap: .55em;
+  padding-top: .25em;
+  font-size: 12px;
+}
+.lc-loop__arrow {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: color-mix(in srgb, var(--md-primary-fg-color) 14%, transparent);
+  color: var(--md-primary-fg-color); font-weight: 600;
+}
+
+/* 3. scaffold wizard */
+.lc-wizard { padding: 1em; display: flex; flex-direction: column; gap: 1em; }
+.lc-wizard__head { display: flex; justify-content: space-between; align-items: baseline; }
+.lc-wizard__step {
+  display: grid; grid-template-columns: 28px 1fr; gap: .75em; align-items: start;
+}
+.lc-wizard__num {
+  font-family: var(--md-code-font-family); font-size: 11px;
+  width: 26px; height: 26px; border-radius: 50%;
+  display: grid; place-items: center;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  background: var(--md-default-bg-color); color: var(--md-primary-fg-color);
+  margin-top: 2px;
+}
+.lc-wizard__q { font-size: 13.5px; font-weight: 500; margin: 0; color: var(--md-default-fg-color); }
+.lc-wizard__help { font-size: 11.5px; margin: .15em 0 .5em; color: var(--md-default-fg-color--light); }
+.lc-toggle {
+  display: inline-flex; flex-wrap: wrap; padding: 2px; border-radius: 999px;
+  background: var(--md-default-bg-color);
+  border: 1px solid var(--md-default-fg-color--lightest);
+}
+.lc-toggle__btn {
+  padding: .25em .85em; border-radius: 999px;
+  font-family: var(--md-code-font-family); font-size: 11px;
+  background: transparent; color: var(--md-default-fg-color--light);
+  border: 0; cursor: pointer; transition: background 150ms ease, color 150ms ease;
+}
+.lc-toggle__btn--on { background: var(--md-primary-fg-color); color: #fff; }
+.lc-wizard__cmd {
+  margin: 0; padding: .75em 1em; border-radius: 8px;
+  background: var(--md-code-bg-color);
+  font-family: var(--md-code-font-family); font-size: 12px;
+  color: var(--md-default-fg-color); white-space: pre; overflow-x: auto;
+}
+.lc-wizard__summary {
+  font-size: 12.5px; color: var(--md-default-fg-color);
+  padding: .65em .85em; border-radius: 8px;
+  background: color-mix(in srgb, var(--md-primary-fg-color) 8%, var(--md-default-bg-color));
+  border: 1px solid color-mix(in srgb, var(--md-primary-fg-color) 22%, transparent);
+}
+
+/* 4. team diagram */
+.lc-team { padding: 1em; }
+.lc-team__head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: .75em; margin-bottom: .5em; flex-wrap: wrap;
+}
+
+/* 5. eval-fix loop */
+.lc-eval { padding: 0; display: flex; flex-direction: column; }
+.lc-eval__head {
+  padding: .65em 1em; display: flex; justify-content: space-between; align-items: center;
+  background: color-mix(in srgb, var(--md-code-bg-color) 50%, var(--md-default-bg-color));
+  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+  color: var(--md-default-fg-color--light);
+}
+.lc-eval__list { padding: .8em; display: flex; flex-direction: column; gap: .55em; }
+.lc-eval__card {
+  display: flex; gap: .65em; padding: .8em;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 10px; background: var(--md-default-bg-color);
+}
+.lc-eval__dot {
+  width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; flex-shrink: 0;
+}
+.lc-eval__dot--pass { background: #34a853; box-shadow: 0 0 0 4px rgba(52, 168, 83, .18); }
+.lc-eval__dot--fail { background: #ea4335; box-shadow: 0 0 0 4px rgba(234, 67, 53, .18); }
+.lc-eval__main { flex: 1; min-width: 0; }
+.lc-eval__meta { display: flex; align-items: center; gap: .5em; flex-wrap: wrap; }
+.lc-eval__pill {
+  font-family: var(--md-code-font-family); font-size: 10px;
+  padding: 1px 5px; border-radius: 3px;
+}
+.lc-eval__pill--pass { background: rgba(52,168,83,.14); color: #34a853; }
+.lc-eval__pill--fail { background: rgba(234,67,53,.14); color: #ea4335; }
+.lc-eval__prompt { margin: .35em 0; font-size: 14px; color: var(--md-default-fg-color); }
+.lc-eval__judge {
+  margin-top: .5em; padding: .5em .65em; border-radius: 6px;
+  background: rgba(234,67,53,.10);
+  border: 1px solid rgba(234,67,53,.3);
+  font-family: var(--md-code-font-family); font-size: 12.5px;
+  color: var(--md-default-fg-color);
+}
+.lc-eval__judge--ok {
+  background: rgba(52,168,83,.10);
+  border-color: rgba(52,168,83,.3);
+}
+.lc-eval__judgeLabel { color: #ea4335; }
+.lc-eval__judgeLabel--ok { color: #34a853; }
+.lc-eval__foot {
+  padding: .65em 1em; display: flex; align-items: center; gap: .75em; flex-wrap: wrap;
+  background: color-mix(in srgb, var(--md-code-bg-color) 40%, var(--md-default-bg-color));
+  border-top: 1px solid var(--md-default-fg-color--lightest);
+}
+.lc-eval__chartwrap { padding: 1em; border-top: 1px solid var(--md-default-fg-color--lightest); }
+
+/* 6. trace */
+.lc-trace { padding: 0; }
+.lc-trace__head {
+  padding: .55em 1em; display: flex; justify-content: space-between; align-items: center;
+  background: color-mix(in srgb, var(--md-code-bg-color) 50%, var(--md-default-bg-color));
+  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+}
+.lc-trace__row { cursor: default; }
+.lc-trace__row:hover rect:not([fill="transparent"]) {
+  /* highlight handled in JS via opacity, this is a fallback */
+}
+.lc-trace__detail {
+  padding: .65em 1em; min-height: 36px; font-size: 12px;
+  border-top: 1px solid var(--md-default-fg-color--lightest);
+  background: color-mix(in srgb, var(--md-code-bg-color) 30%, var(--md-default-bg-color));
+  color: var(--md-default-fg-color);
+}
+
+/* 5b. failure museum */
+.lc-failures { padding: 1em; }
+.lc-failures__head { margin-bottom: .75em; }
+.lc-failures__grid {
+  display: grid;
+  /* Failure museum has 4 items, so 2-col never has an orphan. Auto-fit is
+     safe here — falls cleanly to 1-col on narrow viewports. */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: .75em;
+  align-items: stretch;
+}
+.lc-failures__card { min-width: 0; }
+.lc-failures__card {
+  padding: .8em .9em; border-radius: 10px;
+  background: var(--md-default-bg-color);
+  border: 1px solid color-mix(in srgb, #ea4335 22%, var(--md-default-fg-color--lightest));
+}
+.lc-failures__eyebrow {
+  font-family: var(--md-code-font-family); font-size: 10px;
+  text-transform: uppercase; letter-spacing: .14em;
+  color: #ea4335; margin: 0 0 .25em 0;
+}
+.lc-failures__name {
+  font-size: 14px; font-weight: 600; margin: 0 0 .35em 0;
+  color: var(--md-default-fg-color);
+}
+.lc-failures__what {
+  font-size: 12.5px; color: var(--md-default-fg-color--light); margin: 0 0 .5em 0;
+}
+.lc-failures__caught {
+  font-size: 12px; margin: 0;
+  padding-top: .45em; border-top: 1px dashed var(--md-default-fg-color--lightest);
+  color: var(--md-default-fg-color);
+}
+.lc-failures__caughtLabel { color: #34a853; font-weight: 600; }
+
+/* 7. model compare */
+.lc-models { padding: 1em; }
+.lc-models__head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  flex-wrap: wrap; gap: .5em; margin-bottom: .5em;
+}
+.lc-models__pill {
+  font-family: var(--md-code-font-family); font-size: 10px;
+  padding: 1px 6px; border-radius: 4px;
+  background: color-mix(in srgb, #fbbc04 16%, transparent);
+  color: var(--md-default-fg-color--light);
+}
+.lc-models__prompt {
+  margin: 0 0 .75em 0; padding: .55em .75em; border-radius: 8px;
+  background: color-mix(in srgb, var(--md-code-bg-color) 70%, var(--md-default-bg-color));
+  border: 1px dashed var(--md-default-fg-color--lightest);
+  font-family: var(--md-code-font-family); font-size: 12px;
+  color: var(--md-default-fg-color--light);
+  white-space: pre-wrap;          /* let long prompts wrap on narrow viewports */
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.lc-models__prompt code { background: transparent; padding: 0; white-space: inherit; }
+.lc-models__grid {
+  display: grid;
+  /* For 3 items, auto-fit creates an orphan when the viewport allows only 2
+     columns (cards 1+2 in row 1, card 3 alone in row 2). Explicit 3-col with
+     a single 1-col fallback avoids that — there's no in-between 2-col state
+     where the layout looks unbalanced. */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .75em;
+  align-items: stretch;
+}
+.lc-models__card {
+  display: flex; flex-direction: column; gap: .5em;
+  padding: .75em; border-radius: 10px;
+  background: var(--md-default-bg-color);
+  border: 1px solid var(--md-default-fg-color--lightest);
+  /* Defensive sizing: card MUST stay inside its grid track regardless of
+     content width. min-width: 0 alone isn't enough — flex columns inherit
+     min-content sizing for inline-direction; max-width pins the upper bound;
+     overflow: hidden is the clip-of-last-resort against any errant child. */
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.lc-models__card > * { min-width: 0; max-width: 100%; }
+.lc-models__provider {
+  font-family: var(--md-code-font-family); font-size: 10px;
+  text-transform: uppercase; letter-spacing: .14em; margin: 0;
+}
+.lc-models__badge { font-size: 14px; font-weight: 600; margin: 0; }
+.lc-models__response {
+  font-size: 12.5px; line-height: 1.5; flex: 1; margin: 0;
+  color: var(--md-default-fg-color);
+  /* Break only when a word would overflow — keeps normal prose readable
+     while preventing horizontal overflow at narrow column widths. */
+  overflow-wrap: break-word;
+  hyphens: auto;
+}
+/* `.md-typeset` prefix raises specificity to (0,2,0) — ties mkdocs-material's
+   `.md-typeset code` rules, and since this rule loads later via extra_css it
+   wins. The matching specificity matters: without the prefix mkdocs's code
+   rules override the padding / font-size / background here. (We also moved
+   the JS off `<code>` to `<span>` for belt-and-braces.) */
+.md-typeset .lc-models__swap,
+.lc-models__swap {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  padding: .35em .5em; border-radius: 6px;
+  background: color-mix(in srgb, var(--md-code-bg-color) 70%, var(--md-default-bg-color));
+  font-size: 10.5px; color: var(--md-default-fg-color--light);
+  font-family: var(--md-code-font-family);
+  /* Horizontal scroll on overflow — full swap line stays accessible on touch
+     (the earlier ellipsis truncation was undiscoverable without hover). */
+  white-space: nowrap; overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+.lc-models__pass { display: flex; align-items: center; gap: .4em; }
+.lc-models__dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: #34a853;
+}
+.lc-models__foot { margin: .75em 0 0 0; font-size: 12px; }
+
+/* 8. deploy target picker */
+.lc-deploy { padding: 1em; display: flex; flex-direction: column; gap: .75em; }
+.lc-deploy__grid {
+  display: grid;
+  /* Same 3-col-or-1-col pattern as the model compare grid for the same
+     reason — avoid the 2-col orphan state. */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .65em;
+  align-items: stretch;
+}
+.lc-deploy__card {
+  display: flex; flex-direction: column; gap: .35em; align-items: flex-start;
+  padding: .8em; border-radius: 10px;
+  background: var(--md-default-bg-color);
+  border: 1px solid var(--md-default-fg-color--lightest);
+  text-align: left; cursor: pointer; font-family: inherit;
+  transition: background 200ms ease, border-color 200ms ease, transform 200ms ease;
+}
+.lc-deploy__card:hover { transform: translateY(-1px); }
+.lc-deploy__card--on {
+  border-color: var(--md-primary-fg-color);
+  background: color-mix(in srgb, var(--md-primary-fg-color) 8%, var(--md-default-bg-color));
+}
+.lc-deploy__flag { font-size: 10.5px; color: var(--md-default-fg-color--light); }
+.lc-deploy__card--on .lc-deploy__flag { color: var(--md-primary-fg-color); }
+.lc-deploy__label { font-size: 14px; font-weight: 600; }
+.lc-deploy__blurb { font-size: 12px; color: var(--md-default-fg-color--light); }
+.lc-deploy__cmd {
+  margin: 0; padding: .65em .85em; border-radius: 8px;
+  background: var(--md-code-bg-color);
+  font-family: var(--md-code-font-family); font-size: 12px;
+  color: var(--md-default-fg-color); white-space: pre-wrap; overflow-x: auto;
+}
+.lc-deploy__pipeline {
+  padding: .75em .85em; border-radius: 8px;
+  background: var(--md-default-bg-color);
+  border: 1px solid var(--md-default-fg-color--lightest);
+}
+.lc-deploy__pipeline > p { margin: 0 0 .5em 0; font-size: 11px; }
+.lc-deploy__steps { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .4em; }
+.lc-deploy__steps > li { display: flex; align-items: flex-start; gap: .5em; font-size: 13px; }
+.lc-deploy__num {
+  display: inline-grid; place-items: center; flex-shrink: 0;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: var(--md-default-bg-color);
+  border: 1px solid var(--md-default-fg-color--lightest);
+  color: var(--md-primary-fg-color); font-size: 10px;
+}
+.lc-deploy__tool {
+  background: color-mix(in srgb, var(--md-primary-fg-color) 12%, transparent);
+  color: var(--md-primary-fg-color);
+  padding: 1px 5px; border-radius: 3px; font-size: 11.5px;
+}
+.lc-deploy__what { color: var(--md-default-fg-color--light); }
+
+/* 9. publish card */
+.lc-publish {
+  padding: 1.25em;
+  background: linear-gradient(140deg,
+    color-mix(in srgb, var(--md-primary-fg-color) 8%, var(--md-default-bg-color)),
+    var(--md-default-bg-color));
+}
+.lc-publish__eyebrow {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .14em;
+  color: var(--md-primary-fg-color--dark, var(--md-primary-fg-color));
+  margin: 0 0 .35em 0;
+}
+.lc-publish__name { font-size: 22px; font-weight: 600; margin: 0; }
+.lc-publish__sub { font-size: 14px; margin: .35em 0; color: var(--md-default-fg-color--light); }
+.lc-publish__facts {
+  display: grid; grid-template-columns: 1fr 1fr; gap: .25em .75em;
+  list-style: none; padding: 0; margin: .75em 0 0 0;
+  font-size: 12px; color: var(--md-default-fg-color--light);
+}
+.lc-publish__facts > li { margin: 0; }
+.lc-publish__status { display: flex; align-items: center; gap: .5em; margin-top: 1em; }
+.lc-publish__pulse {
+  display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+  background: #34a853;
+  animation: lc-publish-pulse 1.8s ease-in-out infinite;
+}
+@keyframes lc-publish-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, #34a853 50%, transparent); }
+  50%      { box-shadow: 0 0 0 8px transparent; }
+}
+.lc-publish__statusLabel { color: #34a853; font-size: 12px; }
+.lc-publish__cmd {
+  margin: 1em 0 0 0; padding: .55em .85em; border-radius: 8px;
+  background: var(--md-code-bg-color);
+  font-family: var(--md-code-font-family); font-size: 11.5px;
+  color: var(--md-default-fg-color); overflow-x: auto;
+  white-space: pre-wrap;
+}
+
+/* 10. rolling eval */
+.lc-rolling { padding: 1em; }
+.lc-rolling__head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: .35em;
+}
+.lc-rolling__live { display: inline-flex; align-items: center; gap: .35em; }
+.lc-rolling__livepulse {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: #34a853; position: relative;
+}
+.lc-rolling__livepulse::before {
+  content: ""; position: absolute; inset: 0; border-radius: 50%;
+  background: #34a853;
+  animation: lc-rolling-livepulse 1.8s ease-out infinite;
+}
+@keyframes lc-rolling-livepulse {
+  0%   { transform: scale(1);   opacity: .7; }
+  70%  { transform: scale(2.5); opacity: 0;   }
+  100% { transform: scale(1);   opacity: 0;   }
+}
+@keyframes lc-rolling-pulse {
+  0%   { opacity: .55; transform: scale(1);   }
+  70%  { opacity: 0;   transform: scale(2.6); }
+  100% { opacity: 0;   transform: scale(2.6); }
+}
+.lc-rolling__foot {
+  margin-top: .35em; font-size: 12px; overflow: hidden;
+}
+
+/* respect prefers-reduced-motion across all animations */
+@media (prefers-reduced-motion: reduce) {
+  .lifecycle-anim *,
+  .lifecycle-anim *::before,
+  .lifecycle-anim *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+  .lc-fade-in { animation: none !important; }
+}
+
+/* Opt-out of the global "tab N gets coding-agent logo N" rule for tab groups
+   that aren't a persona picker. The site-wide CSS in this file applies icons
+   by tab POSITION (label[for$="_1"] = Gemini, _2 = Claude, etc.), which is
+   wrong for any tab group whose semantics aren't "pick your coding agent". */
+.lc-tabs-bare .tabbed-labels label::before { display: none !important; }
+
+/* SVG-heavy animations stay readable by enforcing a min-width and letting
+   the parent scroll horizontally when the viewport is narrower than that. */
+.lc-trace, .lc-team, .lc-rolling { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.lc-trace > svg   { min-width: 560px; display: block; }
+.lc-team > svg    { min-width: 520px; display: block; }
+.lc-rolling > svg { min-width: 480px; display: block; }
+/* Headers above those charts shouldn't scroll with the SVG — keep them sticky to the host's left edge */
+.lc-trace__head, .lc-team__head, .lc-rolling__head, .lc-trace__detail, .lc-rolling__foot { position: sticky; left: 0; }
+
+/* small-screen tweaks */
+@media (max-width: 720px) {
+  .lc-loop__grid { grid-template-columns: 1fr 1fr; }
+  .lc-wizard { padding: .8em; }
+  .lc-toggle__btn { padding: .25em .65em; font-size: 10.5px; }
+}
+/* 3-card grids (model compare, deploy targets): drop straight to 1-col below
+   960 px so we never spend time in a cramped 3-col or orphan-prone 2-col. */
+@media (max-width: 960px) {
+  .lc-models__grid { grid-template-columns: 1fr; }
+  .lc-deploy__grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 720px) {
+  .lc-publish__facts { grid-template-columns: 1fr; }
+  .lc-models__response { font-size: 13px; }
+  .lc-publish__name { font-size: 19px; }
+  .lc-deploy__steps > li { font-size: 12.5px; }
+}
+@media (max-width: 480px) {
+  .lc-loop__grid { grid-template-columns: 1fr; }
+}

@@ -93,3 +93,7 @@ Environment variables set during deployment are configured in `deploy.py` and `d
 ### Memory Bank
 
 To enable cross-session memory on Agent Runtime, configure `memory_bank_config` via `context_spec`. See the [`memory-bank` sample](https://github.com/google/adk-samples/tree/main/python/agents/memory-bank) for the full pattern.
+
+## Networking (PSC Interface)
+
+Agent Runtime cannot reach your VPC by default. To enable private connectivity, create a [network attachment](https://cloud.google.com/vpc/docs/create-manage-network-attachments) and deploy with `--network-attachment`. Add `--dns-peering-domain`, `--dns-peering-project`, and `--dns-peering-network` if you need private DNS resolution. PSC config is immutable after deployment — delete and redeploy to change it. See the [GCP docs](https://cloud.google.com/gemini-enterprise-agent-platform/scale/runtime/private-service-connect-interface) for prerequisites and setup.

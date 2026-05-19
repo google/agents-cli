@@ -146,6 +146,9 @@ Yes. `agents-cli scaffold enhance` adds deployment and CI/CD to existing project
 **Can I use `agents-cli` without a coding agent?**<br>
 Yes. The CLI works standalone — you can run `agents-cli scaffold`, `eval`, `deploy`, and every other command directly from your terminal. The skills just make it easier for coding agents to do it for you.
 
+**How can I extend `agents-cli` with other skills?**<br>
+`agents-cli` skills cover the agent-building lifecycle (scaffold, ADK code patterns, evals, deploy, publish, observability). For adjacent concerns, you could install another skill suite alongside. For example, [agent-skills](https://github.com/addyosmani/agent-skills) covers general software-engineering workflows (ideation, spec gates, planning, code review), and [google/skills](https://github.com/google/skills) covers Google Cloud foundations (BigQuery, Cloud Run, Firebase, GKE).
+
 ## Feedback
 
 We value your input — it helps us improve `agents-cli` for the community.

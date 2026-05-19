@@ -33,7 +33,7 @@ Tell your coding agent:
 Your coding agent activates the `google-agents-cli-workflow` and `google-agents-cli-scaffold` skills. It will:
 
 - Ask clarifying questions (deployment target, safety constraints, etc.)
-- Write a `DESIGN_SPEC.md` capturing the agent's purpose
+- Save a spec at `.agents-cli-spec.md` capturing the agent's purpose
 - Scaffold the project:
 
 ```

@@ -12,7 +12,7 @@ description: >
 metadata:
   author: Google
   license: Apache-2.0
-  version: 0.1.3
+  version: 0.2.0
   requires:
     bins:
       - agents-cli
@@ -165,12 +165,10 @@ When using `agent_runtime as the deployment target, Agent Runtime manages sessio
 
 ## Step 3: Load Dev Workflow
 
-After scaffolding, save `DESIGN_SPEC.md` to the project root if it isn't there already.
-
-**Then immediately load `/google-agents-cli-workflow`** — it contains the development workflow, coding guidelines, and operational rules you must follow when implementing the agent.
+After scaffolding, immediately load `/google-agents-cli-workflow` — it contains the development workflow, coding guidelines, and operational rules you must follow when implementing the agent.
 
 **Key files to customize:** `app/agent.py` (instruction, tools, model), `app/tools.py` (custom tool functions), `.env` (project ID, location, API keys).
-**Files to preserve:** `pyproject.toml` `[tool.agents-cli]` section (CLI reads this), deployment configs under `deployment/`, `Makefile`, `app/__init__.py` (the `App(name=...)` must match the directory name — default `app`).
+**Files to preserve:** `agents-cli-manifest.yaml` (CLI reads this), deployment configs under `deployment/`, `Makefile`, `app/__init__.py` (the `App(name=...)` must match the directory name — default `app`).
 
 **RAG projects (`agentic_rag`) — provision datastore first:**
 Before running `agents-cli playground` or testing your RAG agent, you must provision the datastore and ingest data:

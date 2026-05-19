@@ -15,7 +15,7 @@ If you're working with a coding agent, it will ask you these questions automatic
 3. **Safety constraints?** — What the agent must NOT do
 4. **Deployment preference?** — Prototype first, or full deployment (Agent Runtime, Cloud Run, GKE)?
 
-Write your answers into a `DESIGN_SPEC.md` at minimum covering: overview, example use cases, tools required, constraints, and success criteria. This becomes the source of truth for everything that follows.
+Save your answers to `.agents-cli-spec.md` in the current directory — overview, example use cases, tools required, constraints, success criteria.
 
 ---
 

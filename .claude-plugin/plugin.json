@@ -1,6 +1,6 @@
 {
   "name": "google-agents-cli",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Scaffold, develop, evaluate, and deploy AI agents with Google ADK. Bundles 7 skills for the agent development lifecycle.",
   "author": { "name": "Google LLC" },
   "homepage": "https://github.com/google/agents-cli",

@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.1] - 2026-06-04
+- `eval generate` now works on ADK 2.x projects that use built-in tools such as `VertexAiSearchTool`. Raised the `google-cloud-aiplatform` floor to 1.156.0, which carries the SDK fix.
+  - https://github.com/google/agents-cli/issues/27
+- Skills installed via `agents-cli setup` are now visible to Antigravity. Global skills are mirrored into the Antigravity skill directories.
+  - https://github.com/google/agents-cli/issues/26
+- `update` now surfaces errors clearly instead of failing silently.
+- Agent deploys tolerate a corrupt or malformed `deployment_metadata.json` instead of crashing.
+- Deployment timestamps are now timezone-aware.
+- A malformed `AGENTS_CLI_EXPERIMENTS` value no longer crashes the CLI.
+- `agents-cli install` now runs with `--locked`, so a drifted `uv.lock` fails fast instead of silently resolving new dependency versions.
+
 ## [0.3.0] - 2026-05-29
 ### Breaking
 - The eval data format changed from ADK `EvalSet` to Vertex AI `EvaluationDataset`. Existing `tests/eval/evalsets/*.evalset.json` files are no longer read by `agents-cli eval generate` and friends. See [Migrating Eval Datasets](docs/src/reference/eval-dataset-migration.md) for the conversion. `scaffold upgrade` now prints a notice when legacy files are detected.

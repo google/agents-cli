@@ -136,6 +136,8 @@ Rules:
 
 Workflow agents provide deterministic control flow without LLM orchestration.
 
+> These are `BaseAgent`-family composites (`SequentialAgent`, `ParallelAgent`, `LoopAgent`). For the new graph-based Workflow API introduced in ADK 2.0, see `references/adk-workflows.md`.
+
 ### SequentialAgent
 
 Executes sub-agents in order. State changes propagate to subsequent agents.
@@ -228,6 +230,25 @@ For a production LoopAgent with EscalationChecker, BuiltInPlanner, and grounding
         tools=[AgentTool(specialist_agent)],
     )
     ```
+
+4.  **Task Delegation (ADK 2.0)**: Set `mode` on a sub-agent for structured, schema-typed delegation — the coordinator gets a `request_task_{name}` tool; the sub-agent returns typed output via the auto-injected `finish_task` tool.
+    ```python
+    from pydantic import BaseModel
+
+    class ResearchOutput(BaseModel):
+        summary: str
+
+    researcher = Agent(
+        name="researcher",
+        model="gemini-flash-latest",
+        mode="task",                        # 'chat' (default) | 'task' | 'single_turn'
+        output_schema=ResearchOutput,
+        description="Researches a topic.",  # required for delegation
+        instruction="Research the topic, then call finish_task.",
+    )
+    coordinator = Agent(name="coordinator", model="gemini-flash-latest", sub_agents=[researcher])
+    ```
+    Modes: `task` (multi-turn, structured I/O) · `single_turn` (autonomous, no user turn). Sub-agents need a `description`; default I/O schemas (`goal`/`background` in, `result` out) are used if none set. Disabled inside graph `Workflow`s.
 
 ---
 
@@ -407,6 +428,23 @@ def needs_approval(amount: float, **kwargs) -> bool:
 transfer_tool = FunctionTool(transfer_money, require_confirmation=needs_approval)
 ```
 
+### Human-in-the-Loop (pause & resume)
+
+Pause a run to ask the user something, then resume. This is a general runtime feature (not workflow-specific). Enable resumption at the app level:
+
+```python
+from google.adk.apps import App, ResumabilityConfig
+
+app = App(name="my_app", root_agent=root_agent,
+          resumability_config=ResumabilityConfig(is_resumable=True))
+```
+
+- **Let the model ask:** add the built-in `request_input` tool (`from google.adk.tools import request_input`) to `tools=` — the model calls it when it needs clarification.
+- **Approval gate inside a tool:** `tool_context.request_confirmation(hint="Approve this transfer?")`, or `FunctionTool(fn, require_confirmation=...)` (above).
+- **Custom long-running tool:** wrap a function with `LongRunningFunctionTool(fn)` to pause until an external result arrives.
+
+The user's reply is read from `ctx.resume_inputs` (available on `ToolContext` and `CallbackContext`). Inside graph workflows the same mechanism is node-based — see `adk-workflows.md` §7.
+
 ### Tool Authentication
 
 | Auth Type | Pattern |
@@ -560,7 +598,7 @@ memory_service = InMemoryMemoryService()
 # Add session to memory after conversation
 await memory_service.add_session_to_memory(session)
 # Search later
-results = await memory_service.search_memory(app_name, user_id, "query")
+results = await memory_service.search_memory(app_name=app_name, user_id=user_id, query="query")
 ```
 
 #### Memory Bank (Long-term Memory)
@@ -612,7 +650,8 @@ app = App(
 Prevent context overflow on long sessions by summarizing older events in a sliding window:
 
 ```python
-from google.adk.apps import App, EventsCompactionConfig
+from google.adk.apps import App
+from google.adk.apps.app import EventsCompactionConfig
 from google.adk.apps.llm_event_summarizer import LlmEventSummarizer
 from google.adk.models import Gemini
 
@@ -650,31 +689,34 @@ app = App(name="my_custom_agent", root_agent=root_agent)
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
+from google.adk.tools import BaseTool, ToolContext
 from google.genai import types as genai_types
 
-# Agent lifecycle
-async def before_agent_callback(ctx: CallbackContext) -> None:
-    ctx.state["started"] = True
+# Callbacks are invoked by keyword — parameter names must match exactly.
 
-async def after_agent_callback(ctx: CallbackContext) -> genai_types.Content | None:
+# Agent lifecycle
+async def before_agent_callback(callback_context: CallbackContext) -> None:
+    callback_context.state["started"] = True
+
+async def after_agent_callback(callback_context: CallbackContext) -> genai_types.Content | None:
     # Return None to continue, or Content to override
     return None
 
 # Model interaction
-async def before_model_callback(ctx: CallbackContext, request: LlmRequest) -> LlmResponse | None:
+async def before_model_callback(callback_context: CallbackContext, llm_request: LlmRequest) -> LlmResponse | None:
     # Return None to continue, or LlmResponse to skip model call
     return None
 
-async def after_model_callback(ctx: CallbackContext, response: LlmResponse) -> LlmResponse | None:
+async def after_model_callback(callback_context: CallbackContext, llm_response: LlmResponse) -> LlmResponse | None:
     # Return None to continue, or modified LlmResponse
     return None
 
 # Tool execution
-async def before_tool_callback(ctx: CallbackContext, tool_name: str, args: dict) -> dict | None:
+async def before_tool_callback(tool: BaseTool, args: dict, tool_context: ToolContext) -> dict | None:
     # Return None to continue, or dict to skip tool and use as result
     return None
 
-async def after_tool_callback(ctx: CallbackContext, tool_name: str, result: dict) -> dict | None:
+async def after_tool_callback(tool: BaseTool, args: dict, tool_context: ToolContext, tool_response: dict) -> dict | None:
     # Return None to continue, or modified dict
     return None
 ```
@@ -683,9 +725,9 @@ async def after_tool_callback(ctx: CallbackContext, tool_name: str, result: dict
 
 ```python
 # Initialize state before agent runs
-async def init_state(ctx: CallbackContext) -> None:
-    if "preferences" not in ctx.state:
-        ctx.state["preferences"] = {}
+async def init_state(callback_context: CallbackContext) -> None:
+    if "preferences" not in callback_context.state:
+        callback_context.state["preferences"] = {}
 
 agent = Agent(before_agent_callback=init_state, ...)
 ```
@@ -856,7 +898,7 @@ google/adk/
 ├── tools/            # Tool implementations (FunctionTool, google_search, etc.)
 ├── sessions/         # Session services (InMemory, Database, VertexAI)
 ├── memory/           # Memory services
-├── runners/          # Runner and execution engine
+├── runners.py        # Runner and execution engine
 ├── events/           # Event types and actions
 ├── models/           # Model integrations (Gemini, LiteLLM, etc.)
 ├── code_executors/   # Code execution (BuiltInCodeExecutor, etc.)

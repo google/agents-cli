@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-06-10
+- Scaffolded Python templates now use **ADK 2.0 GA**. New `adk`, `adk_a2a`, and `agentic_rag` projects pin `google-adk[gcp]>=2.0.0,<3.0.0`; the `[gcp]` extra restores the OpenTelemetry GCP exporters and bundles the BigQuery client, so the separate `[bigquery-analytics]` extra is no longer needed. Cloud SQL sessions on Cloud Run and GKE keep working under 2.0. The bundled ADK coding skill and its reference docs were refreshed for 2.0.
+  - https://github.com/google/agents-cli/issues/24
+- Agent Runtime deploys no longer overwrite a user-supplied `AGENT_VERSION` (or `NUM_WORKERS`) passed via `--update-env-vars`, matching Cloud Run behavior. The "version not found" warning now names the `pyproject.toml` field to set.
+- Fixed a stale `deployment/terraform/dev/` path in the Cloud Trace observability guide so it matches the current `single-project` terraform layout.
+
 ## [0.3.1] - 2026-06-04
 - `eval generate` now works on ADK 2.x projects that use built-in tools such as `VertexAiSearchTool`. Raised the `google-cloud-aiplatform` floor to 1.156.0, which carries the SDK fix.
   - https://github.com/google/agents-cli/issues/27

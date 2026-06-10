@@ -63,7 +63,7 @@ agents-cli playground
 
 ## Disable Prompt-Response Logging in Deployments
 
-To disable it in a deployed environment, edit `deployment/terraform/[dev/]service.tf`:
+To disable it in a deployed environment, edit `deployment/terraform/single-project/service.tf`:
 
 ```hcl
 env {
@@ -75,8 +75,8 @@ env {
 Then apply:
 
 ```bash
-cd deployment/terraform
-terraform apply -var-file=vars/dev.tfvars
+cd deployment/terraform/single-project
+terraform apply -var-file=vars/env.tfvars
 ```
 
 ---

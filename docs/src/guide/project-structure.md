@@ -98,7 +98,7 @@ name = "my-agent"
 version = "0.0.1"
 requires-python = ">=3.11"
 dependencies = [
-    "google-adk>=1.15.0,<2.0.0",
+    "google-adk[gcp]>=2.0.0,<3.0.0",
     # ... other dependencies
 ]
 ```

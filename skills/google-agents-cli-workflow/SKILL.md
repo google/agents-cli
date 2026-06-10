@@ -12,7 +12,7 @@ description: >
 metadata:
   author: Google
   license: Apache-2.0
-  version: 0.3.1
+  version: 0.4.0
   requires:
     bins:
       - agents-cli
@@ -26,8 +26,8 @@ metadata:
 **agents-cli** is a CLI and skills toolkit for building, evaluating, and deploying agents on Google Cloud using the [Agent Development Kit (ADK)](https://adk.dev/). It works with any coding agent — Gemini CLI, Claude Code, Codex, or others. Install with `uvx google-agents-cli setup`.
 
 
-> Requires: google-agents-cli ~= 0.3.1
-> If version is behind, run: uv tool install "google-agents-cli~=0.3.1"
+> Requires: google-agents-cli ~= 0.4.0
+> If version is behind, run: uv tool install "google-agents-cli~=0.4.0"
 
 > Check version: agents-cli info
 > [Install uv](https://docs.astral.sh/uv/getting-started/installation/index.md) first if needed.

@@ -26,7 +26,6 @@ Compared to the always-on [Cloud Trace telemetry](cloud-trace.md), this plugin p
 ## Prerequisites
 
 *   Agent project generated with an **ADK-based** template (e.g., `adk`, `adk_a2a`, `agentic_rag`).
-*   `google-adk` version `>=1.21.0` (added automatically when you enable the plugin).
 *   A Google Cloud project with BigQuery API and BigQuery Storage API enabled (typically handled by Terraform).
 
 ---
@@ -42,10 +41,7 @@ agents-cli create my-agent \
   --bq-analytics
 ```
 
-This flag:
-
-1.  Includes the plugin initialization code in `app/agent.py` and configures environment variables in Terraform.
-2.  Adds the `google-adk[bigquery-analytics]>=1.21.0` dependency to your project.
+This flag includes the plugin initialization code in `app/agent.py` and configures environment variables in Terraform.
 
 ---
 

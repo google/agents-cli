@@ -1,46 +1,7 @@
-# ADK 2.0 Workflow API Cheatsheet
+# ADK Workflow API Cheatsheet
 
-> **Experimental (Pre-GA)** — The Workflow API requires ADK 2.0 (`google-adk >= 2.0.0`). APIs may change before GA.
-> Python only. **Incompatible with Live Streaming.** Requires **Python >= 3.11**.
->
-> **WARNING:** Do NOT allow ADK 2.0 projects to share persistent storage with ADK 1.x projects — this can cause data loss or corruption.
-
-### Upgrading a scaffolded project to ADK 2.0
-
-Scaffolded projects pin `google-adk<2.0.0` — this must be updated before ADK 2.0 can install. Simply running `pip install --pre google-adk` or `uv add --prerelease=allow google-adk` will silently stay on 1.x.
-
-**Step 1 — Update `pyproject.toml`:**
-
-```toml
-# Under [project] > dependencies, remove the <2.0.0 upper bound:
-"google-adk>=2.0.0a1",          # was: "google-adk>=1.15.0,<2.0.0"
-
-# If you have eval extras, update those too:
-# [project.optional-dependencies]
-# eval = ["google-adk[eval]>=2.0.0a1"]   # was: "google-adk[eval]>=1.15.0,<2.0.0"
-```
-
-**Step 2 — Reinstall dependencies:**
-
-```bash
-uv sync --prerelease=allow      # with uv
-# or
-pip install --pre -e ".[eval]"  # with pip
-```
-
-**Step 3 — Verify:**
-
-```bash
-python -c "import google.adk.workflow; print('Workflow API available')"
-```
-
-### New project (no scaffolding)
-
-```bash
-pip install --pre google-adk
-# or with uv:
-uv add --prerelease=allow google-adk
-```
+> Requires `google-adk >= 2.0.0`. Python only.
+> Requires **Python >= 3.11**. The `Workflow` class itself does not support Live Streaming (`Runner.run_live`) — the graph engine needs strict control over event emission. Use a plain `Agent` for live/bidi flows. ADK 2.0 itself still ships `Runner.run_live` and `LiveRequestQueue`.
 
 **Official docs:** [Workflows overview](https://adk.dev/workflows/index.md) ·
 [Graph routes](https://adk.dev/graphs/routes/index.md) ·
@@ -73,10 +34,15 @@ Three building blocks: **Nodes** (functions, LLM agents, tools), **Edges** (conn
 root_agent = Workflow(
     name="my_workflow",
     edges=[...],                # Edge definitions (or use graph= instead)
+    description="",             # Agent description
     input_schema=None,          # Pydantic model for input validation
+    output_schema=None,         # Pydantic model for the workflow's output
+    state_schema=None,          # Pydantic model for state validation
     rerun_on_resume=True,       # Rerun workflow on resume (default: True)
     max_concurrency=None,       # Limit parallel node execution (None = no limit)
-    state_schema=None,          # Pydantic model for state validation
+    retry_config=None,          # Default RetryConfig applied to nodes
+    timeout=None,               # Whole-workflow timeout in seconds
+    wait_for_output=False,      # Wait for dynamically scheduled child output
 )
 ```
 
@@ -163,9 +129,9 @@ def my_func(node_input: str) -> str:
 async def my_async(node_input: str) -> str:
   return node_input
 
-# Explicit FunctionNode for full control
+# Explicit FunctionNode for full control (func is keyword-only)
 fn = FunctionNode(
-    my_func,
+    func=my_func,
     retry_config=RetryConfig(max_attempts=3),
     timeout=30.0,                          # Seconds before timeout
     parameter_binding='state',             # 'state' (default) or 'node_input'
@@ -226,7 +192,7 @@ class DraftOutput(BaseModel):
 
 writer = LlmAgent(
     name="writer",
-    model="gemini-2.5-flash",
+    model="gemini-flash-latest",
     instruction="Write a draft based on the user's request.",
     output_schema=DraftOutput,  # Always set for structured output
     output_key="draft",         # Also store in state['draft']
@@ -279,105 +245,27 @@ edges = [
 
 ## 7. Human-in-the-Loop (HITL)
 
-Pause execution and request user input:
+HITL is a general ADK feature (app-level `ResumabilityConfig`, the `request_input` tool, `resume_inputs`) — see `adk-python.md` "Human-in-the-Loop". Inside a workflow it works per node: a node yields `RequestInput` and reads replies from `ctx.resume_inputs` (keyed by `interrupt_id`).
 
 ```python
 from google.adk.events.request_input import RequestInput
 
-async def approval_gate(ctx: Context, node_input: str):
-  yield RequestInput(
-      message="Approve this action?",
-      response_schema={"type": "string"},
-  )
-```
-
-### Two Modes
-
-**Resumable** (recommended for multi-step HITL): Checkpoints state, resumes at interrupted node.
-
-```python
-from google.adk.apps import App, ResumabilityConfig
-
-app = App(
-    name="my_app",
-    root_agent=workflow_agent,
-    resumability_config=ResumabilityConfig(is_resumable=True),
-)
-```
-
-**Non-resumable** (simpler): Replays from START on each user response, reconstructing state from session events. No `App` needed. Works for simple single-interrupt HITL.
-
-### Resume Behavior
-
-- `rerun_on_resume=False` (default FunctionNode): User's response becomes node output
-- `rerun_on_resume=True` (default LlmAgent): Node reruns with `ctx.resume_inputs` populated
-
-### Multi-Step HITL
-
-```python
 async def multi_step(ctx: Context, node_input: str):
   if not ctx.resume_inputs:
     yield RequestInput(interrupt_id="ask_name", message="Name?")
     return
-  if "ask_name" in ctx.resume_inputs and "ask_email" not in ctx.resume_inputs:
+  if "ask_email" not in ctx.resume_inputs:
     yield RequestInput(interrupt_id="ask_email", message="Email?")
     return
-  name = ctx.resume_inputs["ask_name"]
-  email = ctx.resume_inputs["ask_email"]
-  yield Event(output={"name": name, "email": email})
+  yield Event(output={"name": ctx.resume_inputs["ask_name"],
+                      "email": ctx.resume_inputs["ask_email"]})
 ```
 
-**HITL in loops**: Use unique `interrupt_id` per iteration (e.g., `f'review_{count}'`) to avoid infinite restart loops.
+**Node resume behavior:** `rerun_on_resume=False` (default FunctionNode) → the user's response becomes the node output; `rerun_on_resume=True` (default LlmAgent) → the node reruns with `ctx.resume_inputs` populated. **In loops:** use a unique `interrupt_id` per iteration (e.g. `f'review_{count}'`) to avoid infinite restarts.
 
 ---
 
-## 8. Task Mode (Structured Delegation)
-
-> **Note:** Task mode APIs are part of ADK 2.0 alpha and may change. See the [collaboration docs](https://adk.dev/workflows/collaboration/index.md) for the canonical pattern.
-
-Delegate structured tasks to sub-agents with typed schemas.
-
-| Mode | Tool | User Interaction | Use Case |
-|------|------|------------------|----------|
-| `chat` (default) | `transfer_to_agent` | Full chat | General assistants |
-| `task` | `request_task_{name}` | Multi-turn | Structured I/O tasks |
-| `single_turn` | `request_task_{name}` | None | Autonomous tasks |
-
-```python
-from google.adk.agents import LlmAgent
-from pydantic import BaseModel
-
-class ResearchInput(BaseModel):
-  topic: str
-  depth: str = 'standard'
-
-class ResearchOutput(BaseModel):
-  summary: str
-  key_findings: str
-
-researcher = LlmAgent(
-    name='researcher',
-    mode='task',
-    input_schema=ResearchInput,
-    output_schema=ResearchOutput,
-    instruction='Research the topic, then call finish_task with results.',
-    description='Researches topics.',
-    tools=[search_web],
-)
-
-root_agent = LlmAgent(
-    name='coordinator',
-    model='gemini-2.5-flash',
-    sub_agents=[researcher],
-    instruction='Delegate research via request_task_researcher.',
-)
-```
-
-**Key rules**: Sub-agents need `description`. `finish_task` instructions are auto-injected. Default schemas provided if none set (`goal`/`background` for input, `result` for output).
-
----
-
-## 9. State & Events
+## 8. State & Events
 
 ### Context Properties
 
@@ -388,11 +276,11 @@ def my_node(ctx: Context, node_input: str) -> str:
   ctx.state.get("key", "default")   # Read state
   ctx.session.id                     # Session ID
   ctx.node_path                      # "Workflow/node_name"
+  ctx.node                           # Current node
   ctx.run_id                         # Current execution ID
-  ctx.triggered_by                   # Predecessor name
   ctx.attempt_count                  # 1 on first attempt (1-based)
   ctx.resume_inputs                  # HITL resume data (dict keyed by interrupt_id)
-  ctx.in_nodes                       # Predecessor names (frozenset)
+  ctx.interrupt_ids                  # Active interrupt IDs
   ctx.output                         # Node's result value (settable)
   ctx.route                          # Routing value (settable)
   return "result"
@@ -442,15 +330,15 @@ def save(ctx: Context, node_input: str) -> str:
 
 ---
 
-## 10. Retry Configuration
+## 9. Retry Configuration
 
 ```python
 from google.adk.workflow import FunctionNode, RetryConfig
 
 node = FunctionNode(
-    flaky_call,
+    func=flaky_call,           # func is keyword-only
     retry_config=RetryConfig(
-        max_attempts=5,        # Default: 5. 0 or 1 = no retry
+        max_attempts=5,        # Default: None (treated as 5); 1 = no retry
         initial_delay=1.0,     # Seconds before first retry
         max_delay=60.0,        # Max seconds between retries
         backoff_factor=2.0,    # Delay multiplier per attempt
@@ -464,7 +352,7 @@ Delay formula: `min(initial_delay * backoff_factor^attempt, max_delay) * (1 + ra
 
 ---
 
-## 11. Testing
+## 10. Testing
 
 > **Note:** The testing utilities below (`testing_utils`, `InMemoryRunner`) are internal to the ADK repository. They are not part of the public `google-adk` package. For your own tests, use `App` + `InMemoryRunner` from `google.adk.runners` or write a custom test harness.
 
@@ -490,7 +378,7 @@ async def test_workflow():
   async for event in runner.run_async(
       user_id="test_user",
       session_id=session.id,
-      new_message=types.Content(role="user", parts=[types.Part.from_text("hello")]),
+      new_message=types.Content(role="user", parts=[types.Part.from_text(text="hello")]),
   ):
     if event.output is not None:
       assert event.output == "done"
@@ -498,7 +386,7 @@ async def test_workflow():
 
 ---
 
-## 12. Import Paths
+## 11. Import Paths
 
 ### Workflow Core
 
@@ -512,6 +400,7 @@ async def test_workflow():
 | `Node` (subclassable) | `from google.adk.workflow import Node` |
 | `@node` decorator | `from google.adk.workflow import node` |
 | `RetryConfig` | `from google.adk.workflow import RetryConfig` |
+| `NodeTimeoutError` | `from google.adk.workflow import NodeTimeoutError` |
 | `DEFAULT_ROUTE` | `from google.adk.workflow import DEFAULT_ROUTE` |
 
 ### Workflow Nodes (auto-wrapped)
@@ -548,7 +437,7 @@ Nodes are auto-wrapped when placed in edges. You do not need to import wrapper c
 
 ---
 
-## 13. Best Practices
+## 12. Best Practices
 
 ### Use Pydantic Models, Not Raw Dicts
 
@@ -576,7 +465,7 @@ def lookup(node_input: Itinerary) -> FlightInfo:
 from google.genai import types
 
 def final_output(node_input: str):
-  yield Event(content=types.Content(role='model', parts=[types.Part.from_text(node_input)]))
+  yield Event(content=types.Content(role='model', parts=[types.Part.from_text(text=node_input)]))
   yield Event(output=node_input)
 ```
 

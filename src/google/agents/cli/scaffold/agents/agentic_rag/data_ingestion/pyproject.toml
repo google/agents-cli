@@ -13,7 +13,7 @@ dependencies = [
     "google-cloud-pipeline-components>=2.19.0",
     "google-cloud-vectorsearch>=0.4.0",
     "kfp>=1.4.0",
-    "langchain-text-splitters>=0.3.0",
+    "langchain-text-splitters>=1.1.2",
     "markdownify>=0.14.0",
     "pandas<3",
     "swifter>=1.4.0",

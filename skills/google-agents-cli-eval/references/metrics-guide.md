@@ -44,6 +44,8 @@ Custom metrics are declared in `eval_config.yaml` (or `.json`) under `custom_met
 
 Code-based metrics default to **local in-process execution** (no GCP project or region required); opt into the Vertex AI sandbox with `execution: "remote"`.
 
+> **Scaffolded default metric.** The scaffolded `eval_config.yaml` ships `custom_response_quality` as a local LLM-judge in `tests/eval/metrics.py` (referenced via `custom_function_file`, run in-process via `google-genai`). It grades on either backend — `genai.Client()` uses `GEMINI_API_KEY` (AI Studio) or ADC (Vertex) — and reads each case's `reference` (ground truth) when present. To grade with the managed Vertex eval service instead, replace it with a built-in metric or an `LLMMetric` (`prompt_template`).
+
 ### Example
 
 ```yaml
@@ -81,11 +83,11 @@ custom_metrics:
           return {'score': n}
 ```
 
-For datasets produced by `agents-cli eval generate` / `eval dataset synthesize`, each eval case exposes three standard fields to a metric: `{prompt}` (user message), `{response}` (final agent text, populated from the last text-bearing event), and `{agent_data}` (the full `turns`/`events` trace, used when the judge or custom function needs to reason about tool calls or intermediate steps). `{reference}` and `{context}` resolve only when the eval case has `reference` / `context` fields populated (e.g., golden-answer datasets); they are not populated by `eval generate` / `eval dataset synthesize`.
+Metrics receive the eval case's `{prompt}`, `{response}`, and `{agent_data}` (and `{reference}` / `{context}` when the case populates them) — see SKILL.md's *Evaluation Configuration Schema → Agent trace field model* for details.
 
 ### Schema reference
 
-Each entry in `custom_metrics` must conform to one of two Agent Platform evaluation metric schemas. The presence of `custom_function` selects `CodeExecutionMetric`; otherwise it's `LLMMetric`.
+Each entry in `custom_metrics` must conform to one of two Agent Platform evaluation metric schemas. The presence of `custom_function` or `custom_function_file` selects `CodeExecutionMetric`; otherwise it's `LLMMetric`.
 
 #### Code Execution Metric (`CodeExecutionMetric`)
 
@@ -94,8 +96,29 @@ Evaluates responses using custom Python code.
 | Field | Required | Description |
 |-------|----------|-------------|
 | `name` | yes | Unique identifier for the metric. |
-| `custom_function` | yes | Python source containing `def evaluate(instance):`. Receives an evaluation instance, returns a numeric score or a `{'score', 'explanation'}` dict. |
+| `custom_function` | one of | Python source containing `def evaluate(instance):`. Receives an evaluation instance, returns a numeric score or a `{'score', 'explanation'}` dict. |
+| `custom_function_file` | one of | Path to a `.py` file containing `def evaluate(instance):`, **resolved relative to the eval config file's directory** (absolute paths honored). Keeps the metric a real, lintable/testable module instead of an inline blob. Mutually exclusive with `custom_function`. Works with both `execution` modes (for `remote`, the file's source is uploaded). |
 | `execution` | no | Where the function runs. `"local"` (default) — executed in the CLI process; no GCP project or region required; **runs with the CLI's privileges**, so only use trusted code. `"remote"` — uploaded and executed inside Vertex AI's `CodeExecutionMetric` sandbox; requires a configured GCP project + region. |
+
+**Minimal `custom_function_file` example** — point the metric at a sibling `.py` file instead of an inline blob:
+
+```yaml
+# tests/eval/eval_config.yaml
+metrics_to_run:
+  - turn_count
+custom_metrics:
+  - name: turn_count
+    custom_function_file: metrics.py   # resolved next to this config file
+```
+
+```python
+# tests/eval/metrics.py  (same directory as the config)
+def evaluate(instance):
+    turns = (instance.get("agent_data") or {}).get("turns", [])
+    return {"score": len(turns)}
+```
+
+Grade with `agents-cli eval grade --config tests/eval/eval_config.yaml`.
 
 #### LLM-as-a-Judge Metric (`LLMMetric`)
 

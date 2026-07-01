@@ -12,7 +12,7 @@ description: >
 metadata:
   author: Google
   license: Apache-2.0
-  version: 0.6.1
+  version: 1.0.0
   requires:
     bins:
       - agents-cli
@@ -62,7 +62,7 @@ Choose the right deployment target based on your requirements:
 
 > **Ambient / scheduled / event-driven agents:** ADK's `trigger_sources` registers `/apps/{app}/trigger/*` endpoints on the same FastAPI app for **all** targets. On **Cloud Run** / **GKE** these are public HTTP routes you point a Pub/Sub push subscription or Eventarc trigger at; on **Agent Runtime** the same routes are reachable through the Agent Engine `/api` passthrough (e.g. `.../reasoningEngines/v1/{resource}/api/apps/{app}/trigger/pubsub`). Cloud Run remains the simplest target for unauthenticated trigger sources. See `/google-agents-cli-adk-code` (`references/adk-python.md`, section "12. Event-Driven / Ambient Agents") for the `trigger_sources` pattern.
 
-> **OAuth / user consent agents:** Use **Agent Runtime** with Gemini Enterprise for agents that need OAuth 2.0 user consent (e.g., accessing Google Drive, Calendar, or other user-scoped APIs). Cloud Run does not currently support managed OAuth flows. See the `adk-ae-oauth` sample in `/google-agents-cli-workflow` Phase 1.
+> **OAuth / user consent agents:** Use **Agent Runtime** with Gemini Enterprise for agents that need OAuth 2.0 user consent (e.g., accessing Google Drive, Calendar, or other user-scoped APIs). Cloud Run does not currently support managed OAuth flows. See the `adk-ae-oauth` sample in the `/google-agents-cli-workflow` sample catalog (Phase 1).
 
 ---
 
@@ -114,7 +114,6 @@ agents-cli infra single-project
 | `--min-instances` | Minimum number of instances (default: `1`) | Agent Runtime, Cloud Run |
 | `--max-instances` | Maximum number of instances (default: `10`) | Agent Runtime, Cloud Run |
 | `--concurrency` | Concurrent requests per container (default: `8`; see [Sizing a deployment](#sizing-a-deployment)) | Agent Runtime, Cloud Run |
-| `--num-workers` | Worker processes per container (default: `1`) | Agent Runtime |
 | `--port` | Container port | Cloud Run, Agent Runtime |
 | `--build-args` | Comma-separated `KEY=VALUE` Docker build args | Agent Runtime |
 | `--iap` | Enable Identity-Aware Proxy | Cloud Run |
@@ -135,22 +134,22 @@ Run `agents-cli deploy --help` for the full flag reference.
 
 ## Sizing a deployment
 
-Defaults (same on Agent Runtime, Cloud Run, and the generated `service.tf`): `--cpu 1`, `--memory 4Gi`, `--num-workers 1`, `--concurrency 8`, `--min-instances 1`, `--max-instances 10`.
+Defaults (same on Agent Runtime, Cloud Run, and the generated `service.tf`): `--cpu 1`, `--memory 4Gi`, `--concurrency 8`, `--min-instances 1`, `--max-instances 10`.
 
 The params are coupled — scale them together:
 
-- **Workers = vCPUs.** Each worker is one GIL-bound process that saturates one core, so raise `--num-workers` with `--cpu` (e.g. `--cpu 4` → `--num-workers 4`) or you pay for idle cores.
+- **One async process — scale out, not up.** The container runs a single `uvicorn` process that serves many requests concurrently on the event loop, so throughput comes from `--concurrency` and horizontal scale (`--max-instances`), not extra worker processes. Raise `--cpu` only if profiling shows the event loop or synchronous tool calls are CPU-bound.
 - **Memory bounds concurrency.** Each concurrent request keeps its full working set (context window, history, RAG chunks, response buffer) in memory while it waits on the model, so peak ≈ base + `concurrency × per-request memory`. Memory — not CPU — is the first limit, so raising `--concurrency` without `--memory` is the main OOM cause.
 - **Concurrency default is conservative.** An async worker can serve many concurrent requests while it waits on the model, but per-request memory is agent-specific, so `8` protects a memory-heavy (RAG/multimodal) agent. Light agents can raise it to 16–32+ after load-testing. See [Underutilized asynchronous workers](https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/runtime/optimize-and-scale#underutilized-workers).
 
 ```bash
 # 4x throughput: scale every param, not just one
-agents-cli deploy --cpu 4 --num-workers 4 --concurrency 16 --memory 16Gi
+agents-cli deploy --cpu 4 --concurrency 16 --memory 16Gi --max-instances 20
 ```
 
 **Tune with the scaffolded load test** (`tests/load_test/`, run locally or in the CI/CD staging pipeline): drive load, watch *max* latency and memory/OOM restarts, then adjust — high max latency → raise concurrency (+ workers/cpu); OOM → raise memory or lower concurrency.
 
-> `--num-workers` is Agent-Runtime-only (Cloud Run runs one uvicorn process). On **GKE** these flags are rejected — size via the Terraform manifests + HorizontalPodAutoscaler under `deployment/terraform/`.
+> On **GKE** these sizing flags are rejected — size via the Terraform manifests + HorizontalPodAutoscaler under `deployment/terraform/`.
 
 ---
 

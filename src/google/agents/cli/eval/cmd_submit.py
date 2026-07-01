@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
+
 import click
 import vertexai
 from rich.console import Console
@@ -83,7 +85,8 @@ def cmd_submit(
     project: str | None = None,
     region: str | None = None,
 ) -> None:
-    """Submit an E2E cloud-side evaluation run on Vertex AI Eval Service."""
+    """[Experimental] Submit an E2E cloud-side evaluation run on Vertex AI Eval Service."""
+    logging.warning("`eval submit` is experimental and may change.")
     console = Console()
 
     client_metrics, _, _ = prepare_eval_metrics(
@@ -156,7 +159,8 @@ def cmd_results(
     project: str | None = None,
     region: str | None = None,
 ) -> None:
-    """Fetch results from a completed cloud evaluation run."""
+    """[Experimental] Fetch results from a completed cloud evaluation run."""
+    logging.warning("`eval results` is experimental and may change.")
     console = Console()
     console.print(f"Retrieving results for evaluation run [cyan]{run_id}[/cyan]...")
     try:

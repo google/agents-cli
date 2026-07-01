@@ -11,7 +11,7 @@ description: >
 metadata:
   author: Google
   license: Apache-2.0
-  version: 0.6.1
+  version: 1.0.0
   requires:
     bins:
       - agents-cli
@@ -44,7 +44,7 @@ Improving agent quality is iterative. The 5 stages below describe the loop. Each
 
 **Default:** Use or edit the scaffolded `tests/eval/datasets/basic-dataset.json` to define single-turn eval inputs. Start with 1–2 cases.
 
-**Opt-in:** `agents-cli eval dataset synthesize` — runs e2e user simulation against your live agent to synthesize multi-turn eval datasets. Prefer when testing multi-turn conversations but lacking data. Output includes traces, so you can skip Stage 2 and go directly to `eval grade`.
+**Opt-in:** `agents-cli eval dataset synthesize` — user-simulate multi-turn datasets when you lack data; its output includes traces, so skip Stage 2 and grade directly. See *Eval Commands* and `references/user-simulation.md`.
 
 ### 2. Run Inference
 
@@ -60,7 +60,7 @@ Improving agent quality is iterative. The 5 stages below describe the loop. Each
 
 **Default:** Open the latest `artifacts/grade_results/results_<ts>.html` (or `.json`) and identify failed metrics — see *What to fix when scores fail* below for the fix table.
 
-**Opt-in:** `agents-cli eval analyze` — runs LLM-based failure clustering and root-cause analysis over the grade results. Prefer when you have 10+ failing cases and want categorized failure modes instead of case-by-case reading.
+**Opt-in:** `agents-cli eval analyze` — LLM-based failure clustering; prefer when you have 10+ failing cases and want categorized failure modes. See *Eval Commands*.
 
 ### 5. Optimize & Code Fix
 
@@ -275,75 +275,11 @@ Two shapes are supported.
 }
 ```
 
-**(b) Multi-turn continuation via `agent_data`** — partial conversation, last turn ends with a user message. Use to continue an existing conversation; the agent's next response is what gets evaluated.
-
-```json
-{
-  "eval_cases": [
-    {
-      "eval_case_id": "booking_followup",
-      "agent_data": {
-        "agents": {
-          "flight_booking_agent": {
-            "agent_id": "flight_booking_agent",
-            "instruction": "You are a helpful flight booking assistant."
-          }
-        },
-        "turns": [
-          {
-            "turn_index": 0,
-            "events": [
-              {"author": "user", "content": {"parts": [{"text": "I want to book a flight to Paris."}]}},
-              {"author": "flight_booking_agent", "content": {"parts": [{"text": "I found a flight for $800. Do you want to book it?"}]}}
-            ]
-          },
-          {
-            "turn_index": 1,
-            "events": [
-              {"author": "user", "content": {"parts": [{"text": "Yes, please book it."}]}}
-            ]
-          }
-        ]
-      }
-    }
-  ]
-}
-```
+**(b) Multi-turn continuation via `agent_data`** — a partial conversation whose last turn ends with a user message; the agent's next response is evaluated. See `references/dataset_schema.md` (*Multi-Turn / Multi-Agent Dataset*) for the JSON shape.
 
 ### Grading input format (traces)
 
-Complete trace — agent responses, tool calls, and tool responses all present. Normally produced by `eval generate` or `eval dataset synthesize`; shown here so you can recognize the shape when debugging.
-
-```json
-{
-  "eval_cases": [
-    {
-      "eval_case_id": "weather_query",
-      "agent_data": {
-        "agents": {
-          "weather_agent": {
-            "agent_id": "weather_agent",
-            "instruction": "You are a helpful weather assistant."
-          }
-        },
-        "turns": [
-          {
-            "turn_index": 0,
-            "events": [
-              {"author": "user", "content": {"parts": [{"text": "What's the weather in San Francisco?"}]}},
-              {"author": "weather_agent", "content": {"parts": [{"function_call": {"name": "get_weather", "args": {"city": "San Francisco"}}}]}},
-              {"author": "weather_agent", "content": {"parts": [{"function_response": {"name": "get_weather", "response": {"temp_f": 62, "conditions": "foggy"}}}]}},
-              {"author": "weather_agent", "content": {"parts": [{"text": "It's currently 62°F and foggy in San Francisco."}]}}
-            ]
-          }
-        ]
-      }
-    }
-  ]
-}
-```
-
-**Key conventions:** authors are `"user"`, agent IDs from the `agents` map, or `"tool"`; tool calls use `function_call` parts and tool results use `function_response` parts. See `references/dataset_schema.md` for multi-agent examples and the full type reference.
+A complete trace — agent responses plus `function_call` / `function_response` parts — normally produced by `eval generate` / `eval dataset synthesize` (you don't write these by hand). Authors are `"user"`, an agent ID from the `agents` map, or `"tool"`. See `references/dataset_schema.md` for the trace shape, multi-agent examples, and the full type reference.
 
 ---
 
@@ -421,13 +357,13 @@ Each eval case runs in its own fresh in-memory session (`eval generate` creates 
 
 ### Vertex eval region
 
-`eval grade`, `eval submit`, and `eval dataset synthesize` **default to the `global` endpoint** — they don't inherit the manifest `region` (the eval services support only a subset of regions). `eval analyze` is `global`-only; `eval generate` runs locally and follows the project region. So you normally don't configure anything for eval.
-
-Override per run with `--region <REGION>` (e.g. data residency); the service rejects an unsupported one:
+`eval grade` and `eval submit` **default to the `global` endpoint** — they don't inherit the manifest `region` (the eval services support only a subset of regions), and `eval analyze` is `global`-only. Override these per run with `--region <REGION>` (e.g. data residency); the service rejects an unsupported one:
 
 ```
 400 FAILED_PRECONDITION: Unsupported region for Vertex Evaluation Service: <region>
 ```
+
+`eval generate` and `eval dataset synthesize` run your agent locally, so they honor the agent's own `.env` — notably `GOOGLE_CLOUD_LOCATION`, which selects the model endpoint **when the agent uses Vertex AI** (`GOOGLE_GENAI_USE_VERTEXAI=true`); it's unused with a `GEMINI_API_KEY` (AI Studio). They take **no** `--region` and never override your `.env` with the manifest `region`; change the model region by editing `.env`. One caveat for `synthesize`: its scenario-generation step is a **server-side** eval call at `GOOGLE_CLOUD_LOCATION`, so keep that an eval-supported region (`global` by default) even though the agent itself could run elsewhere.
 
 **No eval region fits your data-residency rules?** Fall back to **local custom metrics** — a `custom_metrics` entry with a `custom_function` (`execution: local`, the default) grades in-process with no GCP region required. You lose the managed built-in metrics, but your `custom_function` can still call an LLM judge in a compliant region itself — so LLM-as-judge grading stays available anywhere.
 

@@ -13,6 +13,19 @@
         "role": "user",
         "parts": [{"text": "What's the weather like in San Francisco?"}]
       }
+    },
+    {
+      "eval_case_id": "capital_lookup",
+      "prompt": {
+        "role": "user",
+        "parts": [{"text": "What is the capital of France?"}]
+      },
+      "reference": {
+        "response": {
+          "role": "model",
+          "parts": [{"text": "The capital of France is Paris."}]
+        }
+      }
     }
   ]
 }

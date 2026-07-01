@@ -17,7 +17,6 @@ hidden: true
 example_question: "What's the weather in San Francisco?"
 settings:
   language: "typescript"
-  requires_data_ingestion: false
   requires_session: false
   deployment_targets: ["cloud_run", "gke", "none"]
   extra_dependencies: []

@@ -25,7 +25,7 @@ Compared to the always-on [Cloud Trace telemetry](cloud-trace.md), this plugin p
 
 ## Prerequisites
 
-*   Agent project generated with an **ADK-based** template (e.g., `adk`, `agentic_rag`).
+*   Agent project generated with an **ADK-based** template (e.g., `adk`).
 *   `google-adk` version `>=1.21.0` (added automatically when you enable the plugin).
 *   A Google Cloud project with BigQuery API and BigQuery Storage API enabled (typically handled by Terraform).
 

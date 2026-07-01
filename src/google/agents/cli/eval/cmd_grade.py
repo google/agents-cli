@@ -16,6 +16,7 @@
 
 import glob
 import os
+from pathlib import Path
 
 import click
 import vertexai
@@ -27,6 +28,7 @@ from vertexai._genai.types.common import (
 import google.agents.cli._project as _project
 from google.agents.cli.eval import _paths
 from google.agents.cli.eval.eval_utils import (
+    load_eval_dotenv,
     prepare_eval_metrics,
     print_results_table,
     resolve_eval_region,
@@ -114,6 +116,11 @@ def cmd_grade(
 ) -> None:
     """Score populated agent traces against one or more metrics."""
     console = Console()
+    project_root = _project.find_project_root()
+    # Load the project's .env (same approach as the eval runners) so local,
+    # model-calling metrics (e.g. an LLM-judge via google-genai) pick up the
+    # configured backend -- GEMINI_API_KEY (AI Studio) or GOOGLE_CLOUD_* (Vertex).
+    load_eval_dotenv(project_root or Path.cwd())
     cfg = None
 
     # Default config path in case one is not explicitly supplied
@@ -121,7 +128,6 @@ def cmd_grade(
 
     if not traces_path or not output_path or not config_path:
         try:
-            project_root = _project.find_project_root()
             if not project_root:
                 raise FileNotFoundError("No pyproject.toml found.")
             cfg = _project.read_project_config(str(project_root))

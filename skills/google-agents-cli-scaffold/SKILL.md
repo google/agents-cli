@@ -12,7 +12,7 @@ description: >
 metadata:
   author: Google
   license: Apache-2.0
-  version: 0.6.1
+  version: 1.0.0
   requires:
     bins:
       - agents-cli
@@ -39,8 +39,7 @@ Use the `agents-cli` CLI to create new ADK agent projects or enhance existing on
 
 | Choice | CLI flag |
 |--------|----------|
-| RAG with vector search | `--agent agentic_rag --datastore agent_platform_vector_search` |
-| RAG with document search | `--agent agentic_rag --datastore agent_platform_search` |
+| RAG (vector or document search) | Not a scaffold flag — clone-and-study `rag-vector-search` / `rag-agent-search` (see `/google-agents-cli-workflow` Phase 1) |
 | A2A protocol | built into every ADK agent — scaffold normally (`--agent adk`) |
 | Prototype (no deployment) | `--prototype` |
 | Deployment target | `--deployment-target <agent_runtime\|cloud_run\|gke>` |
@@ -52,9 +51,8 @@ Use the `agents-cli` CLI to create new ADK agent projects or enhance existing on
 Older names → CLI values (`vertexai` SDK package name unchanged):
 
 - Agent Engine / Vertex AI Agent Engine → `--deployment-target agent_runtime`
-- Vertex AI Search / Agent Search → `--datastore agent_platform_search`
-- Vertex AI Vector Search / Vector Search → `--datastore agent_platform_vector_search`
 - Agent Engine sessions / Agent Platform Sessions → `--session-type agent_platform_sessions`
+- Vertex AI Search / Vertex AI Vector Search / RAG → clone-and-study recipe, not a flag (see `/google-agents-cli-workflow` Phase 1)
 
 ---
 
@@ -73,7 +71,7 @@ agents-cli scaffold create <project-name> \
 **Constraints:**
 - Project name must be **26 characters or less**, lowercase letters, numbers, and hyphens only.
 - Do NOT `mkdir` the project directory before running `create` — the CLI creates it automatically. If you mkdir first, `create` will fail or behave unexpectedly.
-- Auto-detect the guidance filename based on the IDE you are running in and pass `--agent-guidance-filename` accordingly (`AGENTS.md` for Antigravity CLI/OpenAI Codex/other, `CLAUDE.md` for Claude Code, `GEMINI.md` for Gemini CLI).
+- Auto-detect the guidance filename based on the IDE you are running in and pass `--agent-guidance-filename` accordingly (`GEMINI.md` for Antigravity CLI, `CLAUDE.md` for Claude Code, `AGENTS.md` for OpenAI Codex/other).
 - When enhancing an existing project, check where the agent code lives. If it's not in `app/`, pass `--agent-directory <dir>` (e.g. `--agent-directory agent`). Getting this wrong causes enhance to miss or misplace files.
 
 ### Reference Files
@@ -125,7 +123,10 @@ agents-cli scaffold enhance . --cicd-runner github_actions
 | Template | Deployment | Description |
 |----------|------------|-------------|
 | `adk` | Agent Runtime, Cloud Run, GKE | Standard ADK agent (default); A2A protocol built in |
-| `agentic_rag` | Agent Runtime, Cloud Run, GKE | RAG with data ingestion pipeline; A2A protocol built in |
+
+> **RAG is a clone-and-study recipe, not a template.** Build it by studying `rag-vector-search` or
+> `rag-agent-search` and adapting the sample into your project — see `/google-agents-cli-workflow`
+> Phase 1.
 
 ---
 
@@ -165,15 +166,11 @@ After scaffolding, immediately load `/google-agents-cli-workflow` — it contain
 **Key files to customize:** `app/agent.py` (instruction, tools, model), `app/tools.py` (custom tool functions), `.env` (project ID, location, API keys).
 **Files to preserve:** `agents-cli-manifest.yaml` (CLI reads this), deployment configs under `deployment/`, `Makefile`, `app/__init__.py` (the `App(name=...)` must match the directory name — default `app`), and the generated runtime/A2A infra (`app/fast_api_app.py`, `app/app_utils/a2a.py`, `app/app_utils/services.py`, `Dockerfile`) — these wire up serving, sessions, and the built-in A2A surface; don't hand-edit them.
 
-**RAG projects (`agentic_rag`) — provision datastore first:**
-Before running `agents-cli playground` or testing your RAG agent, you must provision the datastore and ingest data:
-```bash
-agents-cli infra datastore   # Provision datastore infrastructure
-agents-cli data-ingestion    # Ingest data into the datastore
-```
-Use `infra datastore` — **not** `infra single-project`. Both provision the datastore, but `infra datastore` is faster because it skips unrelated Terraform. Without this step, the agent won't have data to search over.
-
-> **Vector Search region:** `vector_search_location` defaults to `us-central1`, separate from `region` (`us-east1`). It sets both the Vector Search collection region and the BQ ingestion dataset region, kept colocated to avoid cross-region data movement. Override per-invocation with `agents-cli data-ingestion --vector-search-location <region>`.
+**RAG projects — clone-and-study, not a template:**
+RAG isn't a scaffold option. Build it by studying `rag-vector-search` or `rag-agent-search` (see
+`/google-agents-cli-workflow` Phase 1) and adapting the sample's `app/`, `infra/terraform/`, and
+ingestion into your project. Provisioning and ingestion run from the sample's own `Makefile`
+(`make setup-infra`, `make data-ingestion`).
 
 **Verifying your agent works:** Use `agents-cli run "test prompt"` for quick smoke tests, then `agents-cli eval generate` and `agents-cli eval grade` for systematic validation. Do NOT write pytest tests that assert on LLM response content — that belongs in eval.
 
@@ -208,7 +205,7 @@ This is useful for:
 - **Agent Runtime clears session_type** — if deploying to `agent_runtime`, remove any `session_type` setting from your code
 - **Start with `--prototype`** for quick iteration — add deployment later with `enhance`
 - **Project names** must be ≤26 characters, lowercase, letters/numbers/hyphens only
-- **NEVER write A2A code from scratch** — A2A is built into every Python ADK agent (`adk`, `agentic_rag`); the A2A Python API surface (import paths, `AgentCard` schema, `to_a2a()` signature) is non-trivial and changes across versions. Scaffold normally; never hand-write the A2A surface.
+- **NEVER write A2A code from scratch** — A2A is built into every Python ADK agent (`adk`); the A2A Python API surface (import paths, `AgentCard` schema, `to_a2a()` signature) is non-trivial and changes across versions. Scaffold normally; never hand-write the A2A surface.
 
 ---
 

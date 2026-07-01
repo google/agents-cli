@@ -108,7 +108,7 @@ Build an agent that runs nightly, looks for metric/log patterns that match histo
 
 ### Organizational Memory
 
-*Intermediate · `agentic_rag`*
+*Intermediate · RAG recipe*
 
 Index Google Chat, email, design documents, and meeting notes for decision records. When a proposal recurs (for example, "use Redis for sessions"), surface the original thread and the decision the team reached.
 
@@ -116,11 +116,11 @@ Index Google Chat, email, design documents, and meeting notes for decision recor
 Build a RAG agent that indexes Google Chat, email, and design docs nightly. Surface past decisions when someone proposes something we've already discussed.
 ```
 
-The [`agentic_rag` template](templates.md) provides retrieval out of the box. See [Project Structure](project-structure.md) for ingestion code locations.
+RAG is a clone-and-study recipe — see [Agent Templates](templates.md#rag-retrieval-augmented-generation) for the samples to adapt.
 
 ### Institutional Memory Navigator
 
-*Intermediate · `agentic_rag` · Gemini Enterprise*
+*Intermediate · RAG recipe · Gemini Enterprise*
 
 Deploy in Gemini Enterprise with permissioned access to Drive, Google Chat, and email. Respond to questions such as "How do I get production database access?" with both the documented process and the current operational reality.
 
@@ -138,7 +138,7 @@ Long-running workflows or multi-agent coordination. Requires dedicated infrastru
 
 ### Due Diligence
 
-*Advanced · `agentic_rag`*
+*Advanced · RAG recipe*
 
 Index a target codebase of approximately 500,000 lines. Analyze technical debt, security vulnerabilities, license compliance, and deployment complexity. Produce a risk report with line numbers, dependency graphs, and CVE references. Multi-day analysis benefits from Agent Runtime's extended sessions and checkpointing.
 
@@ -160,7 +160,7 @@ Use [BigQuery agent analytics](observability/bq-agent-analytics.md) to track aud
 
 ### RFP Response Generator
 
-*Advanced · `agentic_rag`*
+*Advanced · RAG recipe*
 
 Pull from past project records, current resource availability, and pricing models. Estimate timelines and budgets. Draft a technical approach. Produce a proposal package for human review.
 
@@ -196,6 +196,6 @@ Build A2A specialist agents for a large framework migration: data models, API co
 
 - [Tutorial: Build Your First Agent](quickstart-tutorial.md) — build, evaluate, and deploy with your coding agent
 - [Project Structure](project-structure.md) — understand what each generated file does
-- [Agent Templates](templates.md) — choose the right template (`adk`, `agentic_rag`)
+- [Agent Templates](templates.md) — the `adk` template and the RAG clone-and-study recipe
 - [Development Guide](development.md) — full development workflow
 - [CLI Reference](../cli/index.md) — all commands and flags

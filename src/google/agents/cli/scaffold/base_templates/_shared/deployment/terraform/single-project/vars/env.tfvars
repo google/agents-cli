@@ -6,10 +6,3 @@ project_id = "{{ cookiecutter.google_cloud_project }}"
 
 # The Google Cloud region you will use to deploy the infrastructure
 region = "us-east1"
-
-{%- if cookiecutter.data_ingestion %}
-{%- if cookiecutter.datastore_type == "agent_platform_search" %}
-# The value can only be one of "global", "us" and "eu".
-data_store_region = "global"
-{%- endif %}
-{%- endif %}

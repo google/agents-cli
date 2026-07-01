@@ -29,14 +29,11 @@ from google.agents.cli._project import (
     find_project_root,
     read_project_config,
     require_agent_directory,
-    resolve_gcp_project,
-    resolve_gcp_region,
 )
 from google.agents.cli._runner import run
 from google.agents.cli.eval import _paths
 
 _INFERENCE_TIMEOUT = 600  # 10 minutes
-_DEFAULT_GENERATE_REGION = "global"
 
 _INFERENCE_RUNNER = "_inference_runner.py"
 _INFERENCE_STAGE_DIR = ".agents-cli-scripts"
@@ -90,24 +87,9 @@ def _stage_inference_runner(dest_dir: Path) -> Path:
         "`agents-cli eval grade` can consume it directly."
     ),
 )
-@click.option(
-    "--project",
-    default=None,
-    help="GCP project ID. Overrides GOOGLE_CLOUD_PROJECT and ADC.",
-)
-@click.option(
-    "--region",
-    default=None,
-    help=(
-        "GCP region. Overrides agents-cli-manifest.yaml region "
-        "and the GOOGLE_CLOUD_LOCATION env var."
-    ),
-)
 def cmd_generate(
     dataset: str | None,
     output: str | None,
-    project: str | None,
-    region: str | None,
 ):
     """Generate agent traces by running inference over eval cases.
 
@@ -176,9 +158,6 @@ def cmd_generate(
                 "(continued conversation)."
             )
 
-    resolved_project = resolve_gcp_project(project, required=True)
-    resolved_region = region or resolve_gcp_region(cfg, fallback=_DEFAULT_GENERATE_REGION)
-
     output_path = _paths.resolve_output_path(
         project_root,
         output,
@@ -195,10 +174,6 @@ def cmd_generate(
 
     console.print(f"[bold]Running inference on dataset:[/bold] [cyan]{dataset}[/cyan]")
     console.print(f"[bold]Using agent:[/bold] [cyan]{cfg.agent_directory}[/cyan]")
-    console.print(
-        f"[bold]Project:[/bold] [cyan]{resolved_project}[/cyan], "
-        f"[bold]region:[/bold] [cyan]{resolved_region}[/cyan]"
-    )
 
     stage_dir = project_root / _INFERENCE_STAGE_DIR
     stage_dir_existed = stage_dir.exists()
@@ -220,17 +195,13 @@ def cmd_generate(
                 cwd=str(project_root),
                 check_err_msg="Inference failed",
                 timeout=_INFERENCE_TIMEOUT,
-                env={
-                    "GOOGLE_CLOUD_PROJECT": resolved_project,
-                    "GOOGLE_CLOUD_LOCATION": resolved_region,
-                    "PYTHONUNBUFFERED": "1",
-                },
+                env={"PYTHONUNBUFFERED": "1"},
             )
         except subprocess.TimeoutExpired as exc:
             raise click.ClickException(
                 f"Inference timed out after {_INFERENCE_TIMEOUT}s. "
-                "The Vertex AI call may be hanging; try a different "
-                "--region."
+                "The Vertex AI call may be hanging; check "
+                "GOOGLE_CLOUD_LOCATION in your .env."
             ) from exc
     finally:
         if not stage_dir_existed:

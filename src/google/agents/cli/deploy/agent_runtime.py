@@ -24,12 +24,12 @@ import datetime
 import json
 import logging
 import os
-import subprocess
 import warnings
 from pathlib import Path
 from typing import Any
 
 import click
+import pathspec
 import vertexai
 from google.cloud import resourcemanager_v3
 from google.iam.v1 import iam_policy_pb2, policy_pb2
@@ -42,8 +42,6 @@ from google.agents.cli._project import (
     find_project_root,
     scaffold_older_than,
 )
-from google.agents.cli._runner import run_resolved
-from google.agents.cli._tools import ToolNotFoundError
 from google.agents.cli.deploy._operation import (
     METADATA_FILE,
     clear_operation,
@@ -56,8 +54,8 @@ from google.agents.cli.deploy._utils import (
     DEFAULT_MAX_INSTANCES,
     DEFAULT_MEMORY,
     DEFAULT_MIN_INSTANCES,
-    DEFAULT_NUM_WORKERS,
     parse_key_value_pairs,
+    read_project_dotenv,
     resolve_service_name,
 )
 from google.agents.cli.scaffold.utils.language import get_project_version
@@ -88,6 +86,13 @@ def format_env_value(value: Any) -> str:
     return str(value)
 
 
+# Agent Runtime injects GOOGLE_CLOUD_PROJECT itself; setting it in
+# deployment_spec.env is rejected with FAILED_PRECONDITION ("... is reserved").
+# GOOGLE_CLOUD_LOCATION is NOT reserved (verified) — the LLM location can differ
+# from the deploy region, so we keep it. Filtered from the propagated .env.
+_AGENT_RUNTIME_RESERVED_ENV = frozenset({"GOOGLE_CLOUD_PROJECT"})
+
+
 def _build_runtime_env_vars(
     *,
     set_env_vars: str | None,
@@ -96,8 +101,11 @@ def _build_runtime_env_vars(
 ) -> dict[str, Any]:
     """Assemble the runtime env vars for the deployed Agent Runtime.
 
-    User ``--update-env-vars`` and ``--set-secrets`` win; everything else is an
-    overridable default:
+    Precedence (highest first): ``--update-env-vars`` / ``--set-secrets``, then the
+    project ``.env``, then these overridable defaults. ``GOOGLE_CLOUD_PROJECT`` is
+    dropped — Agent Runtime reserves it (the platform injects it) and rejects it.
+    The backend defaults to Vertex AI (at ``GOOGLE_CLOUD_LOCATION=global``) unless
+    the ``.env`` supplies an AI Studio API key:
 
     - ``AGENT_VERSION`` — the pyproject.toml version, read at runtime by the A2A
       agent card. Read only when the user hasn't supplied a value, so an override
@@ -105,12 +113,27 @@ def _build_runtime_env_vars(
     - ``PORT`` — the container port, when one is supplied.
     - telemetry toggles — Cloud Trace export and prompt/response capture in spans.
     """
-    env_vars: dict[str, Any] = parse_key_value_pairs(set_env_vars)
+    # Project .env is the base layer; explicit --update-env-vars wins over it.
+    env_vars: dict[str, Any] = read_project_dotenv(find_project_root() or Path.cwd())
+    env_vars.update(parse_key_value_pairs(set_env_vars))
     env_vars.update(secrets)  # type: ignore[arg-type]
+    # Agent Runtime injects these itself; including them in deployment_spec.env is
+    # rejected with FAILED_PRECONDITION ("... is reserved").
+    for reserved in _AGENT_RUNTIME_RESERVED_ENV & env_vars.keys():
+        logging.warning(
+            "Ignoring reserved Agent Runtime env var %s \u2014 it is set by the platform.",
+            reserved,
+        )
+        del env_vars[reserved]
     if "AGENT_VERSION" not in env_vars:
         env_vars["AGENT_VERSION"] = get_project_version(find_project_root() or Path.cwd())
     if port:
         env_vars.setdefault("PORT", str(port))
+    # agent_runtime is Vertex-native: default to Vertex (LLM at global) unless the
+    # .env opted into AI Studio with an API key.
+    if "GEMINI_API_KEY" not in env_vars and "GOOGLE_API_KEY" not in env_vars:
+        env_vars.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "true")
+        env_vars.setdefault("GOOGLE_CLOUD_LOCATION", "global")
     env_vars.setdefault("GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY", "true")
     env_vars.setdefault("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "true")
     return env_vars
@@ -274,44 +297,56 @@ def _missing_dockerfile_error(cfg: ProjectConfig) -> str:
     return "\n".join(lines)
 
 
-def _git_tracked_packages() -> list[str]:
-    """Files git would package (tracked + untracked, honoring .gitignore), or an
-    empty list if git is unavailable or this is not a repo.
+# Always ignored, mirroring gcloud's generated .gcloudignore defaults.
+_DEFAULT_IGNORE_LINES = (".git", ".gcloudignore", ".gitignore")
+_INCLUDE_DIRECTIVE = "#!include:"
 
-    Listed-but-missing files (deleted, not yet committed) are dropped so
-    packaging doesn't fail, with a warning so the discrepancy stays visible.
+
+def _ignore_lines(root: Path) -> list[str]:
+    """Gitignore-style patterns from ``root``'s ignore file.
+
+    Uses ``.gcloudignore`` if present, else ``.gitignore``, plus
+    :data:`_DEFAULT_IGNORE_LINES`. A top-level ``#!include:<file>`` line is
+    expanded once.
     """
-    try:
-        res = run_resolved(
-            ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except (ToolNotFoundError, subprocess.CalledProcessError, OSError):
-        return []
-    listed = [f.strip() for f in res.stdout.strip().split("\n") if f.strip()]
-    missing = [f for f in listed if not os.path.exists(f)]
-    if missing:
-        logging.warning(
-            "Skipping %d git-tracked file(s) missing on disk: %s",
-            len(missing),
-            ", ".join(missing),
-        )
-    return [f for f in listed if os.path.exists(f)]
+    lines = list(_DEFAULT_IGNORE_LINES)
+    source = root / ".gcloudignore"
+    if not source.exists():
+        source = root / ".gitignore"
+    if not source.exists():
+        return lines
+    for raw in source.read_text(encoding="utf-8").splitlines():
+        directive = raw.strip()
+        if directive.startswith(_INCLUDE_DIRECTIVE):
+            included = root / directive.removeprefix(_INCLUDE_DIRECTIVE).strip()
+            if included.exists():
+                lines += included.read_text(encoding="utf-8").splitlines()
+        else:
+            lines.append(raw)
+    return lines
 
 
-def _fallback_packages(agent_dir: str) -> list[str]:
-    """Fixed package list (mirroring the default Dockerfile's COPY set) for when
-    git can't enumerate the tree."""
-    candidates = [
-        f"./{agent_dir}",
-        "pyproject.toml",
-        "Dockerfile",
-        "README.md",
-        "uv.lock",
-    ]
-    return [p for p in candidates if os.path.exists(p)]
+def _packaged_files(root: Path) -> list[str]:
+    """``./``-prefixed paths of files under ``root``, excluding anything ignored
+    per :func:`_ignore_lines`.
+    """
+    spec = pathspec.PathSpec.from_lines("gitwildmatch", _ignore_lines(root))
+    files: list[str] = []
+    # Sort dirs/files for a deterministic, reproducible archive order.
+    for dirpath, dirnames, filenames in os.walk(root):
+        rel_dir = Path(dirpath).relative_to(root)
+        # Prune ignored directories in place so os.walk never descends into them
+        # (the trailing slash tells gitwildmatch to match directory patterns).
+        dirnames[:] = sorted(
+            d for d in dirnames if not spec.match_file((rel_dir / d).as_posix() + "/")
+        )
+        # A file in a kept directory can still be individually ignored (e.g.
+        # ``*.secret``), so check each one even after pruning its parent.
+        for name in sorted(filenames):
+            rel = (rel_dir / name).as_posix()
+            if not spec.match_file(rel):
+                files.append(f"./{rel}")
+    return files
 
 
 def deploy_agent_runtime(
@@ -320,18 +355,17 @@ def deploy_agent_runtime(
     project: str,
     display_name: str | None = None,
     location: str = "us-east1",
-    description: str = "",
+    description: str | None = None,
     source_packages: list[str] | None = None,
     set_env_vars: str | None = None,
     set_secrets: str | None = None,
     labels: str | None = None,
     service_account: str | None = None,
-    min_instances: int = DEFAULT_MIN_INSTANCES,
-    max_instances: int = DEFAULT_MAX_INSTANCES,
-    cpu: str = DEFAULT_CPU,
-    memory: str = DEFAULT_MEMORY,
-    container_concurrency: int = DEFAULT_CONCURRENCY,
-    num_workers: int = DEFAULT_NUM_WORKERS,
+    min_instances: int | None = None,
+    max_instances: int | None = None,
+    cpu: str | None = None,
+    memory: str | None = None,
+    container_concurrency: int | None = None,
     agent_identity: bool = False,
     no_wait: bool = False,
     psc_interface_config: dict | None = None,
@@ -373,18 +407,21 @@ def deploy_agent_runtime(
             "  Please specify a regional location (e.g., 'us-central1', 'us-east1') via --region or in your project config."
         )
 
-    agent_dir = cfg.agent_directory
     display_name = display_name or resolve_service_name(cfg, None)
 
-    # Agent Runtime builds the container image from the project's Dockerfile, so
-    # prefer what git would package (tracked + untracked, .gitignore-honored) and
-    # fall back to a fixed list when git can't enumerate the tree.
-    source_packages = (
-        source_packages or _git_tracked_packages() or _fallback_packages(agent_dir)
-    )
+    # Agent Runtime builds from the project's Dockerfile, so upload the tree.
+    auto_packaged = not source_packages
+    source_packages = source_packages or _packaged_files(Path.cwd())
 
     if not os.path.exists("Dockerfile"):
         raise click.ClickException(_missing_dockerfile_error(cfg))
+    # A present-but-ignored Dockerfile passes the check above yet breaks the
+    # build, so surface it clearly instead of failing opaquely in Agent Engine.
+    if auto_packaged and "./Dockerfile" not in source_packages:
+        raise click.ClickException(
+            "Dockerfile is present but excluded by .gcloudignore/.gitignore.\n"
+            "  Remove the matching ignore pattern so the deploy can package it."
+        )
 
     # Parse CLI environment variables, secrets, and labels
     secrets = parse_secrets(set_secrets)
@@ -396,19 +433,102 @@ def deploy_agent_runtime(
         port=port,
     )
 
+    # Initialize vertexai client
+    http_options = {"api_version": "v1beta1"} if agent_identity else None
+    client = vertexai.Client(
+        project=project,
+        location=location,
+        http_options=http_options,
+    )
+    vertexai.init(project=project, location=location)
+
+    # Check for existing agent
+    existing_agents = list(client.agent_engines.list())
+    matching_agents = [
+        agent
+        for agent in existing_agents
+        if agent.api_resource.display_name == display_name
+    ]
+
+    # Pre-existence flag must be computed before setup_agent_identity: that call
+    # creates a bare identity agent (no deployment spec), but it's still a
+    # first-time spec deploy so the conservative defaults must apply.
+    is_update = bool(matching_agents)
+
+    # Setup agent identity on first deployment
+    if agent_identity and not matching_agents:
+        matching_agents = [setup_agent_identity(client, project, display_name)]
+    if not is_update:
+        # Create: no existing spec to preserve; apply the conservative shape.
+        min_instances = DEFAULT_MIN_INSTANCES if min_instances is None else min_instances
+        max_instances = DEFAULT_MAX_INSTANCES if max_instances is None else max_instances
+        cpu = DEFAULT_CPU if cpu is None else cpu
+        memory = DEFAULT_MEMORY if memory is None else memory
+        container_concurrency = (
+            DEFAULT_CONCURRENCY
+            if container_concurrency is None
+            else container_concurrency
+        )
+
+    if matching_agents:
+        resource_name = matching_agents[0].api_resource.name
+        # list() may return a summary without deployment_spec; get() guarantees
+        # the full env/resource_limits are populated.
+        existing = client.agent_engines.get(name=resource_name)
+        # Preserve env vars set outside this deploy; CLI/user values still win.
+        for key, value in _existing_plain_env_vars(existing).items():
+            env_vars.setdefault(key, value)
+        # Point the A2A agent card at the real Agent Engine HTTP passthrough
+        # instead of localhost; needs the existing engine's resource name, so a
+        # first-time create picks it up on the next deploy.
+        env_vars.setdefault(
+            "APP_URL",
+            f"https://{location}-aiplatform.googleapis.com/reasoningEngines/v1/"
+            f"{resource_name}/api",
+        )
+        # When only one of cpu/memory is set, fill the other half from the live
+        # spec so config_kwargs["resource_limits"] gets a complete pair. When both
+        # are None a plain redeploy must omit resource_limits to preserve the live
+        # value — only fill when exactly one side was explicitly supplied.
+        if (cpu is None) ^ (memory is None):
+            dep = getattr(existing.api_resource.spec, "deployment_spec", None)
+            limits = getattr(dep, "resource_limits", None) or {}
+            existing_cpu = (
+                limits.get("cpu")
+                if isinstance(limits, dict)
+                else getattr(limits, "cpu", None)
+            )
+            existing_memory = (
+                limits.get("memory")
+                if isinstance(limits, dict)
+                else getattr(limits, "memory", None)
+            )
+            cpu = cpu if cpu is not None else existing_cpu
+            memory = memory if memory is not None else existing_memory
+            if cpu is None or memory is None:
+                logging.warning(
+                    "Could not resolve the existing %s to pair with the supplied value; "
+                    "resource_limits left unchanged for this update.",
+                    "memory" if memory is None else "cpu",
+                )
+
     click.echo("\n🤖 Deploying agent to Agent Runtime...\n")
 
     # Log deployment parameters
     click.echo("\n📋 Deployment Parameters:")
+
+    def _shown(v: Any) -> Any:
+        return v if v is not None else "(unchanged)"
+
     params = [
         ("Project", project),
         ("Location", location),
         ("Display Name", display_name),
-        ("Min Instances", min_instances),
-        ("Max Instances", max_instances),
-        ("CPU", cpu),
-        ("Memory", memory),
-        ("Container Concurrency", container_concurrency),
+        ("Min Instances", _shown(min_instances)),
+        ("Max Instances", _shown(max_instances)),
+        ("CPU", _shown(cpu)),
+        ("Memory", _shown(memory)),
+        ("Container Concurrency", _shown(container_concurrency)),
     ]
     if service_account:
         params.append(("Service Account", service_account))
@@ -431,29 +551,28 @@ def deploy_agent_runtime(
         params.append(("Build Args", build_args))
     for name, value in params:
         click.echo(f"  {name}: {value}")
-    source_packages_list = list(source_packages)
 
-    # Initialize vertexai client
-    http_options = {"api_version": "v1beta1"} if agent_identity else None
-    client = vertexai.Client(
-        project=project,
-        location=location,
-        http_options=http_options,
-    )
-    vertexai.init(project=project, location=location)
+    if env_vars:
+        click.echo("\n🌍 Environment Variables:")
+        for key, value in sorted(env_vars.items()):
+            click.echo(f"  {key}: {format_env_value(value)}")
+
+    source_packages_list = list(source_packages)
 
     config_kwargs: dict[str, Any] = {
         "display_name": display_name,
-        "description": description,
         "source_packages": source_packages_list,
         "env_vars": env_vars,
         "service_account": service_account,
-        "labels": labels_dict,
+        "identity_type": IdentityType.AGENT_IDENTITY if agent_identity else None,
+        "description": description,
+        "labels": labels_dict if labels_dict else None,
         "min_instances": min_instances,
         "max_instances": max_instances,
-        "resource_limits": {"cpu": cpu, "memory": memory},
         "container_concurrency": container_concurrency,
-        "identity_type": IdentityType.AGENT_IDENTITY if agent_identity else None,
+        "resource_limits": {"cpu": cpu, "memory": memory}
+        if (cpu is not None and memory is not None)
+        else None,
     }
 
     # Agent Engine builds and serves the container over HTTP, so no entrypoint
@@ -475,39 +594,6 @@ def deploy_agent_runtime(
         config_kwargs["psc_interface_config"] = psc_interface_config
 
     config = AgentEngineConfig(**config_kwargs)
-
-    # Check for existing agent
-    existing_agents = list(client.agent_engines.list())
-    matching_agents = [
-        agent
-        for agent in existing_agents
-        if agent.api_resource.display_name == display_name
-    ]
-
-    # Setup agent identity on first deployment
-    if agent_identity and not matching_agents:
-        matching_agents = [setup_agent_identity(client, project, display_name)]
-
-    if matching_agents:
-        resource_name = matching_agents[0].api_resource.name
-        # Preserve env vars set outside this deploy; CLI/user values still win.
-        for key, value in _existing_plain_env_vars(matching_agents[0]).items():
-            env_vars.setdefault(key, value)
-        # Point the A2A agent card at the real Agent Engine HTTP passthrough
-        # instead of localhost; needs the existing engine's resource name, so a
-        # first-time create picks it up on the next deploy.
-        env_vars.setdefault(
-            "APP_URL",
-            f"https://{location}-aiplatform.googleapis.com/reasoningEngines/v1/"
-            f"{resource_name}/api",
-        )
-        # config_kwargs holds this same env_vars dict; rebuild to apply the edits.
-        config = AgentEngineConfig(**config_kwargs)
-
-    if env_vars:
-        click.echo("\n🌍 Environment Variables:")
-        for key, value in sorted(env_vars.items()):
-            click.echo(f"  {key}: {format_env_value(value)}")
 
     # Deploy (create or update)
     action = "Updating" if matching_agents else "Creating"

@@ -844,7 +844,6 @@ def enhance(
     deployment_target: str | None,
     cicd_runner: str | None,
     prototype: bool,
-    datastore: str | None,
     session_type: str | None,
     debug: bool,
     auto_approve: bool,
@@ -860,7 +859,6 @@ def enhance(
     prefer_new: bool,
     agent_directory: str | None,
     skip_welcome: bool = False,
-    google_api_key: str | None = None,
     bq_analytics: bool = False,
     agent_guidance_filename: str = "GEMINI.md",
 ) -> None:
@@ -889,12 +887,6 @@ def enhance(
         cli_override_args["deployment_target"] = deployment_target
     if session_type:
         cli_override_args["session_type"] = session_type
-    if datastore:
-        cli_override_args["datastore"] = datastore
-        # data_ingestion files only live in the agentic_rag template; auto-upgrade
-        # the base_template so the smart-merge brings those files in.
-        if not base_template:
-            cli_override_args.setdefault("base_template", "agentic_rag")
     if base_template:
         cli_override_args["base_template"] = base_template
     if agent_directory:
@@ -1380,14 +1372,13 @@ def enhance(
         final_cli_overrides["settings"]["agent_directory"] = final_agent_directory
 
     # Merge CLI params with saved config to avoid resetting params
-    # not explicitly passed on the CLI (e.g. --datastore, --session-type).
+    # not explicitly passed on the CLI (e.g. --session-type).
     effective_create_params = _backfill_create_params_from_config(
         pathlib.Path.cwd(),
         {
             "deployment_target": deployment_target,
             "cicd_runner": cicd_runner,
             "session_type": session_type,
-            "datastore": datastore,
         },
     )
 
@@ -1399,7 +1390,6 @@ def enhance(
         deployment_target=effective_create_params["deployment_target"],
         cicd_runner=effective_create_params["cicd_runner"],
         prototype=prototype,
-        datastore=effective_create_params["datastore"],
         session_type=effective_create_params["session_type"],
         debug=debug,
         output_dir=None,  # Use current directory
@@ -1416,7 +1406,6 @@ def enhance(
         base_template=base_template,
         skip_welcome=True,  # Skip welcome message since enhance shows its own
         cli_overrides=final_cli_overrides if final_cli_overrides else None,
-        google_api_key=google_api_key,
         bq_analytics=bq_analytics,
         agent_guidance_filename=agent_guidance_filename,
     )

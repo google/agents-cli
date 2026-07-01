@@ -35,9 +35,8 @@ def metadata_to_cli_args(
     if metadata.agent_directory and metadata.agent_directory != "app":
         args.extend(["--agent-directory", metadata.agent_directory])
 
-    # Skip include_data_ingestion — now auto-derived from agent config and --datastore
     # Skip is_a2a - not currently a valid option on `create`, despite being grouped that way in config
-    skip_keys = {"include_data_ingestion", "is_a2a"}
+    skip_keys = {"is_a2a"}
     for key, value in metadata.create_params.items():
         if key in skip_keys:
             continue

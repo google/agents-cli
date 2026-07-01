@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import subprocess
 from importlib import resources
@@ -26,15 +27,14 @@ from typing import Any
 import click
 from rich.console import Console
 
+from google.agents.cli._click import LazyGroup
 from google.agents.cli._project import (
     find_project_root,
     read_project_config,
     require_agent_directory,
-    resolve_gcp_project,
 )
 from google.agents.cli._runner import run
 from google.agents.cli.eval import _paths
-from google.agents.cli.eval.eval_utils import resolve_eval_region
 
 _SYNTHESIZE_TIMEOUT = 600  # 10 minutes
 
@@ -67,13 +67,13 @@ def _stage_synthesize_runner(dest_dir: Path) -> Path:
     return dest
 
 
-@click.group("dataset")
+@click.group("dataset", cls=LazyGroup)
 def dataset_group():
-    """Manage evaluation traces."""
+    """[Experimental] Manage evaluation traces."""
     pass
 
 
-@dataset_group.command("synthesize")
+@click.command("synthesize")
 @click.option(
     "--count",
     "-n",
@@ -123,16 +123,6 @@ def dataset_group():
         "`agents-cli eval grade` can consume it directly."
     ),
 )
-@click.option(
-    "--project",
-    default=None,
-    help="GCP project ID. Overrides GOOGLE_CLOUD_PROJECT and ADC.",
-)
-@click.option(
-    "--region",
-    default=None,
-    help="GCP region for the Vertex eval service. Defaults to 'global'.",
-)
 def cmd_synthesize(
     count: int,
     instruction: str | None,
@@ -141,10 +131,8 @@ def cmd_synthesize(
     max_turns: int,
     model: str | None,
     output: str | None,
-    project: str | None,
-    region: str | None,
 ):
-    """Synthesize evaluation traces (eval cases with full agent runs).
+    """[Experimental] Synthesize evaluation traces (eval cases with full agent runs).
 
     Generates synthetic multi-turn conversations by inspecting the project's
     ADK agent (read from `agent_directory` in agents-cli-manifest.yaml) and running it
@@ -164,6 +152,7 @@ def cmd_synthesize(
       - A local ADK agent project with agents-cli-manifest.yaml
       - Google Cloud authentication (`agents-cli login`)
     """
+    logging.warning("`eval dataset synthesize` is experimental and may change.")
     console = Console()
     project_root = find_project_root()
     if not project_root:
@@ -174,9 +163,6 @@ def cmd_synthesize(
     cfg = read_project_config(str(project_root))
     require_agent_directory(cfg)
     agent_path = str((project_root / cfg.agent_directory).resolve())
-
-    resolved_project = resolve_gcp_project(project, required=True)
-    resolved_region = resolve_eval_region(region)
 
     config: dict[str, Any] = {"count": count}
     if instruction:
@@ -211,10 +197,6 @@ def cmd_synthesize(
             f"[cyan]{max_turns}[/cyan]-turn user simulation..."
         )
         console.print(f"[bold]Using agent:[/bold] [cyan]{cfg.agent_directory}[/cyan]")
-        console.print(
-            f"[bold]Project:[/bold] [cyan]{resolved_project}[/cyan], "
-            f"[bold]region:[/bold] [cyan]{resolved_region}[/cyan]"
-        )
         if instruction:
             console.print(f"[bold]Instruction:[/bold] [cyan]{instruction}[/cyan]")
 
@@ -234,16 +216,12 @@ def cmd_synthesize(
                 cwd=str(project_root),
                 check_err_msg="Trace synthesis failed",
                 timeout=_SYNTHESIZE_TIMEOUT,
-                env={
-                    "GOOGLE_CLOUD_PROJECT": resolved_project,
-                    "GOOGLE_CLOUD_LOCATION": resolved_region,
-                },
             )
         except subprocess.TimeoutExpired as exc:
             raise click.ClickException(
                 f"Trace synthesis timed out after {_SYNTHESIZE_TIMEOUT}s. "
-                "The Vertex AI call may be hanging; the region may be "
-                f"unsupported — try a different --region (current: {resolved_region})."
+                "The Vertex AI call may be hanging; check "
+                "GOOGLE_CLOUD_LOCATION in your .env."
             ) from exc
     finally:
         if not stage_dir_existed:
@@ -264,3 +242,10 @@ def cmd_synthesize(
                 )
 
     console.print(f"[bold green]Traces saved to:[/bold green] {output_path}")
+
+
+dataset_group.add_lazy_command(
+    "synthesize",
+    "google.agents.cli.eval.cmd_dataset:cmd_synthesize",
+    "[Experimental] Synthesize evaluation traces (eval cases with full agent runs).",
+)

@@ -72,24 +72,6 @@ jobs:
         run: uv sync --locked
 {%- endif %}
 
-{%- if cookiecutter.data_ingestion and cookiecutter.datastore_type == "agent_platform_vector_search" %}
-      - name: Deploy data ingestion pipeline (Production)
-        run: |
-          cd data_ingestion/data_ingestion_pipeline && \
-          uv sync --locked && uv run python submit_pipeline.py
-        env:
-          PIPELINE_ROOT: {% raw %}${{ vars.PIPELINE_GCS_ROOT_PROD }}{% endraw %}
-          REGION: {% raw %}${{ vars.REGION }}{% endraw %}
-          VECTOR_SEARCH_COLLECTION_ID: {% raw %}${{ vars.VECTOR_SEARCH_COLLECTION_ID }}{% endraw %}
-          VECTOR_SEARCH_LOCATION: {% raw %}${{ vars.VECTOR_SEARCH_LOCATION }}{% endraw %}
-          PROJECT_ID: {% raw %}${{ vars.PROD_PROJECT_ID }}{% endraw %}
-          SERVICE_ACCOUNT: {% raw %}${{ vars.PIPELINE_SA_EMAIL_PROD }}{% endraw %}
-          PIPELINE_NAME: {% raw %}${{ vars.PIPELINE_NAME }}{% endraw %}
-          CRON_SCHEDULE: {% raw %}${{ vars.PIPELINE_CRON_SCHEDULE }}{% endraw %}
-          DISABLE_CACHING: "TRUE"
-          SCHEDULE_ONLY: "TRUE"
-{%- endif %}
-
 {%- if cookiecutter.deployment_target == 'cloud_run' %}
 
       - name: Configure Docker for Artifact Registry
@@ -154,6 +136,6 @@ jobs:
             --project {% raw %}${{ vars.PROD_PROJECT_ID }}{% endraw %} \
             --region {% raw %}${{ vars.REGION }}{% endraw %} \
             --service-account={% raw %}${{ vars.APP_SERVICE_ACCOUNT_PROD }}{% endraw %} \
-            --update-env-vars="COMMIT_SHA={% raw %}${{ github.sha }}{% endraw %},LOGS_BUCKET_NAME={% raw %}${{ vars.LOGS_BUCKET_NAME_PROD }}{% endraw %}{%- if cookiecutter.data_ingestion %}{%- if cookiecutter.datastore_type == "agent_platform_search" %},DATA_STORE_ID={% raw %}${{ vars.DATA_STORE_ID_PROD }}{% endraw %},DATA_STORE_REGION={% raw %}${{ vars.DATA_STORE_REGION }}{% endraw %}{%- elif cookiecutter.datastore_type == "agent_platform_vector_search" %},VECTOR_SEARCH_COLLECTION_ID={% raw %}${{ vars.VECTOR_SEARCH_COLLECTION_ID }}{% endraw %},VECTOR_SEARCH_LOCATION={% raw %}${{ vars.VECTOR_SEARCH_LOCATION }}{% endraw %}{%- endif %}{%- endif %}"
+            --update-env-vars="COMMIT_SHA={% raw %}${{ github.sha }}{% endraw %},LOGS_BUCKET_NAME={% raw %}${{ vars.LOGS_BUCKET_NAME_PROD }}{% endraw %}"
 {%- endif %}
 

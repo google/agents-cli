@@ -334,6 +334,20 @@ resource "kubernetes_deployment_v1" "app" {
           }
 
 {%- if cookiecutter.language == "python" %}
+          env {
+            name  = "GOOGLE_CLOUD_PROJECT"
+            value = var.project_id
+          }
+
+          env {
+            name  = "GOOGLE_CLOUD_LOCATION"
+            value = "global"
+          }
+
+          env {
+            name  = "GOOGLE_GENAI_USE_VERTEXAI"
+            value = "True"
+          }
 {%- if cookiecutter.session_type == "cloud_sql" %}
           env {
             name  = "INSTANCE_CONNECTION_NAME"
@@ -356,23 +370,6 @@ resource "kubernetes_deployment_v1" "app" {
             name  = "DB_USER"
             value = var.project_name
           }
-{%- endif %}
-{%- if cookiecutter.data_ingestion %}
-{%- if cookiecutter.datastore_type == "agent_platform_search" %}
-          env {
-            name  = "DATA_STORE_ID"
-            value = data.external.data_store_id.result.data_store_id
-          }
-          env {
-            name  = "DATA_STORE_REGION"
-            value = var.data_store_region
-          }
-{%- elif cookiecutter.datastore_type == "agent_platform_vector_search" %}
-          env {
-            name  = "VECTOR_SEARCH_COLLECTION"
-            value = "projects/${var.project_id}/locations/${var.vector_search_location}/collections/${var.vector_search_collection_id}"
-          }
-{%- endif %}
 {%- endif %}
 {%- if cookiecutter.bq_analytics %}
           env {

@@ -20,13 +20,9 @@ on:
       - main
     paths:
       - '{{cookiecutter.agent_directory}}/**'
-      - 'data_ingestion/**'
       - 'tests/**'
       - 'deployment/**'
       - 'uv.lock'
-{%- if cookiecutter.data_ingestion %}
-      - 'data_ingestion/**'
-{%- endif %}
 
 jobs:
   test:
@@ -63,4 +59,9 @@ jobs:
         run: uv run pytest tests/unit
 
       - name: Run integration tests
+        # Integration tests run the agent in-process; pytest doesn't load .env.
+        env:
+          GOOGLE_GENAI_USE_VERTEXAI: 'true'
+          GOOGLE_CLOUD_PROJECT: {% raw %}${{ vars.CICD_PROJECT_ID }}{% endraw %}
+          GOOGLE_CLOUD_LOCATION: global
         run: uv run pytest tests/integration

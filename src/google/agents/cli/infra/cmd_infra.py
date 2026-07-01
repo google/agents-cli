@@ -27,7 +27,6 @@ def infra_group():
     Subcommands:
       single-project  Optional — custom infrastructure for a single GCP project
       cicd            Set up CI/CD pipelines and multi-environment infrastructure
-      datastore       Provision datastore infrastructure for RAG agents
     """
     pass
 
@@ -45,5 +44,5 @@ infra_group.add_lazy_command(
 infra_group.add_lazy_command(
     "datastore",
     "google.agents.cli.infra.cmd_datastore:cmd_infra_datastore",
-    "Provision datastore infrastructure for RAG agents.",
+    "Removed: RAG is now a clone-and-study recipe.",
 )

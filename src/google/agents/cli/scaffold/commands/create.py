@@ -31,7 +31,6 @@ from google.agents.cli._project import resolve_gcp_project
 
 from ..utils import remote_template, template
 from ..utils.command import run_gcloud_command
-from ..utils.datastores import DATASTORE_TYPES, DATASTORES
 from ..utils.gcp import verify_credentials_and_vertex
 from ..utils.logging import display_welcome_banner
 
@@ -53,15 +52,6 @@ __all__ = ["create", "shared_template_options"]
 def shared_template_options(f: Callable) -> Callable:
     """Decorator to add shared options for template-based commands."""
     # Apply options in reverse order since decorators are applied bottom-up
-    f = click.option(
-        "-k",
-        "--google-api-key",
-        "--api-key",
-        is_flag=False,
-        flag_value="YOUR_API_KEY",
-        default=None,
-        help="Use Google AI Studio API key instead of Vertex AI. If provided without a value, generates a .env file with a placeholder.",
-    )(f)
     f = click.option(
         "-ag",
         "--agent-garden",
@@ -108,12 +98,6 @@ def shared_template_options(f: Callable) -> Callable:
         "--session-type",
         type=click.Choice(["in_memory", "cloud_sql", "agent_platform_sessions"]),
         help="Type of session storage to use",
-    )(f)
-    f = click.option(
-        "--datastore",
-        "-ds",
-        type=click.Choice(DATASTORE_TYPES),
-        help="Type of datastore to use for data ingestion",
     )(f)
     f = click.option(
         "--prototype",
@@ -292,7 +276,6 @@ def create(
     cicd_runner: str | None,
     adk: bool,
     prototype: bool,
-    datastore: str | None,
     session_type: str | None,
     debug: bool,
     output_dir: str | None,
@@ -308,7 +291,6 @@ def create(
     skip_welcome: bool = False,
     locked: bool = False,
     cli_overrides: dict | None = None,
-    google_api_key: str | None = None,
     bq_analytics: bool = False,
     agent_guidance_filename: str = "GEMINI.md",
 ) -> None:
@@ -679,52 +661,6 @@ def create(
                 style="yellow",
             )
 
-    # Data ingestion and datastore selection
-    # Check language early for data ingestion validation
-    early_agent_language = template.get_agent_language(final_agent)
-
-    # Non-Python agents don't support data ingestion
-    if early_agent_language != "python":
-        if datastore:
-            console.print(
-                f"Warning: {early_agent_language.capitalize()} agents do not support data ingestion. "
-                "Ignoring --datastore flag.",
-                style="yellow",
-            )
-            datastore = None
-
-    # Auto-enable data ingestion when agent requires it or --datastore is provided
-    requires_data_ingestion = config and config.get("settings", {}).get(
-        "requires_data_ingestion"
-    )
-
-    # Only agents that support data ingestion (e.g. agentic_rag) have the
-    # required terraform resources for --datastore
-    if datastore and not requires_data_ingestion:
-        raise click.UsageError(
-            f"'{final_agent}' agent does not support data ingestion. "
-            "Use 'agentic_rag' agent for data ingestion support."
-        )
-    include_data_ingestion = bool(datastore) or bool(requires_data_ingestion)
-
-    if include_data_ingestion and not datastore and early_agent_language == "python":
-        if interactive:
-            datastore = template.prompt_datastore_selection(final_agent)
-        elif auto_approve:
-            datastore = next(iter(DATASTORES.keys()))
-            console.print(
-                f"Info: --datastore not specified. Defaulting to '{datastore}' in auto-approve mode.",
-                style="yellow",
-            )
-        else:
-            raise click.UsageError(
-                "--datastore is required for this agent in programmatic mode.\n"
-                "You can also use -i / --interactive for interactive mode or --auto-approve / --yes to select defaults."
-            )
-    if debug and include_data_ingestion:
-        logging.debug(f"Data ingestion enabled: {include_data_ingestion}")
-        logging.debug(f"Selected datastore type: {datastore}")
-
     # Deployment target selection
     # For remote templates, we need to use the base template name for deployment target selection
     deployment_agent_name = final_agent
@@ -795,7 +731,7 @@ def create(
         requires_session = config.get("settings", {}).get("requires_session", False)
 
         # Session type selection is only available for these agents on cloud_run
-        session_type_supported_agents = ("adk", "agentic_rag")
+        session_type_supported_agents = ("adk",)
 
         if requires_session:
             if final_deployment == "agent_runtime" and session_type:
@@ -895,7 +831,7 @@ def create(
     logging.debug("Setting up GCP...")
 
     creds_info = {}
-    if not skip_checks and not google_api_key:
+    if not skip_checks:
         # Set up GCP environment
         try:
             creds_info = _setup_gcp_environment(
@@ -911,17 +847,9 @@ def create(
                 logging.warning(f"GCP environment setup failed: {e}")
             console.print(f"> ⚠️  {e}", style="bold yellow")
             console.print("> Continuing with template processing...", style="yellow")
-    elif (
-        skip_checks
-        and not google_api_key
-        and (
-            final_agent.endswith("_go")
-            or final_agent.endswith("_java")
-            or final_agent.endswith("_ts")
-        )
-    ):
-        # For Go/Java/TypeScript templates, try to get project ID from gcloud config even when skipping checks
-        # This is needed because their .env requires a valid project ID for local development
+    else:
+        # Skipping checks: still try to resolve a project ID so the generated
+        # .env has a valid value for local development.
         try:
             project_id = resolve_gcp_project()
             if project_id:
@@ -961,8 +889,6 @@ def create(
             project_name=project_name,
             deployment_target=final_deployment,
             cicd_runner=final_cicd_runner,
-            include_data_ingestion=include_data_ingestion,
-            datastore=datastore,
             session_type=final_session_type,
             output_dir=destination_dir,
             remote_template_path=template_source_path,
@@ -971,7 +897,6 @@ def create(
             cli_overrides=final_cli_overrides,
             agent_garden=agent_garden,
             remote_spec=remote_spec,
-            google_api_key=google_api_key,
             google_cloud_project=creds_info.get("project"),
             bq_analytics=bq_analytics,
             agent_guidance_filename=agent_guidance_filename,
@@ -1043,30 +968,10 @@ def create(
     # Determine the correct path to display based on whether output_dir was specified
     # Check if the agent has a 'dev' command in its settings
     config.get("settings", {}).get("interactive_command", "playground")
-    if include_data_ingestion and datastore:
-        datastore_name = DATASTORES[datastore]["name"]
-        banner_lines = (
-            f"\n[bold yellow]{'=' * 35}[/]"
-            f"\n[bold yellow]  {datastore_name.upper()} SETUP[/]"
-            f"\n[bold yellow]{'=' * 35}[/]"
-            f"\n  This agent uses [bold]{datastore_name}[/] for grounded responses."
-            "\n  Data must be ingested before the agent can answer questions."
-        )
-        if datastore == "agent_platform_vector_search":
-            banner_lines += "\n\n  See [cyan]data_ingestion/README.md[/] for more info."
-        banner_lines += f"\n[bold yellow]{'=' * 35}[/]"
-        console.print(banner_lines)
-
     console.print("\n[bold cyan]🚀 Get Started[/]")
-    if include_data_ingestion:
-        console.print(f"   [bold bright_green]cd {cd_path} && agents-cli install[/]")
-        console.print("   [bold bright_green]agents-cli infra datastore[/]")
-        console.print("   [bold bright_green]agents-cli data-ingestion[/]")
-        console.print("   [bold bright_green]agents-cli playground[/]")
-    else:
-        console.print(
-            f"   [bold bright_green]cd {cd_path} && agents-cli install && agents-cli playground[/]"
-        )
+    console.print(
+        f"   [bold bright_green]cd {cd_path} && agents-cli install && agents-cli playground[/]"
+    )
 
 
 def prompt_region_confirmation(

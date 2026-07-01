@@ -298,8 +298,8 @@ class EscalationChecker(BaseAgent):
 ### Google Gemini (Default)
 
 ```python
-# AI Studio (dev)
-# Set: GOOGLE_API_KEY, GOOGLE_GENAI_USE_VERTEXAI=False
+# AI Studio (dev): in the project .env, comment the GOOGLE_* lines and
+# uncomment GEMINI_API_KEY (GOOGLE_API_KEY is also accepted).
 
 # Vertex AI (prod)
 # Set: GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION, GOOGLE_GENAI_USE_VERTEXAI=True
@@ -842,7 +842,7 @@ Sessions are ephemeral by default (`InMemorySessionService`); use `DatabaseSessi
 
 Since ambient agents have no interactive user, route outputs via structured logging (JSON stdout → Cloud Logging → Cloud Monitoring alerts), Pub/Sub, or tool-based integrations (email, Jira, Slack).
 
-**Before implementing an ambient agent, clone and study the production sample** — it covers trigger wiring, middleware, structured logging, and Terraform. See the Notable Samples table in `/google-agents-cli-workflow` Phase 1. [Full docs](https://adk.dev/runtime/ambient-agents/).
+**Before implementing an ambient agent, clone and study the production sample** — it covers trigger wiring, middleware, structured logging, and Terraform. See the Notable Samples catalog in `/google-agents-cli-workflow` Phase 1. [Full docs](https://adk.dev/runtime/ambient-agents/).
 
 ---
 

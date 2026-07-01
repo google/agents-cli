@@ -56,12 +56,6 @@ variable "app_sa_roles" {
   default = [
 
     "roles/aiplatform.user",
-{%- if cookiecutter.datastore_type == "agent_platform_search" %}
-    "roles/discoveryengine.editor",
-{%- endif %}
-{%- if cookiecutter.datastore_type == "agent_platform_vector_search" %}
-    "roles/vectorsearch.viewer",
-{%- endif %}
     "roles/logging.logWriter",
     "roles/cloudtrace.agent",
     "roles/storage.admin",
@@ -91,9 +85,6 @@ variable "cicd_roles" {
 {%- endif %}
     "roles/storage.admin",
     "roles/aiplatform.user",
-{%- if cookiecutter.datastore_type == "agent_platform_search" %}
-    "roles/discoveryengine.editor",
-{%- endif %}
     "roles/logging.logWriter",
     "roles/cloudtrace.agent",
     "roles/artifactregistry.writer",

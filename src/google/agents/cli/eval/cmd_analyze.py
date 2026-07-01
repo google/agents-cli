@@ -93,7 +93,8 @@ def cmd_analyze(
     output_format: str,
     project: str | None,
 ):
-    """Analyze failure clusters from an evaluation run result JSON file. Results are always saved to a file."""
+    """[Experimental] Analyze failure clusters from an evaluation run result JSON file. Results are always saved to a file."""
+    logging.warning("`eval analyze` is experimental and may change.")
     if metric and not _ALLOWED_METRICS_PATTERN.match(metric):
         raise click.ClickException(
             f"Unsupported metric: '{metric}'. Allowed metrics are {', '.join(_ALLOWED_METRICS)}."

@@ -15,7 +15,7 @@ description: >
 metadata:
   author: Google
   license: Apache-2.0
-  version: 0.6.1
+  version: 1.0.0
   requires:
     bins:
       - agents-cli
@@ -55,7 +55,7 @@ Pass `--display-name` / `--description` to override the card defaults. For Agent
 
 ### ADK Registration (default on Agent Runtime)
 
-This is the **default and recommended registration for Agent Runtime** deployments: Gemini Enterprise invokes the agent natively via `:streamQuery` on its reasoning engine resource, authenticating end-to-end. It's also the path to use when the agent needs an OAuth authorization (`--authorization-id`). The agent is registered directly via its reasoning engine resource name; no agent card URL is needed.
+This is the **default and recommended registration for Agent Runtime** deployments: Gemini Enterprise invokes the agent natively via `:streamQuery` on its reasoning engine resource, authenticating end-to-end. Under the hood, `:streamQuery` dispatches to the `AdkApp`'s `streaming_agent_run_with_events` method — when debugging an ADK invocation, search the runtime's `reasoning_engine_stderr` logs for that method name to trace the failure. It's also the path to use when the agent needs an OAuth authorization (`--authorization-id`). The agent is registered directly via its reasoning engine resource name; no agent card URL is needed.
 
 ```bash
 agents-cli publish gemini-enterprise \
@@ -190,6 +190,7 @@ Docs: https://docs.cloud.google.com/agent-registry/manage-agents
 | "Gemini Enterprise App ID is required" | Provide `--gemini-enterprise-app-id` or set the `ID` / `GEMINI_ENTERPRISE_APP_ID` env var |
 | Re-publishing the same agent | Registration is idempotent — re-running updates the existing registration in place instead of creating a duplicate |
 | HTTP 403 on registration | Check that your account has Discovery Engine Editor permissions on the Gemini Enterprise project |
+| Debugging ADK invocation failures on Agent Runtime | Gemini Enterprise calls the agent via the `AdkApp`'s `streaming_agent_run_with_events` method (the native `:streamQuery` contract). Grep the runtime's `reasoning_engine_stderr` logs for `streaming_agent_run_with_events` to find the underlying error |
 | "Could not fetch agent card" | Verify the agent is running and the URL is correct; for Cloud Run, ensure `gcloud auth login` is done |
 
 ---

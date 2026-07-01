@@ -162,7 +162,7 @@ main.add_lazy_command(
 main.add_lazy_command(
     "data-ingestion",
     "google.agents.cli.data.cmd_data_ingestion:cmd_data_ingestion",
-    "Run data ingestion for RAG agents.",
+    "Removed: RAG is now a clone-and-study recipe.",
 )
 
 # Eval commands

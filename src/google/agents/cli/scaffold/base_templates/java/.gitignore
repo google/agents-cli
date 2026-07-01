@@ -49,3 +49,8 @@ Thumbs.db
 
 # Test results
 test-results/
+
+# Credentials and private keys
+*.pem
+*-key.json
+credentials*.json

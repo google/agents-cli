@@ -21,14 +21,16 @@ from rich.console import Console
 from rich.table import Table
 from vertexai._genai._evals_constant import SUPPORTED_PREDEFINED_METRICS
 
+from google.agents.cli._click import LazyGroup
 
-@click.group("metric")
+
+@click.group("metric", cls=LazyGroup)
 def metric_group():
     """Discover and manage evaluation metrics."""
     pass
 
 
-@metric_group.command("list")
+@click.command("list")
 def list_metrics():
     """List available out-of-the-box (OOTB) evaluation metrics."""
     metric_names_set = set()
@@ -52,3 +54,10 @@ def list_metrics():
     console.print()
     console.print(table)
     console.print()
+
+
+metric_group.add_lazy_command(
+    "list",
+    "google.agents.cli.eval.cmd_metric:list_metrics",
+    "List available out-of-the-box (OOTB) evaluation metrics.",
+)

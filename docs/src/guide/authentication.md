@@ -32,11 +32,12 @@ No Google Cloud project required.
 2. Export it:
 
     ```bash
-    export GOOGLE_GENAI_USE_VERTEXAI=FALSE
-    export GOOGLE_API_KEY="your-key-here"
+    # Scaffolded Python projects include a .env. To use AI Studio, edit it:
+    #   comment the GOOGLE_* lines and uncomment GEMINI_API_KEY (GOOGLE_API_KEY is also accepted.)
+    GEMINI_API_KEY="your-key-here"
     ```
 
-3. Add the exports to your shell profile (`~/.bashrc` or `~/.zshrc`) so they persist.
+3. Save the file — the `.env` is loaded automatically when you run `agents-cli` dev commands.
 
 !!! note
     The API key supports local development commands: `dev`, `run`, `eval`. Deployment to Google Cloud requires Level 3 auth.
@@ -69,7 +70,6 @@ If you set up Level 2, Option B (Vertex AI), you're already authenticated for de
 
 - `agents-cli deploy` — deploy to Agent Runtime, Cloud Run, or GKE
 - `agents-cli infra single-project` / `agents-cli infra cicd` — provision infrastructure and CI/CD with Terraform
-- `agents-cli infra datastore` — provision RAG datastores
 
 Deployment requires a Google Cloud project with billing enabled and appropriate IAM permissions (varies by target).
 

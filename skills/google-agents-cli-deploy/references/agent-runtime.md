@@ -4,7 +4,9 @@
 
 ## Deployment Architecture
 
-Agent Runtime uses **container-based deployment**. `agents-cli deploy` packages your project (all git-tracked files) and Agent Engine builds a container image from your project's `Dockerfile` — the same `fast_api_app:app` image that serves Cloud Run and GKE. A `Dockerfile` at the project root is required (scaffolded projects ship one).
+Agent Runtime uses **container-based deployment**: `agents-cli deploy` packages your project and Agent Engine builds a container image from your project's `Dockerfile` (required at the project root; scaffolded projects ship one).
+
+File selection honors the project-root `.gcloudignore`, else the project-root `.gitignore` (nested `.gitignore` files are not consulted).
 
 **App object:** `fast_api_app.py` builds a single FastAPI `app` via
 `get_fast_api_app(web=True, lifespan=...)`. The lifespan builds one `Runner`
@@ -51,7 +53,7 @@ this card URL.
 Deploy with `agents-cli deploy` (run `agents-cli deploy --help` for the full flag reference). CI/CD pipelines invoke the same command.
 
 **Deployment flow:**
-1. `agents-cli deploy` packages the project's git-tracked files (including the `Dockerfile`)
+1. `agents-cli deploy` packages the project files (honoring `.gcloudignore`/`.gitignore`)
 2. Agent Engine builds the container image and creates/updates the Agent Runtime instance
 3. Writes `deployment_metadata.json` with the engine resource ID
 

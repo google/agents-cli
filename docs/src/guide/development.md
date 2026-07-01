@@ -27,7 +27,7 @@ Create a new project from a template:
 agents-cli create my-agent
 ```
 
-Choose your agent template (`adk`, `agentic_rag`) and deployment target during creation. For fast prototyping without infrastructure decisions:
+Choose your agent template (`adk`) and deployment target during creation. (RAG is a clone-and-study recipe — see [Templates](templates.md#rag-retrieval-augmented-generation).) For fast prototyping without infrastructure decisions:
 
 ```bash
 agents-cli create my-agent --prototype --yes

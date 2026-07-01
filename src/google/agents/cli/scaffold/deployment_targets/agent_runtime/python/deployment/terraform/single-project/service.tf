@@ -41,6 +41,18 @@ resource "google_vertex_ai_reasoning_engine" "app" {
         value = google_storage_bucket.logs_data_bucket.name
       }
 
+      # GOOGLE_CLOUD_PROJECT is reserved by Agent Runtime (the platform injects
+      # it) and rejected in deployment_spec.env; GOOGLE_CLOUD_LOCATION is allowed.
+      env {
+        name  = "GOOGLE_CLOUD_LOCATION"
+        value = "global"
+      }
+
+      env {
+        name  = "GOOGLE_GENAI_USE_VERTEXAI"
+        value = "True"
+      }
+
       env {
         name  = "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"
         value = "true"
@@ -64,26 +76,6 @@ resource "google_vertex_ai_reasoning_engine" "app" {
         # Format: {location}.{connection_id}
         value = "${var.region}.${google_bigquery_connection.genai_telemetry_connection.connection_id}"
       }
-{%- endif %}
-{%- if cookiecutter.data_ingestion %}
-{%- if cookiecutter.datastore_type == "agent_platform_search" %}
-
-      env {
-        name  = "DATA_STORE_ID"
-        value = data.external.data_store_id.result.data_store_id
-      }
-
-      env {
-        name  = "DATA_STORE_REGION"
-        value = var.data_store_region
-      }
-{%- elif cookiecutter.datastore_type == "agent_platform_vector_search" %}
-
-      env {
-        name  = "VECTOR_SEARCH_COLLECTION"
-        value = "projects/${var.project_id}/locations/${var.vector_search_location}/collections/${var.vector_search_collection_id}"
-      }
-{%- endif %}
 {%- endif %}
     }
 

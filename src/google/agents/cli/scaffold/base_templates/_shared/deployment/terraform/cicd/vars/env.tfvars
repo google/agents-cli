@@ -23,12 +23,3 @@ repository_name = "{{cookiecutter.project_name}}"
 
 # The Google Cloud region you will use to deploy the infrastructure
 region = "us-east1"
-
-{%- if cookiecutter.data_ingestion %}
-{%- if cookiecutter.datastore_type == "agent_platform_search" %}
-#The value can only be one of "global", "us" and "eu".
-data_store_region = "global"
-{%- elif cookiecutter.datastore_type == "agent_platform_vector_search" %}
-pipeline_cron_schedule = "0 0 * * 0"
-{%- endif %}
-{%- endif %}

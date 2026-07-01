@@ -199,7 +199,7 @@ See [Observability](observability/index.md) for the full setup.
     Your coding agent will:
 
     1. Write a `.agents-cli-spec.md` describing the tools and constraints
-    2. Run `agents-cli scaffold create … --agent agentic_rag --deployment-target agent_runtime`
+    2. Run `agents-cli scaffold create … --agent adk --deployment-target agent_runtime` (RAG is a clone-and-study recipe — adapt a RAG sample; see [Templates](templates.md#rag-retrieval-augmented-generation))
     3. Author the agent body and tools
     4. Write dataset cases
     5. Run `agents-cli eval generate` followed by `agents-cli eval grade` and iterate with `eval grade` until the score crosses threshold
@@ -213,8 +213,7 @@ See [Observability](observability/index.md) for the full setup.
     ```bash
     # Phase 1: scaffold
     agents-cli scaffold create outage-recovery-bot \
-      --agent agentic_rag \
-      --datastore agent_platform_vector_search \
+      --agent adk \
       --deployment-target agent_runtime \
       --cicd-runner github_actions \
       --bq-analytics
@@ -245,7 +244,7 @@ See [Observability](observability/index.md) for the full setup.
 
 ## Where to dig deeper
 
-- [Templates](templates.md) — full list of scaffold templates (`adk`, `agentic_rag`, …)
+- [Templates](templates.md) — scaffold templates (`adk`) and the RAG clone-and-study recipe
 - [Project Structure](project-structure.md) — what each generated file does
 - [Development Guide](development.md) — day-to-day workflow
 - [Evaluation Guide](evaluation.md) — dataset schema, the eval-fix loop

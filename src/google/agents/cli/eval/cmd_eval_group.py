@@ -24,14 +24,17 @@ def eval_group():
     """Evaluate agents and compare results.
 
     \b
-    Subcommands:
+    Core:
+      run       Chain generate + grade in one command
       generate  Run agent inference over eval cases
       grade     Grade generated traces
-      run       Chain generate + grade in one command
-      dataset   Manage evaluation traces
-      metric    Discover and manage evaluation metrics
       compare   Compare two eval result JSON files
-      analyze   Analyze loss clusters from results
+      metric    Discover and manage evaluation metrics
+
+    \b
+    Advanced (experimental):
+      dataset   Synthesize multi-turn eval traces (user simulation)
+      analyze   Analyze failure clusters from results
       optimize  Optimize agent prompts using the GEPA framework
       submit    Submit an E2E cloud-side evaluation run on Vertex AI Eval Service
       results   Fetch results from a completed cloud evaluation run
@@ -56,7 +59,7 @@ eval_group.add_lazy_command(
 eval_group.add_lazy_command(
     "dataset",
     "google.agents.cli.eval.cmd_dataset:dataset_group",
-    "Manage evaluation traces.",
+    "[Experimental] Manage evaluation traces.",
 )
 eval_group.add_lazy_command(
     "metric",
@@ -71,20 +74,20 @@ eval_group.add_lazy_command(
 eval_group.add_lazy_command(
     "analyze",
     "google.agents.cli.eval.cmd_analyze:cmd_analyze",
-    "Analyze failure clusters from an evaluation run result JSON file.",
+    "[Experimental] Analyze failure clusters from an evaluation run result JSON file.",
 )
 eval_group.add_lazy_command(
     "optimize",
     "google.agents.cli.eval.cmd_optimize:cmd_optimize",
-    "Optimize agent prompts using the GEPA framework.",
+    "[Experimental] Optimize agent prompts using the GEPA framework.",
 )
 eval_group.add_lazy_command(
     "submit",
     "google.agents.cli.eval.cmd_submit:cmd_submit",
-    "Submit an E2E cloud-side evaluation run on Vertex AI Eval Service.",
+    "[Experimental] Submit an E2E cloud-side evaluation run on Vertex AI Eval Service.",
 )
 eval_group.add_lazy_command(
     "results",
     "google.agents.cli.eval.cmd_submit:cmd_results",
-    "Fetch results from a completed cloud evaluation run.",
+    "[Experimental] Fetch results from a completed cloud evaluation run.",
 )

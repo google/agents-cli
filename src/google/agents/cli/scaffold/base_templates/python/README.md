@@ -86,9 +86,6 @@ You can also use features from the [ADK](https://adk.dev/) CLI with `uv run adk`
 {%- if cookiecutter.cicd_runner != 'skip' %}
 | `agents-cli infra single-project` | Set up single-project infrastructure using Terraform                              |
 {%- endif %}
-{%- if cookiecutter.data_ingestion %}
-| `agents-cli data-ingestion` | Run data ingestion pipeline                                                          |
-{%- endif %}
 
 ## 🛠️ Project Management
 

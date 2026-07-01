@@ -9,7 +9,8 @@
 | Template | Description | Use Case |
 |----------|-------------|----------|
 | `adk` | ReAct agent using ADK | General-purpose conversational agent with tool use |
-| `agentic_rag` | ADK agent with RAG pipeline | Document Q&A with automated data ingestion |
+
+> **RAG is not a template** — it's a clone-and-study recipe. See [RAG](#rag-retrieval-augmented-generation) below.
 
 ### adk
 
@@ -21,24 +22,11 @@ agents-cli create my-agent --agent adk
 
 Every Python ADK agent serves the [Agent-to-Agent (A2A) protocol](https://a2a-protocol.org) out of the box — the A2A routes (agent card + JSON-RPC) are mounted automatically. Use this when your agent needs to interoperate with agents built on other frameworks (LangGraph, CrewAI, etc.) or when building a distributed multi-agent system; no separate template or hand-written A2A code is required.
 
-### agentic_rag
+## RAG (Retrieval-Augmented Generation)
 
-A document Q&A agent with a built-in RAG (Retrieval-Augmented Generation) pipeline. Includes data ingestion infrastructure for indexing documents into a vector store and retrieving them at query time.
+RAG is **not** a template — it's a clone-and-study recipe. Scaffold a base `adk` project, then study and adapt one of the RAG samples in [google/adk-samples](https://github.com/google/adk-samples), copying its retriever and `infra/terraform/` into your project:
 
-```bash
-agents-cli create my-agent --agent agentic_rag --datastore agent_platform_search
-```
+- **`rag-vector-search`** — Vertex AI Vector Search 2.0 with a custom ingestion pipeline (embeddings, similarity search).
+- **`rag-agent-search`** — Agent Platform Search (Discovery Engine) with a fully-managed GCS Data Connector — drop files in a bucket, no ingestion code to write.
 
-During project creation, choose a datastore backend:
-
-| Datastore | Description |
-|-----------|-------------|
-| `agent_platform_search` | GCS Data Connector with built-in scheduling and ranking |
-| `agent_platform_vector_search` | Kubeflow pipeline with auto-embedding |
-
-After creation, provision the datastore and ingest data:
-
-```bash
-agents-cli infra datastore
-agents-cli data-ingestion
-```
+The workflow skill's `references/samples.md` lists both with their key files, and each sample's `AGENTS.md` is the study-and-adapt guide. Provisioning and ingestion run from the sample's own `Makefile` (`make setup-infra`, `make data-ingestion`).

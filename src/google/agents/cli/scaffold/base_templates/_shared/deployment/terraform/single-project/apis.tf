@@ -20,9 +20,6 @@ locals {
     "run.googleapis.com",
 {%- endif %}
     "bigquery.googleapis.com",
-{%- if cookiecutter.datastore_type == "agent_platform_search" %}
-    "discoveryengine.googleapis.com",
-{%- endif %}
     "cloudresourcemanager.googleapis.com",
     "iam.googleapis.com",
     "serviceusage.googleapis.com",
@@ -32,9 +29,6 @@ locals {
 {%- if cookiecutter.deployment_target == "gke" %}
     "compute.googleapis.com",
     "container.googleapis.com",
-{%- endif %}
-{%- if cookiecutter.datastore_type == "agent_platform_vector_search" %}
-    "vectorsearch.googleapis.com",
 {%- endif %}
 {%- if cookiecutter.session_type == "cloud_sql" %}
     "sqladmin.googleapis.com",

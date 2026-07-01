@@ -21,8 +21,8 @@ This file is added into the user's agent project by ``agents-cli eval
 dataset synthesize`` and is only intended to be invoked by that command.
 Do not modify it — edits will be lost.
 
-``GOOGLE_CLOUD_PROJECT`` and ``GOOGLE_CLOUD_LOCATION`` are read from the
-environment and consumed by ``vertexai.Client``.
+``GOOGLE_CLOUD_PROJECT`` and ``GOOGLE_CLOUD_LOCATION`` are loaded from the
+agent's ``.env`` (see ``_resolve_gcp_env``) and consumed by ``vertexai.Client``.
 """
 
 import asyncio
@@ -53,23 +53,55 @@ from google.genai import types as genai_types
 from vertexai import types
 
 
-def _ensure_eval_compatible(agent):
-    """Inject an empty ``tools`` list where the agent lacks one.
+def _safe_tool_declarations(agent):
+    """Return eval tool declarations for ``agent``, skipping what can't be introspected.
 
-    The Vertex eval SDK's ``AgentConfig.from_agent`` iterates ``agent.tools``
-    unconditionally, but workflow agents (``BaseAgent`` subclasses such as
-    ``SequentialAgent``/``ParallelAgent``/``LoopAgent``) have no ``tools``
-    field, so introspection raises ``AttributeError``. Recurses through
-    ``sub_agents`` because the SDK builds the agent map over the whole tree,
-    and a sub-agent may itself be a workflow agent.
+    A drop-in for the Vertex eval SDK's ``_get_tool_declarations_from_agent``
+    with two guards so building eval metadata never crashes the runner:
 
-    See https://github.com/googleapis/python-aiplatform/issues/6865.
+    * a missing ``tools`` attribute (workflow agents like ``SequentialAgent``)
+      yields no declarations instead of ``AttributeError``;
+    * entries that aren't introspectable callables (ADK toolsets, e.g. an MCP
+      toolset) are skipped instead of raising ``TypeError``.
+
+    Skipped toolsets stay on the live agent, so their tool calls still run and
+    show up in the resulting traces.
     """
-    if not hasattr(agent, "tools"):
-        object.__setattr__(agent, "tools", [])
-    for sub_agent in getattr(agent, "sub_agents", None) or []:
-        _ensure_eval_compatible(sub_agent)
-    return agent
+    from google.genai import types as genai_types
+
+    declarations = []
+    for tool in getattr(agent, "tools", []) or []:
+        get_decl = getattr(tool, "_get_declaration", None)
+        if callable(get_decl):
+            decl = get_decl()
+            if decl is not None:
+                declarations.append({"function_declarations": [decl]})
+            continue
+        try:
+            decl = genai_types.FunctionDeclaration.from_callable_with_api_option(
+                callable=tool
+            )
+            declarations.append({"function_declarations": [decl]})
+        except Exception:
+            continue  # toolsets aren't introspectable here; the live run keeps them
+    return declarations
+
+
+def _patch_eval_tool_introspection():
+    """Make the eval SDK tolerate ADK toolsets / tool-less workflow agents.
+
+    ``AgentInfo.load_from_agent`` (-> ``get_agents_map`` -> ``from_agent``)
+    crashes in the SDK's shared ``_get_tool_declarations_from_agent``.
+    Best-effort: a no-op if the SDK layout changes. See
+    https://github.com/googleapis/python-aiplatform/issues/6865.
+    """
+    try:
+        from vertexai._genai.types.evals import AgentConfig
+    except Exception:
+        return
+    AgentConfig._get_tool_declarations_from_agent = staticmethod(  # ty: ignore[invalid-assignment]
+        _safe_tool_declarations
+    )
 
 
 def _final_response_from_invocations(invocations):
@@ -170,6 +202,36 @@ def _invocations_to_turns(invocations):
     return turns
 
 
+def _find_project_dotenv(agent_dir):
+    """Return the nearest ``.env`` at or above ``agent_dir``, or ``None``.
+
+    Mirrors ADK's ``load_dotenv_for_agent`` walk-up so eval loads the same
+    file the agent uses at runtime.
+    """
+    start = Path(agent_dir).resolve()
+    for folder in (start, *start.parents):
+        candidate = folder / ".env"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _load_agent_dotenv(agent_dir):
+    """Load the agent project's *entire* ``.env`` into ``os.environ``.
+
+    Eval runs the user's agent in this subprocess, so it must see the same
+    environment the agent uses at runtime -- *every* ``.env`` var (model
+    config, ``GOOGLE_CLOUD_*``, ``GEMINI_API_KEY``, app-specific settings),
+    not just a chosen few. Pre-existing OS env vars win over ``.env``
+    (``override=False``), matching ADK's ``load_dotenv_for_agent``.
+    """
+    from dotenv import load_dotenv
+
+    dotenv_path = _find_project_dotenv(agent_dir)
+    if dotenv_path:
+        load_dotenv(dotenv_path)
+
+
 def main():
     agent_dir = sys.argv[1]
     config_json = sys.argv[2]
@@ -178,8 +240,14 @@ def main():
 
     config = json.loads(config_json)
 
-    project = os.environ.get("GOOGLE_CLOUD_PROJECT", None)
-    location = os.environ.get("GOOGLE_CLOUD_LOCATION", None)
+    # Load the agent's full .env (all vars, not just GOOGLE_CLOUD_*) so the
+    # agent and eval client see the same environment it uses at runtime.
+    _load_agent_dotenv(agent_dir)
+    project = os.environ.get("GOOGLE_CLOUD_PROJECT") or None
+    location = os.environ.get("GOOGLE_CLOUD_LOCATION") or None
+    # Only meaningful on Vertex AI; with an API key (AI Studio) both are unset.
+    if project or location:
+        print(f"[synthesize] project={project} location={location}", flush=True)
 
     resolved = Path(agent_dir).resolve()
     loader = AgentLoader(agents_dir=str(resolved.parent))
@@ -195,7 +263,7 @@ def main():
     except ImportError:
         agent = loaded
 
-    agent = _ensure_eval_compatible(agent)
+    _patch_eval_tool_introspection()
     agent_info = types.evals.AgentInfo.load_from_agent(agent=agent)
 
     client = vertexai.Client(project=project, location=location)

@@ -83,8 +83,6 @@ def generate_pyproject(
             "package_version": "",
             "session_type": "",
             "cicd_runner": "skip",
-            "data_ingestion": "false",
-            "datastore_type": "",
             "frontend_type": "",
             "agent_guidance_filename": "GEMINI.md",
         }

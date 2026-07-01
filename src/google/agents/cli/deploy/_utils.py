@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 import logging
+import shlex
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -36,9 +38,29 @@ DEFAULT_MAX_INSTANCES = 10
 # can raise --concurrency (and --memory) after load testing.
 # https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/runtime/optimize-and-scale#underutilized-workers
 DEFAULT_CONCURRENCY = 8
-# One async worker per vCPU (DEFAULT_CPU); a single GIL-bound process saturates
-# one core, so worker count tracks CPU.
-DEFAULT_NUM_WORKERS = 1
+
+
+def redact_command(args: list[str]) -> str:
+    """``shlex.join(args)`` with every env-var VALUE masked for display.
+
+    Any ``KEY=VALUE`` segment is shown as ``KEY=***``, so values propagated from
+    the project ``.env`` (which may include secrets) never reach the terminal or
+    CI logs — only the key names are visible. Handles both a single comma-joined
+    ``--update-env-vars`` argument (``K1=V1,K2=V2``) and individual ``KEY=VALUE``
+    args. Only the printed form is masked; the caller executes the real command
+    unredacted.
+    """
+
+    def _redact(arg: str) -> str:
+        if "=" not in arg:
+            return arg
+        segments = []
+        for seg in arg.split(","):
+            key, sep, _value = seg.partition("=")
+            segments.append(f"{key}=***" if sep else seg)
+        return ",".join(segments)
+
+    return shlex.join(_redact(str(a)) for a in args)
 
 
 def resolve_service_name(cfg: ProjectConfig, override: str | None) -> str:
@@ -61,3 +83,28 @@ def parse_key_value_pairs(kv_string: str | None) -> dict[str, str]:
             else:
                 logging.warning(f"Skipping malformed key-value pair: {pair}")
     return result
+
+
+def read_project_dotenv(project_root: str | Path) -> dict[str, str]:
+    """Read the project-root ``.env`` into a dict, or ``{}`` when absent.
+
+    Used by the deploy paths to propagate local config to the deployed service.
+    Values are copied as-is ("copy the .env" model); callers layer explicit
+    ``--update-env-vars`` on top so the CLI flag always wins.
+    """
+    import io
+
+    from dotenv import dotenv_values
+
+    env_path = Path(project_root) / ".env"
+    if not env_path.is_file():
+        return {}
+    # Read the bytes ourselves and hand dotenv a stream: dotenv_values(path) does
+    # its own file open that pyfakefs (use_dynamic_patch=False) doesn't patch.
+    with open(env_path, encoding="utf-8") as f:
+        content = f.read()
+    return {
+        k: v
+        for k, v in dotenv_values(stream=io.StringIO(content)).items()
+        if v is not None
+    }

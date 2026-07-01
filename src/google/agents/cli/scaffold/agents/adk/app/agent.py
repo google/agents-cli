@@ -28,16 +28,6 @@ from google.adk.plugins.bigquery_agent_analytics_plugin import (
 )
 from google.cloud import bigquery
 {%- endif %}
-{%- if not cookiecutter.use_google_api_key %}
-
-import os
-import google.auth
-
-_, project_id = google.auth.default()
-os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
-os.environ["GOOGLE_CLOUD_LOCATION"] = "global"
-os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "True"
-{%- endif %}
 
 
 def get_weather(query: str) -> str:
@@ -84,9 +74,7 @@ root_agent = Agent(
 )
 
 {%- if cookiecutter.bq_analytics %}
-{%- if cookiecutter.use_google_api_key %}
 import os
-{%- endif %}
 
 # Initialize BigQuery Analytics
 _plugins = []

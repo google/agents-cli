@@ -100,25 +100,6 @@ resource "google_secret_manager_secret_version" "db_password" {
 }
 
 {%- endif %}
-{%- if cookiecutter.data_ingestion %}
-{%- if cookiecutter.datastore_type == "agent_platform_search" %}
-
-locals {
-  data_store_ids = {
-    staging = data.external.data_store_id_staging.result.data_store_id
-    prod    = data.external.data_store_id_prod.result.data_store_id
-  }
-}
-{%- elif cookiecutter.datastore_type == "agent_platform_vector_search" %}
-
-locals {
-  vector_search_collections = {
-    for key, project_id in local.deploy_project_ids :
-    key => "projects/${project_id}/locations/${var.vector_search_location}/collections/${var.vector_search_collection_id}"
-  }
-}
-{%- endif %}
-{%- endif %}
 
 resource "google_cloud_run_v2_service" "app" {
   for_each = local.deploy_project_ids
@@ -149,6 +130,21 @@ resource "google_cloud_run_v2_service" "app" {
         value = "https://${var.project_name}-${data.google_project.project[each.key].number}.${var.region}.run.app"
       }
 
+      env {
+        name  = "GOOGLE_CLOUD_PROJECT"
+        value = each.value
+      }
+
+      env {
+        name  = "GOOGLE_CLOUD_LOCATION"
+        value = "global"
+      }
+
+      env {
+        name  = "GOOGLE_GENAI_USE_VERTEXAI"
+        value = "True"
+      }
+
       resources {
         limits = {
           cpu    = "1"
@@ -156,25 +152,6 @@ resource "google_cloud_run_v2_service" "app" {
         }
         cpu_idle = false
       }
-{%- if cookiecutter.data_ingestion %}
-{%- if cookiecutter.datastore_type == "agent_platform_search" %}
-
-      env {
-        name  = "DATA_STORE_ID"
-        value = local.data_store_ids[each.key]
-      }
-
-      env {
-        name  = "DATA_STORE_REGION"
-        value = var.data_store_region
-      }
-{%- elif cookiecutter.datastore_type == "agent_platform_vector_search" %}
-      env {
-        name  = "VECTOR_SEARCH_COLLECTION"
-        value = local.vector_search_collections[each.key]
-      }
-{%- endif %}
-{%- endif %}
 
 {%- if cookiecutter.session_type == "cloud_sql" %}
       # Mount the volume

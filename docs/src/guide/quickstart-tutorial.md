@@ -165,6 +165,6 @@ Try building something more complex:
 
 - Add tools — *"Add a Google Search tool so the caveman can grunt about current events"*
 - Multi-agent — *"Create an A2A agent that other agents can talk to"* (use the `adk` template — A2A is built in)
-- RAG — *"Build an agent that answers questions from our docs"* (use `agentic_rag` template)
+- RAG — *"Build an agent that answers questions from our docs"* (clone-and-study a RAG sample — see [Agent Templates](templates.md#rag-retrieval-augmented-generation))
 
 See [Agent Templates](templates.md) for all options, or jump to the [Development Guide](development.md) for the full workflow.

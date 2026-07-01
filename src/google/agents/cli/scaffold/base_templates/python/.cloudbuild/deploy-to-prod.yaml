@@ -13,29 +13,6 @@
 # limitations under the License.
 
 steps:
-{%- if cookiecutter.data_ingestion and cookiecutter.datastore_type == "agent_platform_vector_search" %}
-  - name: "gcr.io/cloud-builders/gcloud"
-    id: deploy-data-ingestion-pipeline-prod
-    entrypoint: /bin/bash
-    args:
-      - -c
-      - |
-        curl -LsSf https://astral.sh/uv/0.11.7/install.sh | sh
-        export PATH="$$HOME/.local/bin:$$PATH"
-        cd data_ingestion/data_ingestion_pipeline && \
-        uv sync --locked && uv run python submit_pipeline.py
-    env:
-      - "PIPELINE_ROOT=${_PIPELINE_GCS_ROOT_PROD}"
-      - "REGION=${_REGION}"
-      - "VECTOR_SEARCH_COLLECTION_ID=${_VECTOR_SEARCH_COLLECTION_ID}"
-      - "VECTOR_SEARCH_LOCATION=${_VECTOR_SEARCH_LOCATION}"
-      - "PROJECT_ID=${_PROD_PROJECT_ID}"
-      - "SERVICE_ACCOUNT=${_PIPELINE_SA_EMAIL_PROD}"
-      - "PIPELINE_NAME=${_PIPELINE_NAME}"
-      - "CRON_SCHEDULE=${_PIPELINE_CRON_SCHEDULE}"
-      - "DISABLE_CACHING=TRUE"
-      - "SCHEDULE_ONLY=TRUE"
-{%- endif %}
 {%- if cookiecutter.deployment_target == 'cloud_run' %}
 
   # Build and Push
@@ -129,7 +106,7 @@ steps:
           --project ${_PROD_PROJECT_ID} \
           --region ${_REGION} \
           --service-account=${_APP_SERVICE_ACCOUNT_PROD} \
-          --update-env-vars="COMMIT_SHA=${COMMIT_SHA},LOGS_BUCKET_NAME=${_LOGS_BUCKET_NAME_PROD}{%- if cookiecutter.data_ingestion %}{%- if cookiecutter.datastore_type == "agent_platform_search" %},DATA_STORE_ID=${_DATA_STORE_ID_PROD},DATA_STORE_REGION=${_DATA_STORE_REGION}{%- elif cookiecutter.datastore_type == "agent_platform_vector_search" %},VECTOR_SEARCH_COLLECTION_ID=${_VECTOR_SEARCH_COLLECTION_ID},VECTOR_SEARCH_LOCATION=${_VECTOR_SEARCH_LOCATION}{%- endif %}{%- endif %}"
+          --update-env-vars="COMMIT_SHA=${COMMIT_SHA},LOGS_BUCKET_NAME=${_LOGS_BUCKET_NAME_PROD}"
 {%- endif %}
 
 substitutions:
@@ -140,5 +117,6 @@ logsBucket: gs://${PROJECT_ID}-{{ cookiecutter.project_name | replace('_', '-') 
 options:
   env:
     - 'UV_PYTHON=3.12'
+    - 'CI=true'
   substitutionOption: ALLOW_LOOSE
   defaultLogsBucketBehavior: REGIONAL_USER_OWNED_BUCKET

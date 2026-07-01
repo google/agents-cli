@@ -15,7 +15,6 @@
 description: "Simple ReAct agent"
 example_question: "What's the weather in San Francisco?"
 settings:
-  requires_data_ingestion: false
   requires_session: true
   deployment_targets: ["agent_runtime", "cloud_run", "gke", "none"]
   extra_dependencies:

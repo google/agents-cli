@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.0] - 2026-06-30
+
+**Agents CLI is now 1.0 — Generally Available.** This is our first GA release: a stable, production-ready CLI for scaffolding, evaluating, and deploying ADK agents on Google Cloud.
+
+- Redeploys now preserve the existing deployment spec on Agent Runtime and Cloud Run instead of resetting unspecified settings.
+- Agent Runtime deploys now honor `.gcloudignore` and `.gitignore` when packaging source, so uploads no longer include ignored files.
+- RAG is now a clone-and-study recipe: start from the `rag-vector-search` / `rag-agent-search` samples in `google/adk-samples` (surfaced via the workflow skill). The `agentic_rag` template, the `--datastore` flag, and the `infra datastore` / `data-ingestion` commands were removed and now print a redirect.
+- Generated projects now consolidate Python environment configuration into a single templated `.env` file.
+- Eval commands now tolerate ADK toolsets when introspecting eval metadata, so agents that use toolsets no longer fail metadata collection.
+- GKE Cloud Build deploys are now resilient to log-streaming limits and no longer fail when the build log stream is truncated.
+- Refreshed the bundled skills: RAG samples point to `core/` on adk-samples `main`, the always-active workflow skill was generalized and trimmed, and the ADK code guidance notes `streaming_agent_run_with_events` for debugging on Agent Runtime.
+
 ## [0.6.1] - 2026-06-28
 - `publish gemini-enterprise` now registers Agent Runtime deployments via ADK by default, which Gemini Enterprise invokes natively and reliably. A2A registration remains the default for Cloud Run and GKE; requesting A2A on Agent Runtime now warns and recommends ADK. Re-publishing an A2A agent no longer creates duplicate registrations, and A2A agent cards now carry the correct public URL on the first deploy.
 - `agents-cli update` now exits non-zero and clearly reports when a skill fails to update, instead of always printing a misleading green "Skills updated." banner. Also fixes failure messages rendering in the wrong color on Windows PowerShell.

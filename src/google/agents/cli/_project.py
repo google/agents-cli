@@ -35,12 +35,10 @@ class ProjectConfig:
     deployment_target: str = "none"
     agent_directory: str = "app"
     is_a2a: bool = False
-    requires_data_ingestion: bool = False
     region: str = "us-east1"
     base_template: str = "adk"
     acli_version: str = ""
     language: str = "python"
-    datastore: str = ""
     session_type: str = "none"
     cicd_runner: str = "skip"
     agent_guidance_filename: str = "GEMINI.md"
@@ -50,8 +48,6 @@ class ProjectConfig:
         return {
             "deployment_target": self.deployment_target,
             "is_a2a": self.is_a2a,
-            "include_data_ingestion": self.requires_data_ingestion,
-            "datastore": self.datastore,
             "session_type": self.session_type,
             "cicd_runner": self.cicd_runner,
             "agent_guidance_filename": self.agent_guidance_filename,
@@ -72,15 +68,6 @@ class ProjectConfig:
 
         create_params = data.get("create_params", {})
 
-        datastore = (
-            # datastore_type was briefly used in an older format of the config file,
-            # we include it here in the fallback chain for legacy compatibility.
-            create_params.get("datastore") or data.get("datastore_type") or cfg.datastore
-        )
-        if datastore == "none":
-            datastore = ""
-        cfg.datastore = datastore
-
         cfg.session_type = create_params.get("session_type", cfg.session_type)
         cfg.cicd_runner = create_params.get("cicd_runner", cfg.cicd_runner)
         cfg.agent_guidance_filename = create_params.get(
@@ -90,9 +77,6 @@ class ProjectConfig:
             "deployment_target", cfg.deployment_target
         )
         cfg.is_a2a = create_params.get("is_a2a", cfg.is_a2a)
-        cfg.requires_data_ingestion = create_params.get(
-            "include_data_ingestion", cfg.requires_data_ingestion
-        )
 
         return cfg
 
@@ -364,33 +348,6 @@ def resolve_gcp_project(
             "  * gcloud config set project <PROJECT_ID>"
         )
     return project
-
-
-def resolve_gcp_region(
-    cfg: ProjectConfig | None = None,
-    fallback: str = "us-west1",
-) -> str:
-    """Resolves the GCP region to use, following a specific precedence.
-
-    The region is resolved in the following order:
-    1.  The `region` field from the provided `ProjectConfig` (`cfg`).
-    2.  The value of the `GOOGLE_CLOUD_LOCATION` environment variable.
-    3.  The provided `fallback` value (defaults to "us-west1").
-
-    Args:
-        cfg: Optional ProjectConfig object.
-        fallback: The default region if no other source is found.
-
-    Returns:
-        The resolved GCP region string.
-    """
-    if cfg and cfg.region:
-        return cfg.region
-    env = os.environ.get("GOOGLE_CLOUD_LOCATION")
-    if env:
-        return env
-    logging.info("Using default Google Cloud location: %s", fallback)
-    return fallback
 
 
 def require_a2a_project(cfg: ProjectConfig) -> None:

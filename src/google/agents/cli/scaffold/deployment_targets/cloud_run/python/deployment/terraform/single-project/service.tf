@@ -108,31 +108,27 @@ resource "google_cloud_run_v2_service" "app" {
         value = "https://${var.project_name}-${data.google_project.project.number}.${var.region}.run.app"
       }
 
+      env {
+        name  = "GOOGLE_CLOUD_PROJECT"
+        value = var.project_id
+      }
+
+      env {
+        name  = "GOOGLE_CLOUD_LOCATION"
+        value = "global"
+      }
+
+      env {
+        name  = "GOOGLE_GENAI_USE_VERTEXAI"
+        value = "True"
+      }
+
       resources {
         limits = {
           cpu    = "1"
           memory = "4Gi"
         }
       }
-{%- if cookiecutter.data_ingestion %}
-{%- if cookiecutter.datastore_type == "agent_platform_search" %}
-
-      env {
-        name  = "DATA_STORE_ID"
-        value = data.external.data_store_id.result.data_store_id
-      }
-
-      env {
-        name  = "DATA_STORE_REGION"
-        value = var.data_store_region
-      }
-{%- elif cookiecutter.datastore_type == "agent_platform_vector_search" %}
-      env {
-        name  = "VECTOR_SEARCH_COLLECTION"
-        value = "projects/${var.project_id}/locations/${var.vector_search_location}/collections/${var.vector_search_collection_id}"
-      }
-{%- endif %}
-{%- endif %}
 
 {%- if cookiecutter.session_type == "cloud_sql" %}
       # Mount the volume

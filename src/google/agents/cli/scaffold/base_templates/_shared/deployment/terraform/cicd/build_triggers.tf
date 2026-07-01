@@ -30,13 +30,9 @@ resource "google_cloudbuild_trigger" "pr_checks" {
   filename = ".cloudbuild/pr_checks.yaml"
   included_files = [
     "{{cookiecutter.agent_directory}}/**",
-    "data_ingestion/**",
     "tests/**",
     "deployment/**",
     "uv.lock",
-  {% if cookiecutter.data_ingestion %}
-    "data_ingestion/**",
-  {% endif %}
   ]
   include_build_logs = "INCLUDE_BUILD_LOGS_WITH_STATUS"
   depends_on = [
@@ -65,7 +61,6 @@ resource "google_cloudbuild_trigger" "cd_pipeline" {
   filename = ".cloudbuild/staging.yaml"
   included_files = [
     "{{cookiecutter.agent_directory}}/**",
-    "data_ingestion/**",
     "tests/**",
     "deployment/**",
     "uv.lock"
@@ -84,16 +79,6 @@ resource "google_cloudbuild_trigger" "cd_pipeline" {
     _ARTIFACT_REGISTRY_REPO_NAME   = resource.google_artifact_registry_repository.repo-artifacts-genai.repository_id
     _GKE_CLUSTER_NAME              = "${var.project_name}-staging"
 {%- elif cookiecutter.deployment_target == 'agent_runtime' %}
-{%- endif %}
-{%- if cookiecutter.data_ingestion and cookiecutter.datastore_type == "agent_platform_vector_search" %}
-    _PIPELINE_GCS_ROOT_STAGING     = "gs://${resource.google_storage_bucket.data_ingestion_pipeline_gcs_root["staging"].name}"
-    _PIPELINE_SA_EMAIL_STAGING             = resource.google_service_account.vertexai_pipeline_app_sa["staging"].email
-    _PIPELINE_CRON_SCHEDULE        = var.pipeline_cron_schedule
-    _VECTOR_SEARCH_COLLECTION_ID   = var.vector_search_collection_id
-    _VECTOR_SEARCH_LOCATION        = var.vector_search_location
-{%- elif cookiecutter.data_ingestion and cookiecutter.datastore_type == "agent_platform_search" %}
-    _DATA_STORE_ID_STAGING         = data.external.data_store_id_staging.result.data_store_id
-    _DATA_STORE_REGION             = var.data_store_region
 {%- endif %}
     # Your other CD Pipeline substitutions
   }
@@ -134,16 +119,6 @@ resource "google_cloudbuild_trigger" "deploy_to_prod_pipeline" {
     _ARTIFACT_REGISTRY_REPO_NAME   = resource.google_artifact_registry_repository.repo-artifacts-genai.repository_id
     _GKE_CLUSTER_NAME              = "${var.project_name}-prod"
 {%- elif cookiecutter.deployment_target == 'agent_runtime' %}
-{%- endif %}
-{%- if cookiecutter.data_ingestion and cookiecutter.datastore_type == "agent_platform_vector_search" %}
-    _PIPELINE_GCS_ROOT_PROD        = "gs://${resource.google_storage_bucket.data_ingestion_pipeline_gcs_root["prod"].name}"
-    _PIPELINE_SA_EMAIL_PROD             = resource.google_service_account.vertexai_pipeline_app_sa["prod"].email
-    _PIPELINE_CRON_SCHEDULE        = var.pipeline_cron_schedule
-    _VECTOR_SEARCH_COLLECTION_ID   = var.vector_search_collection_id
-    _VECTOR_SEARCH_LOCATION        = var.vector_search_location
-{%- elif cookiecutter.data_ingestion and cookiecutter.datastore_type == "agent_platform_search" %}
-    _DATA_STORE_ID_PROD            = data.external.data_store_id_prod.result.data_store_id
-    _DATA_STORE_REGION             = var.data_store_region
 {%- endif %}
     # Your other Deploy to Prod Pipeline substitutions
   }

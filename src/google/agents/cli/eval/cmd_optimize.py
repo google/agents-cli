@@ -205,7 +205,7 @@ def _execute_optimization_run(
     help="Path to a combined JSON config file for advanced settings.",
 )
 def cmd_optimize(dataset_file, target_metric, config_path):
-    """Optimize agent prompts using the GEPA framework.
+    """[Experimental] Optimize agent prompts using the GEPA framework.
 
     This command runs 'adk optimize' under the hood to automatically improve
     your agent's instructions by iteratively refining the prompt.
@@ -226,6 +226,7 @@ def cmd_optimize(dataset_file, target_metric, config_path):
     - Default Paths: By default, it looks for a JSON config file in
       tests/eval/optimization_config.json.
     """
+    logging.warning("`eval optimize` is experimental and may change.")
     chdir_project_root()
     cfg = read_project_config()
     require_agent_directory(cfg)

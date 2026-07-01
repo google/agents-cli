@@ -16,12 +16,14 @@
 
 import logging
 import os
-import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
 
+import backoff
 import click
+import requests
 
 from google.agents.cli import _tools
 from google.agents.cli._project import (
@@ -34,14 +36,16 @@ from google.agents.cli._project import (
     resolve_gcp_project,
 )
 from google.agents.cli._runner import popen_resolved, run, run_resolved
+from google.agents.cli.auth import get_access_token
 from google.agents.cli.deploy._utils import (
     DEFAULT_CONCURRENCY,
     DEFAULT_CPU,
     DEFAULT_MAX_INSTANCES,
     DEFAULT_MEMORY,
     DEFAULT_MIN_INSTANCES,
-    DEFAULT_NUM_WORKERS,
     parse_key_value_pairs,
+    read_project_dotenv,
+    redact_command,
     resolve_service_name,
 )
 from google.agents.cli.deploy.agent_runtime import (
@@ -50,6 +54,27 @@ from google.agents.cli.deploy.agent_runtime import (
     parse_secrets,
 )
 from google.agents.cli.scaffold.utils.language import get_project_version
+
+
+def _cloud_run_service_exists(*, project: str, region: str, service: str) -> bool:
+    """True if a Cloud Run service already exists (Cloud Run Admin API v2 GET).
+
+    Used to choose create (apply our conservative defaults) vs. update (send only
+    the flags the user set, letting gcloud preserve the rest). Uses a REST GET
+    rather than `gcloud run services describe` to avoid ~2s of gcloud startup and
+    the run_v2 dependency, mirroring the REST pattern in publish/cmd_publish.py.
+    """
+    url = (
+        f"https://{region}-run.googleapis.com/v2/projects/{project}"
+        f"/locations/{region}/services/{service}"
+    )
+    resp = requests.get(
+        url, headers={"Authorization": f"Bearer {get_access_token()}"}, timeout=30
+    )
+    if resp.status_code == 404:
+        return False
+    resp.raise_for_status()
+    return True
 
 
 def _build_psc_interface_config(
@@ -157,6 +182,92 @@ def _resolve_deploy_service_name(
     return resolve_service_name(cfg, service_name_override)
 
 
+# Right after a project/repo/service is first created, the Cloud Run Service
+# Agent often isn't yet allowed to pull the (cross-project) image, so the deploy
+# fails with a 403 that gcloud itself flags as transient ("permissions might
+# take a few minutes to propagate"). These clear on their own within minutes, so
+# we retry them. Matching is intentionally narrow — we only match the image-pull
+# propagation signatures so genuine permission misconfigurations (e.g. a deployer
+# that permanently lacks a role) fail fast instead of burning the retry budget.
+_CLOUD_RUN_TRANSIENT_DEPLOY_SIGNATURES = (
+    "permissions might take a few minutes to propagate",
+    "must have permission to read the image",
+    "artifactregistry.repositories.downloadArtifacts",
+)
+
+# Retry budget for transient Cloud Run deploy failures. Propagation can take a
+# few minutes, so we allow several attempts with exponential backoff + jitter.
+_CLOUD_RUN_DEPLOY_MAX_TRIES = 5
+_CLOUD_RUN_DEPLOY_MAX_TIME = 300
+
+
+class _TransientCloudRunDeployError(click.ClickException):
+    """A Cloud Run deploy failure expected to clear on retry (IAM propagation).
+
+    Subclasses ClickException so that if every retry is exhausted, backoff
+    re-raises it and the CLI still exits with a clean, actionable message.
+    """
+
+
+@backoff.on_exception(
+    backoff.expo,
+    _TransientCloudRunDeployError,
+    max_tries=_CLOUD_RUN_DEPLOY_MAX_TRIES,
+    max_time=_CLOUD_RUN_DEPLOY_MAX_TIME,
+    jitter=backoff.full_jitter,
+    on_backoff=lambda details: logging.warning(
+        "Cloud Run deploy hit a transient IAM-propagation error; retrying in "
+        "%.0fs (attempt %d/%d)...",
+        details["wait"],
+        details["tries"] + 1,  # the upcoming attempt; details['tries'] = ones done
+        _CLOUD_RUN_DEPLOY_MAX_TRIES,
+    ),
+)
+def _run_cloud_run_deploy_with_retry(args: list[str], *, project: str | None) -> None:
+    """Run ``gcloud run deploy``, streaming output, retrying transient IAM errors.
+
+    Streams stderr to the terminal in real time (char by char, since gcloud
+    renders progress with carriage returns rather than newlines) while capturing
+    it for error classification. Raises:
+      * ``_TransientCloudRunDeployError`` for cross-project IAM propagation
+        failures, which backoff retries.
+      * ``click.ClickException`` for all other failures, which fail fast.
+    """
+    process = popen_resolved(args, stderr=subprocess.PIPE, text=True)
+
+    assert process.stderr is not None
+    stderr_chars = []
+    while True:
+        char = process.stderr.read(1)
+        if not char:
+            break
+        sys.stderr.write(char)
+        sys.stderr.flush()
+        stderr_chars.append(char)
+
+    process.wait()
+
+    if process.returncode == 0:
+        return
+
+    stderr = "".join(stderr_chars)
+    if "SERVICE_DISABLED" in stderr:
+        raise click.ClickException(
+            "Cloud Run or Cloud Build API is not enabled.\n"
+            "Please enable them by running:\n"
+            f"  gcloud services enable cloudbuild.googleapis.com run.googleapis.com --project={project}"
+        )
+    if any(sig in stderr for sig in _CLOUD_RUN_TRANSIENT_DEPLOY_SIGNATURES):
+        raise _TransientCloudRunDeployError(
+            "Cloud Run deployment failed due to a transient IAM-propagation error "
+            f"(exit code {process.returncode}). This usually clears within a few "
+            "minutes after a project, repository, or service is first created."
+        )
+    raise click.ClickException(
+        f"Cloud Run deployment failed (exit code {process.returncode})"
+    )
+
+
 @click.command("deploy")
 @click.option("--project", default=None, help="GCP project ID.")
 @click.option("--region", default=None, help="GCP region.")
@@ -223,12 +334,6 @@ def _resolve_deploy_service_name(
     type=int,
     help="Concurrent requests per container (Agent Runtime, Cloud Run). "
     f"Default: {DEFAULT_CONCURRENCY}.",
-)
-@click.option(
-    "--num-workers",
-    default=None,
-    type=int,
-    help="Worker processes per container (Agent Runtime). Default: 1.",
 )
 @click.option("--service-account", default=None, help="Service account email.")
 @click.option(
@@ -335,7 +440,6 @@ def cmd_deploy(
     min_instances,
     max_instances,
     concurrency,
-    num_workers,
     service_account,
     service_name_override,
     image,
@@ -447,14 +551,6 @@ def cmd_deploy(
             "CSI driver."
         )
 
-    # --num-workers is Agent-Runtime-only: the Cloud Run container runs uvicorn
-    # single-process and GKE is sized via Terraform/HPA.
-    if num_workers is not None and cfg.deployment_target != "agent_runtime":
-        raise click.ClickException(
-            "--num-workers is only supported for Agent Runtime deployments "
-            f"(current target: {cfg.deployment_target})."
-        )
-
     # Container-build flags split by target: Agent Runtime builds from the
     # project Dockerfile (--build-args); Cloud Run / GKE take a prebuilt --image.
     if build_args and cfg.deployment_target != "agent_runtime":
@@ -486,30 +582,31 @@ def cmd_deploy(
                 "the HorizontalPodAutoscaler under deployment/terraform/."
             )
 
-    # Resolve the shared machine-shape defaults once, after the guards above have
-    # inspected which flags were explicitly set. Agent Runtime and Cloud Run then
-    # deploy with the same shape from a single place (DEFAULT_* in _utils.py is the
-    # only source of the values).
-    cpu = cpu if cpu is not None else DEFAULT_CPU
-    memory = memory if memory is not None else DEFAULT_MEMORY
-    min_instances = min_instances if min_instances is not None else DEFAULT_MIN_INSTANCES
-    max_instances = max_instances if max_instances is not None else DEFAULT_MAX_INSTANCES
-    concurrency = concurrency if concurrency is not None else DEFAULT_CONCURRENCY
-    num_workers = num_workers if num_workers is not None else DEFAULT_NUM_WORKERS
-
+    # The sizing flags (cpu/memory/min/max/concurrency) are left as-is (possibly
+    # None) so each deployment target can decide how to handle unset values:
+    #   - Agent Runtime: pass None → FieldMask omits the field → preserves on update
+    #   - Cloud Run: apply defaults on create, omit on update (see _shape_flag below)
     if cfg.deployment_target == "agent_runtime":
-        runtime_shape = {
-            "cpu": cpu,
-            "memory": memory,
-            "min_instances": min_instances,
-            "max_instances": max_instances,
-            "container_concurrency": concurrency,
-            "num_workers": num_workers,
-        }
         if dry_run:
+            # Fill defaults FOR DISPLAY ONLY — the real call passes raw (possibly-None)
+            # values so Agent Runtime's FieldMask can preserve existing settings on update.
+            runtime_shape = {
+                "cpu": cpu if cpu is not None else DEFAULT_CPU,
+                "memory": memory if memory is not None else DEFAULT_MEMORY,
+                "min_instances": min_instances
+                if min_instances is not None
+                else DEFAULT_MIN_INSTANCES,
+                "max_instances": max_instances
+                if max_instances is not None
+                else DEFAULT_MAX_INSTANCES,
+                "container_concurrency": concurrency
+                if concurrency is not None
+                else DEFAULT_CONCURRENCY,
+            }
             msg = f"  Would deploy to Agent Runtime: project={project}, region={region}"
             for key, value in runtime_shape.items():
                 msg += f"\n  {key}: {value}"
+            msg += "\n  (defaults apply on create; existing values preserved on update)"
             if psc_interface_config:
                 msg += f"\n  PSC network attachment: {psc_interface_config['network_attachment']}"
                 for dc in psc_interface_config.get("dns_peering_configs", []):
@@ -537,7 +634,6 @@ def cmd_deploy(
             min_instances=min_instances,
             max_instances=max_instances,
             container_concurrency=concurrency,
-            num_workers=num_workers,
         )
 
     elif cfg.deployment_target == "cloud_run":
@@ -555,13 +651,29 @@ def cmd_deploy(
             args.extend(["--image", image])
         else:
             args.extend(["--source", "."])
-        # The resolved shape (above) matches Agent Runtime instead of gcloud's
-        # platform defaults (concurrency 80, scale-to-zero).
-        args.extend(["--memory", memory])
-        args.extend(["--cpu", cpu])
-        args.extend(["--min-instances", str(min_instances)])
-        args.extend(["--max-instances", str(max_instances)])
-        args.extend(["--concurrency", str(concurrency)])
+
+        # For sizing flags: user value always wins; on create fall back to our
+        # conservative defaults; on update omit so gcloud preserves the live value.
+        # Dry-run skips the network call and treats the deploy as a create for display.
+        creating = (
+            True
+            if dry_run
+            else not _cloud_run_service_exists(
+                project=project, region=region, service=service_name
+            )
+        )
+
+        def _shape_flag(flag: str, value, default):
+            if value is not None:
+                args.extend([flag, str(value)])
+            elif creating:
+                args.extend([flag, str(default)])
+
+        _shape_flag("--memory", memory, DEFAULT_MEMORY)
+        _shape_flag("--cpu", cpu, DEFAULT_CPU)
+        _shape_flag("--min-instances", min_instances, DEFAULT_MIN_INSTANCES)
+        _shape_flag("--max-instances", max_instances, DEFAULT_MAX_INSTANCES)
+        _shape_flag("--concurrency", concurrency, DEFAULT_CONCURRENCY)
         args.append("--no-allow-unauthenticated")
         args.append("--no-cpu-throttling")
         if port:
@@ -571,9 +683,10 @@ def cmd_deploy(
         if service_account:
             args.extend(["--service-account", service_account])
 
-        # Inject environment variables (AGENT_VERSION auto-set, user can override)
-        env_var_map = parse_key_value_pairs(update_env_vars)
+        # Inject environment variables. Precedence: --update-env-vars > .env > defaults.
         project_root = find_project_root() or "."
+        env_var_map = read_project_dotenv(project_root)
+        env_var_map.update(parse_key_value_pairs(update_env_vars))
         env_var_map.setdefault("AGENT_VERSION", get_project_version(project_root))
 
         # Set APP_URL so the service knows its own URL (used by A2A agent cards, etc.)
@@ -626,39 +739,13 @@ def cmd_deploy(
         if no_wait:
             args.append("--async")
 
-        cmd_str = shlex.join(str(a) for a in args)
+        display_cmd = redact_command(args)
         if dry_run:
-            click.echo(f"  Would run: {cmd_str}")
+            click.echo(f"  Would run: {display_cmd}")
             return
-        click.secho(f"  ▸ {cmd_str}", fg="cyan", dim=True)
+        click.secho(f"  ▸ {display_cmd}", fg="cyan", dim=True)
 
-        # Stream stdout and stderr to terminal in real time, capturing stderr for error detection
-        process = popen_resolved(args, stderr=subprocess.PIPE, text=True)
-
-        assert process.stderr is not None
-        stderr_chars = []
-        while True:
-            char = process.stderr.read(1)
-            if not char:
-                break
-            sys.stderr.write(char)
-            sys.stderr.flush()
-            stderr_chars.append(char)
-
-        process.wait()
-
-        if process.returncode != 0:
-            stderr = "".join(stderr_chars)
-            if "SERVICE_DISABLED" in stderr:
-                raise click.ClickException(
-                    "Cloud Run or Cloud Build API is not enabled.\n"
-                    "Please enable them by running:\n"
-                    f"  gcloud services enable cloudbuild.googleapis.com run.googleapis.com --project={project}"
-                )
-            else:
-                raise click.ClickException(
-                    f"Cloud Run deployment failed (exit code {process.returncode})"
-                )
+        _run_cloud_run_deploy_with_retry(args, project=project)
 
     elif cfg.deployment_target == "gke":
         if no_wait:
@@ -765,6 +852,66 @@ def _check_cloud_run_status(
             click.echo(f"   Reason: {reason}")
 
 
+def _build_image_with_cloud_build(*, image: str, project: str) -> None:
+    """Build and push an image with Cloud Build, polling for the result.
+
+    Submits with ``--async`` and polls ``builds describe`` instead of streaming
+    logs. gcloud's default log streaming exits non-zero when the caller can't
+    read the default logs bucket (e.g. under VPC-SC, or without project Viewer)
+    even though the build itself succeeds; polling works in every environment.
+    The build is viewable at the printed console URL.
+    """
+    submit = run(
+        [
+            "gcloud",
+            "builds",
+            "submit",
+            "--tag",
+            image,
+            "--project",
+            project,
+            "--async",
+            "--format=value(id)",
+        ],
+        capture=True,
+        check_err_msg="Failed to submit Cloud Build",
+    )
+    build_id = (submit.stdout or "").strip()
+    if not build_id:
+        raise click.ClickException("Cloud Build did not return a build ID.")
+    build_url = f"https://console.cloud.google.com/cloud-build/builds/{build_id}?project={project}"
+    click.echo(f"  Build {build_id} — logs: {build_url}")
+
+    deadline = time.monotonic() + 1800  # 30 min safety cap
+    while True:
+        if time.monotonic() > deadline:
+            raise click.ClickException(
+                f"Timed out waiting for Cloud Build {build_id}. See {build_url}"
+            )
+        time.sleep(5)
+        status = run(
+            [
+                "gcloud",
+                "builds",
+                "describe",
+                build_id,
+                "--project",
+                project,
+                "--format=value(status)",
+            ],
+            capture=True,
+            print_cmd=False,
+            check=False,
+        ).stdout.strip()
+        if status == "SUCCESS":
+            click.echo("  ✅ Build succeeded.")
+            return
+        if status in {"FAILURE", "INTERNAL_ERROR", "TIMEOUT", "CANCELLED", "EXPIRED"}:
+            raise click.ClickException(
+                f"Cloud Build {build_id} ended with status {status}. See {build_url}"
+            )
+
+
 def _deploy_gke(
     *,
     project,
@@ -821,7 +968,9 @@ def _deploy_gke(
                 f"  Would run: terraform -chdir={tf_dir} apply -auto-approve"
                 f" -target=({len(deploy_targets)} targets)"
             )
-            click.echo("  Would run: gcloud builds submit --tag ...")
+            click.echo(
+                "  Would run: gcloud builds submit --tag ... --async (then poll status)"
+            )
         click.echo("  Would run: gcloud container clusters get-credentials ...")
         click.echo(
             f"  Would run: kubectl set image ... {image or f'{region}-docker.pkg.dev/{project}/{service_name}/{service_name}:latest'}"
@@ -870,10 +1019,7 @@ def _deploy_gke(
     if not image:
         image = f"{region}-docker.pkg.dev/{project}/{service_name}/{service_name}:latest"
         click.echo(f"\n🐳 Building container image: {image}")
-        run(
-            ["gcloud", "builds", "submit", "--tag", image, "--project", project],
-            check_err_msg="Container build failed",
-        )
+        _build_image_with_cloud_build(image=image, project=project)
 
     # Step 4: Update container image
     click.echo("\n🔄 Rolling out deployment...")
@@ -893,8 +1039,9 @@ def _deploy_gke(
     # Step 5: Inject runtime env vars (AGENT_VERSION, --update-env-vars, APP_URL).
     # A user-supplied value (via --update-env-vars) takes precedence over the
     # CLI-derived defaults, matching the Cloud Run and Agent Runtime paths.
-    env_var_map = parse_key_value_pairs(update_env_vars)
     project_root = find_project_root() or Path.cwd()
+    env_var_map = read_project_dotenv(project_root)
+    env_var_map.update(parse_key_value_pairs(update_env_vars))
     env_var_map.setdefault("AGENT_VERSION", get_project_version(project_root))
 
     click.echo("\n🌐 Getting service IP...")
@@ -921,16 +1068,19 @@ def _deploy_gke(
     else:
         click.echo("  ⚠️  Could not determine service IP — skipping APP_URL injection.")
 
+    kubectl_env_args = [
+        "kubectl",
+        "set",
+        "env",
+        f"deployment/{service_name}",
+        *(f"{k}={v}" for k, v in env_var_map.items()),
+        "-n",
+        service_name,
+    ]
+    click.secho(f"  ▸ {redact_command(kubectl_env_args)}", fg="cyan", dim=True)
     run(
-        [
-            "kubectl",
-            "set",
-            "env",
-            f"deployment/{service_name}",
-            *(f"{k}={v}" for k, v in env_var_map.items()),
-            "-n",
-            service_name,
-        ],
+        kubectl_env_args,
+        print_cmd=False,
         check_err_msg="Failed to set environment variables",
     )
 

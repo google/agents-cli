@@ -16,9 +16,6 @@ locals {
   cicd_services = [
     "artifactregistry.googleapis.com",
     "cloudbuild.googleapis.com",
-{%- if cookiecutter.datastore_type == "agent_platform_search" %}
-    "discoveryengine.googleapis.com",
-{%- endif %}
     "aiplatform.googleapis.com",
     "serviceusage.googleapis.com",
 {%- if cookiecutter.language == "python" %}
@@ -27,9 +24,6 @@ locals {
     "cloudresourcemanager.googleapis.com",
     "cloudtrace.googleapis.com",
     "telemetry.googleapis.com",
-{%- if cookiecutter.datastore_type == "agent_platform_vector_search" %}
-    "vectorsearch.googleapis.com",
-{%- endif %}
 {%- if cookiecutter.session_type == "cloud_sql" %}
     "sqladmin.googleapis.com",
 {%- endif %}
@@ -45,9 +39,6 @@ locals {
     "compute.googleapis.com",
     "container.googleapis.com",
 {%- endif %}
-{%- if cookiecutter.datastore_type == "agent_platform_search" %}
-    "discoveryengine.googleapis.com",
-{%- endif %}
     "cloudresourcemanager.googleapis.com",
     "iam.googleapis.com",
 {%- if cookiecutter.language == "python" %}
@@ -57,9 +48,6 @@ locals {
     "logging.googleapis.com",
     "cloudtrace.googleapis.com",
     "telemetry.googleapis.com",
-{%- if cookiecutter.datastore_type == "agent_platform_vector_search" %}
-    "vectorsearch.googleapis.com",
-{%- endif %}
 {%- if cookiecutter.session_type == "cloud_sql" %}
     "sqladmin.googleapis.com",
     "secretmanager.googleapis.com"

@@ -362,17 +362,6 @@
       default: "agent_runtime",
     },
     {
-      key: "datastore",
-      q: "Does it ground answers in your data?",
-      help: "Vector Search for embeddings; Search for keyword + facets; None for no RAG.",
-      options: [
-        { v: "agent_platform_vector_search", l: "Vector Search" },
-        { v: "agent_platform_search",         l: "Search" },
-        { v: "none",                           l: "None" },
-      ],
-      default: "agent_platform_vector_search",
-    },
-    {
       key: "session",
       q: "Where do conversations live?",
       help: "In-memory loses state on restart; managed scales without DB ops.",
@@ -458,9 +447,8 @@
       const c = state;
       const lines = [
         "agents-cli scaffold create outage-recovery-bot \\",
-        "  --agent agentic_rag \\",
+        "  --agent adk \\",
       ];
-      if (c.datastore !== "none") lines.push("  --datastore " + c.datastore + " \\");
       lines.push("  --deployment-target " + c.target + " \\");
       if (c.session !== "in_memory") lines.push("  --session-type " + c.session + " \\");
       if (c.cicd !== "skip") lines.push("  --cicd-runner " + c.cicd + " \\");
@@ -468,12 +456,10 @@
       cmdCode.textContent = lines.join("\n");
 
       // Crude file-count estimate using the deltas we know about.
-      let fileCount = 71;
-      if (c.datastore === "none") fileCount -= 14;     // strip data_ingestion + vector_search.tf
+      let fileCount = 57;
       if (c.cicd === "skip")      fileCount -= 18;     // strip .github/* + cicd terraform
       if (c.bq === "no")          fileCount -= 2;
       const pieces = [
-        c.datastore !== "none" && "RAG pipeline",
         c.cicd !== "skip" && (c.cicd === "github_actions" ? "GitHub Actions CI/CD" : "Cloud Build CI/CD"),
         c.bq === "yes" && "BQ Analytics",
         c.target === "agent_runtime" ? "Agent Runtime entrypoint" : c.target === "cloud_run" ? "Cloud Run service" : "GKE manifests",

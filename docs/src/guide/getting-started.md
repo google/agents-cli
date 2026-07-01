@@ -184,7 +184,7 @@ For a full walkthrough, see the [Manual Workflow Tutorial](hands-on-tutorial.md)
 - [Tutorial: Manual Workflow](hands-on-tutorial.md) — type every command yourself
 - [Use Cases](use-cases.md) — get inspired by real agent patterns people build
 - [Project Structure](project-structure.md) — understand what each generated file does
-- [Agent Templates](templates.md) — choose the right template (`adk`, `agentic_rag`)
+- [Agent Templates](templates.md) — the `adk` template and the RAG clone-and-study recipe
 - [Development Guide](development.md) — full development workflow
 - [CLI Reference](../cli/index.md) — all commands and flags
 

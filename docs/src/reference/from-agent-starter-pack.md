@@ -45,11 +45,11 @@ create_params:
 
 ### Template Coverage
 
-agents-cli supports `adk` and `agentic_rag` (Python), with A2A built into every ADK agent — the standalone `adk_a2a` template was merged into `adk`. ASP had additional templates (`adk_go`, `adk_java`, `adk_ts`, `adk_live`, `custom_a2a`) that are not yet available in agents-cli. Support for these is planned.
+agents-cli supports the `adk` template (Python), with A2A built into every ADK agent — the standalone `adk_a2a` template was merged into `adk`. RAG is a clone-and-study recipe rather than a template (the former `agentic_rag` template was removed; adapt the `rag-vector-search` / `rag-agent-search` samples instead). ASP had additional templates (`adk_go`, `adk_java`, `adk_ts`, `adk_live`, `custom_a2a`) that are not yet available in agents-cli. Support for these is planned.
 
 ### What Stays the Same
 
-- **Templates** — same agent templates (`adk`, `agentic_rag`), same deployment targets, same session storage options
+- **Templates** — same `adk` agent template (RAG is now a clone-and-study recipe), same deployment targets, same session storage options
 - **Project structure** — generated projects have the same layout, your `app/agent.py` code is unchanged
 - **Terraform** — same infrastructure-as-code under `deployment/terraform/`
 - **CI/CD pipelines** — same Cloud Build and GitHub Actions configurations

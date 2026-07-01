@@ -44,3 +44,8 @@ Thumbs.db
 
 # Test results
 e2e/load_test/.results/*.json
+
+# Credentials and private keys
+*.pem
+*-key.json
+credentials*.json

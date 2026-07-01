@@ -28,9 +28,8 @@ from typing import Any
 import yaml
 from cookiecutter.main import cookiecutter
 from rich.console import Console
-from rich.prompt import Confirm, IntPrompt, Prompt
+from rich.prompt import Confirm, IntPrompt
 
-from .datastores import DATASTORES
 from .lock_utils import get_lock_filename
 from .remote_template import (
     get_base_template_name,
@@ -90,67 +89,6 @@ CONDITIONAL_FILES = {
     ),
     "deployment/terraform/cicd/wif.tf": (
         lambda c: c.get("cicd_runner") == "github_actions"
-    ),
-    # Data ingestion conditional (only for agent_platform_vector_search)
-    "data_ingestion": lambda c: c.get("datastore_type") == "agent_platform_vector_search",
-    # Datastore-specific terraform files (agent_platform_search vs agent_platform_vector_search)
-    "deployment/terraform/cicd/agent_platform_search.tf": (
-        lambda c: c.get("datastore_type") == "agent_platform_search"
-    ),
-    "deployment/terraform/cicd/agent_platform_search_variables.tf": (
-        lambda c: c.get("datastore_type") == "agent_platform_search"
-    ),
-    "deployment/terraform/cicd/agent_platform_search_github.tf": (
-        lambda c: c.get("datastore_type") == "agent_platform_search"
-    ),
-    "deployment/terraform/single-project/agent_platform_search.tf": (
-        lambda c: c.get("datastore_type") == "agent_platform_search"
-    ),
-    "deployment/terraform/single-project/agent_platform_search_variables.tf": (
-        lambda c: c.get("datastore_type") == "agent_platform_search"
-    ),
-    "deployment/terraform/cicd/vector_search.tf": (
-        lambda c: c.get("datastore_type") == "agent_platform_vector_search"
-    ),
-    "deployment/terraform/cicd/vector_search_variables.tf": (
-        lambda c: c.get("datastore_type") == "agent_platform_vector_search"
-    ),
-    "deployment/terraform/cicd/vector_search_github.tf": (
-        lambda c: c.get("datastore_type") == "agent_platform_vector_search"
-    ),
-    "deployment/terraform/cicd/vector_search_iam.tf": (
-        lambda c: c.get("datastore_type") == "agent_platform_vector_search"
-    ),
-    "deployment/terraform/cicd/vector_search_service_accounts.tf": (
-        lambda c: c.get("datastore_type") == "agent_platform_vector_search"
-    ),
-    "deployment/terraform/single-project/vector_search.tf": (
-        lambda c: c.get("datastore_type") == "agent_platform_vector_search"
-    ),
-    "deployment/terraform/single-project/vector_search_variables.tf": (
-        lambda c: c.get("datastore_type") == "agent_platform_vector_search"
-    ),
-    "deployment/terraform/single-project/vector_search_iam.tf": (
-        lambda c: c.get("datastore_type") == "agent_platform_vector_search"
-    ),
-    # Datastore-specific terraform scripts (agent_platform_search vs agent_platform_vector_search)
-    "deployment/terraform/scripts/delete_data_connector.py": (
-        lambda c: c.get("datastore_type") == "agent_platform_search"
-    ),
-    "deployment/terraform/scripts/get_data_store_id.py": (
-        lambda c: c.get("datastore_type") == "agent_platform_search"
-    ),
-    "deployment/terraform/scripts/setup_data_connector.py": (
-        lambda c: c.get("datastore_type") == "agent_platform_search"
-    ),
-    "deployment/terraform/scripts/start_connector_run.py": (
-        lambda c: c.get("datastore_type") == "agent_platform_search"
-    ),
-    "deployment/terraform/scripts/delete_vector_search_collection.py": (
-        lambda c: c.get("datastore_type") == "agent_platform_vector_search"
-    ),
-    "deployment/terraform/scripts/setup_vector_search_collection.py": (
-        lambda c: c.get("datastore_type") == "agent_platform_vector_search"
     ),
 }
 
@@ -457,7 +395,6 @@ def get_available_agents(
     # Define display order for agents within each group
     PRIORITY_ORDER = {
         "adk": 0,
-        "agentic_rag": 2,
     }
 
     agents_list = []
@@ -692,68 +629,6 @@ def prompt_session_type_selection(default_value: str | None = None) -> str:
     return keys[choice - 1]
 
 
-def _display_datastore_menu(console: Console) -> str:
-    """Display the datastore selection menu and return the selected type."""
-    console.print("\n> Please select a datastore:")
-    console.print("\n  [bold cyan]🗄️  Datastores[/]")
-    for i, (key, info) in enumerate(DATASTORES.items(), 1):
-        name_padded = key.ljust(24)
-        console.print(f"     {i}. [bold]{name_padded}[/] [dim]{info['name']}[/]")
-
-    choice = Prompt.ask(
-        "\nEnter the number of your choice",
-        choices=[str(i) for i in range(1, len(DATASTORES) + 1)],
-        default="1",
-    )
-    return list(DATASTORES.keys())[int(choice) - 1]
-
-
-def prompt_datastore_selection(
-    agent_name: str, from_cli_flag: bool = False
-) -> str | None:
-    """Ask user to select a datastore type if the agent supports data ingestion.
-
-    Args:
-        agent_name: Name of the agent
-        from_cli_flag: Whether this is being called due to explicit --datastore flag
-    """
-    console = Console()
-
-    # If this is from CLI flag, skip the "would you like to include" prompt
-    if from_cli_flag:
-        return _display_datastore_menu(console)
-
-    # Otherwise, proceed with normal flow
-    template_path = (
-        pathlib.Path(__file__).parent.parent / "agents" / agent_name / ".template"
-    )
-    config = load_template_config(template_path)
-
-    if config:
-        # If requires_data_ingestion is true, prompt for datastore type without asking if they want it
-        if config.get("settings", {}).get("requires_data_ingestion"):
-            console.print("\n> This agent includes a data ingestion pipeline.")
-            return _display_datastore_menu(console)
-
-        # Only prompt if the agent has optional data ingestion support
-        if "requires_data_ingestion" in config.get("settings", {}):
-            include = (
-                Prompt.ask(
-                    "\n> This agent supports data ingestion. Would you like to include a data pipeline?",
-                    choices=["y", "n"],
-                    case_sensitive=False,
-                    default="n",
-                ).lower()
-                == "y"
-            )
-
-            if include:
-                return _display_datastore_menu(console)
-
-    # If we get here, we need to prompt for datastore selection
-    return _display_datastore_menu(console)
-
-
 def prompt_cicd_runner_selection(default_value: str | None = None) -> str:
     """Ask user to select a CI/CD runner."""
     console = Console()
@@ -810,25 +685,6 @@ def get_template_path(agent_name: str, debug: bool = False) -> pathlib.Path:
         raise ValueError(f"Template directory not found at {template_path}")
 
     return template_path
-
-
-def copy_sample_data_files(project_template: pathlib.Path) -> None:
-    """Copy sample data files to the project template.
-
-    Args:
-        project_template: Path to the project template directory
-    """
-    sample_data_src = pathlib.Path(__file__).parent.parent / "sample_data"
-    sample_data_dst = project_template / "sample_data"
-
-    if sample_data_src.exists():
-        logging.debug(
-            f"Copying sample data files from {sample_data_src} to {sample_data_dst}"
-        )
-        copy_files(sample_data_src, sample_data_dst, overwrite=True)
-        logging.debug("Sample data files copied successfully")
-    else:
-        logging.warning(f"Sample data source directory not found at {sample_data_src}")
 
 
 def _extract_agent_garden_labels(
@@ -1009,28 +865,18 @@ app = App(root_agent=root_agent, name="{agent_directory}")
 
 def should_keep_single_project_terraform(
     deployment_target: str | None,
-    datastore: str | None,
-    include_data_ingestion: bool,
 ) -> bool:
     """Decide whether to preserve `deployment/terraform/single-project/` (and `shared/`)
     when scaffolding without CI/CD.
 
-    Kept when either:
-      - data ingestion needs the search-datastore terraform (works even with no deployment target), or
-      - a real deployment target was selected (anything but `none`).
+    Kept when a real deployment target was selected (anything but `none`).
     """
-    has_search_datastore = include_data_ingestion and datastore in (
-        "agent_platform_search",
-        "agent_platform_vector_search",
-    )
-    return has_search_datastore or deployment_target != "none"
+    return deployment_target != "none"
 
 
 def apply_prototype_deployment_cleanup(
     deployment_dir: pathlib.Path,
     deployment_target: str | None,
-    datastore: str | None,
-    include_data_ingestion: bool,
 ) -> None:
     """Prune `deployment/` after scaffolding in prototype/minimal mode (`cicd_runner == "skip"`).
 
@@ -1044,8 +890,6 @@ def apply_prototype_deployment_cleanup(
 
     keep = should_keep_single_project_terraform(
         deployment_target=deployment_target,
-        datastore=datastore,
-        include_data_ingestion=include_data_ingestion,
     )
     if not keep:
         shutil.rmtree(deployment_dir)
@@ -1082,8 +926,6 @@ def process_template(
     project_name: str,
     deployment_target: str | None = None,
     cicd_runner: str | None = None,
-    include_data_ingestion: bool = False,
-    datastore: str | None = None,
     session_type: str | None = None,
     output_dir: pathlib.Path | None = None,
     remote_template_path: pathlib.Path | None = None,
@@ -1092,7 +934,6 @@ def process_template(
     cli_overrides: dict[str, Any] | None = None,
     agent_garden: bool = False,
     remote_spec: Any | None = None,
-    google_api_key: str | None = None,
     google_cloud_project: str | None = None,
     bq_analytics: bool = False,
     agent_guidance_filename: str = "GEMINI.md",
@@ -1105,8 +946,6 @@ def process_template(
         project_name: Name of the project to create
         deployment_target: Optional deployment target (agent_runtime or cloud_run)
         cicd_runner: Optional CI/CD runner to use
-        include_data_ingestion: Whether to include data pipeline components
-        datastore: Optional datastore type for data ingestion
         session_type: Optional session type for cloud_run deployment
         output_dir: Optional output directory path, defaults to current directory
         remote_template_path: Optional path to remote template for overlay
@@ -1114,13 +953,11 @@ def process_template(
         in_folder: Whether to template directly into the output directory instead of creating a subdirectory
         cli_overrides: Optional CLI override values that should take precedence over template config
         agent_garden: Whether this deployment is from Agent Garden
-        google_api_key: Optional Google AI Studio API key to generate .env file
         google_cloud_project: Optional GCP project ID to populate .env file
         bq_analytics: Whether to include BigQuery Agent Analytics Plugin
     """
     logging.debug(f"Processing template from {template_dir}")
     logging.debug(f"Project name: {project_name}")
-    logging.debug(f"Include pipeline: {datastore}")
     logging.debug(f"Output directory: {output_dir}")
 
     # Create console for user feedback
@@ -1305,11 +1142,6 @@ def process_template(
                         f"2b. Copied {language} deployment files from {language_deployment_path}"
                     )
 
-            # 3. Copy sample data files for agent_platform_search
-            if include_data_ingestion and datastore == "agent_platform_search":
-                logging.debug("3. Including sample data files for agent_platform_search")
-                copy_sample_data_files(project_template)
-
             # 4. Skip remote template files during cookiecutter processing
             # Remote files will be copied after cookiecutter to avoid Jinja conflicts
             if is_remote and remote_template_path:
@@ -1391,7 +1223,6 @@ def process_template(
                     "frontend",
                     "tests",
                     "deployment",
-                    "data_ingestion",
                 ]
                 for folder in other_folders:
                     agent_folder = agent_path / folder
@@ -1430,22 +1261,18 @@ def process_template(
                 "settings": settings,
                 "tags": tags,
                 "is_a2a": "a2a" in tags,
-                "requires_data_ingestion": settings.get("requires_data_ingestion", False),
                 "language": language,
                 "deployment_target": deployment_target or "",
                 "cicd_runner": cicd_runner or "google_cloud_build",
                 "session_type": session_type or "",
                 "frontend_type": frontend_type,
                 "extra_dependencies": [extra_deps],
-                "data_ingestion": include_data_ingestion,
-                "datastore_type": datastore if datastore else "",
                 "agent_directory": get_agent_directory(
                     template_config, cli_overrides, language
                 ),
                 "agent_garden": agent_garden,
                 "agent_sample_id": agent_sample_id or "",
                 "agent_sample_publisher": agent_sample_publisher or "",
-                "use_google_api_key": bool(google_api_key),
                 "google_cloud_project": google_cloud_project or "your-gcp-project-id",
                 # Java package variables (only populated for Java projects)
                 "java_package": java_vars.get("java_package", ""),
@@ -1620,7 +1447,6 @@ def process_template(
                 "deployment_target": deployment_target,
                 "cicd_runner": cicd_runner or "google_cloud_build",
                 "is_a2a": "a2a" in tags,
-                "datastore_type": datastore if datastore else "",
             }
             apply_conditional_files(
                 final_destination, conditional_config, agent_directory
@@ -1650,8 +1476,6 @@ def process_template(
                 apply_prototype_deployment_cleanup(
                     deployment_dir=final_destination / "deployment",
                     deployment_target=deployment_target,
-                    datastore=datastore,
-                    include_data_ingestion=include_data_ingestion,
                 )
 
                 # Remove load_test folder
@@ -1705,34 +1529,6 @@ def process_template(
                         lock_file.truncate()
                     logging.debug(
                         f"Updated project name in lock file at {lock_file_path}"
-                    )
-
-            # Generate .env file for Google API Key if provided
-            if google_api_key:
-                if language in ("go", "java"):
-                    # For Go/Java templates, update the root .env file
-                    env_file_path = final_destination / ".env"
-                    env_content = f"""# Local development configuration
-# Using Google AI Studio API Key
-
-GOOGLE_API_KEY={google_api_key}
-"""
-                    env_file_path.write_text(env_content)
-                    logging.debug(f"Updated .env file at {env_file_path}")
-                    console.print(
-                        "📝 Updated [cyan].env[/cyan] file for Google AI Studio"
-                    )
-                else:
-                    # For Python templates, create .env in agent directory
-                    env_file_path = final_destination / agent_directory / ".env"
-                    env_content = f"""# AI Studio Configuration
-GOOGLE_API_KEY={google_api_key}
-"""
-                    env_file_path.write_text(env_content)
-                    logging.debug(f"Generated .env file at {env_file_path}")
-                    console.print(
-                        f"📝 Generated .env file at [cyan]{agent_directory}/.env[/cyan] "
-                        "for Google AI Studio"
                     )
 
         except Exception as e:

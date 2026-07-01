@@ -15,25 +15,6 @@
 locals {
   dummy_source_b64 = trimspace(file("${path.module}/../shared/dummy_source.b64"))
 }
-{%- if cookiecutter.data_ingestion %}
-{%- if cookiecutter.datastore_type == "agent_platform_search" %}
-
-locals {
-  data_store_ids = {
-    staging = data.external.data_store_id_staging.result.data_store_id
-    prod    = data.external.data_store_id_prod.result.data_store_id
-  }
-}
-{%- elif cookiecutter.datastore_type == "agent_platform_vector_search" %}
-
-locals {
-  vector_search_collections = {
-    for key, project_id in local.deploy_project_ids :
-    key => "projects/${project_id}/locations/${var.vector_search_location}/collections/${var.vector_search_collection_id}"
-  }
-}
-{%- endif %}
-{%- endif %}
 
 resource "google_vertex_ai_reasoning_engine" "app" {
   for_each = local.deploy_project_ids
@@ -62,6 +43,18 @@ resource "google_vertex_ai_reasoning_engine" "app" {
         value = google_storage_bucket.logs_data_bucket[each.value].name
       }
 
+      # GOOGLE_CLOUD_PROJECT is reserved by Agent Runtime (the platform injects
+      # it) and rejected in deployment_spec.env; GOOGLE_CLOUD_LOCATION is allowed.
+      env {
+        name  = "GOOGLE_CLOUD_LOCATION"
+        value = "global"
+      }
+
+      env {
+        name  = "GOOGLE_GENAI_USE_VERTEXAI"
+        value = "True"
+      }
+
       env {
         name  = "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"
         value = "true"
@@ -85,26 +78,6 @@ resource "google_vertex_ai_reasoning_engine" "app" {
         # Format: {location}.{connection_id}
         value = "${var.region}.${google_bigquery_connection.genai_telemetry_connection[each.key].connection_id}"
       }
-{%- endif %}
-{%- if cookiecutter.data_ingestion %}
-{%- if cookiecutter.datastore_type == "agent_platform_search" %}
-
-      env {
-        name  = "DATA_STORE_ID"
-        value = local.data_store_ids[each.key]
-      }
-
-      env {
-        name  = "DATA_STORE_REGION"
-        value = var.data_store_region
-      }
-{%- elif cookiecutter.datastore_type == "agent_platform_vector_search" %}
-
-      env {
-        name  = "VECTOR_SEARCH_COLLECTION"
-        value = local.vector_search_collections[each.key]
-      }
-{%- endif %}
 {%- endif %}
     }
 

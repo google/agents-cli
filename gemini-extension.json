@@ -1,5 +1,5 @@
 {
   "name": "google-agents-cli",
-  "version": "0.6.1",
+  "version": "1.0.0",
   "description": "Scaffold, develop, evaluate, and deploy AI agents with Google ADK. Bundles 7 skills for the agent development lifecycle."
 }

@@ -21,8 +21,8 @@ This file is staged into the user's agent project by ``agents-cli eval
 generate`` and is only intended to be invoked by that command. It is
 overwritten on each run, so do not modify it — edits will be lost.
 
-``GOOGLE_CLOUD_PROJECT`` and ``GOOGLE_CLOUD_LOCATION`` are read from the
-environment and consumed by ``vertexai.Client``.
+``GOOGLE_CLOUD_PROJECT`` and ``GOOGLE_CLOUD_LOCATION`` are loaded from the
+agent's ``.env`` (see ``_resolve_gcp_env``) and consumed by ``vertexai.Client``.
 
 Failure handling contract (so downstream ``agents-cli eval grade`` never
 sees a corrupt artifact):
@@ -54,23 +54,55 @@ def _unwrap_agent(loaded):
     return loaded
 
 
-def _ensure_eval_compatible(agent):
-    """Inject an empty ``tools`` list where the agent lacks one.
+def _safe_tool_declarations(agent):
+    """Return eval tool declarations for ``agent``, skipping what can't be introspected.
 
-    The Vertex eval SDK's ``AgentConfig.from_agent`` iterates ``agent.tools``
-    unconditionally, but workflow agents (``BaseAgent`` subclasses such as
-    ``SequentialAgent``/``ParallelAgent``/``LoopAgent``) have no ``tools``
-    field, so introspection raises ``AttributeError`` before inference runs.
-    Recurses through ``sub_agents`` because the SDK builds the agent map over
-    the whole tree, and a sub-agent may itself be a workflow agent.
+    A drop-in for the Vertex eval SDK's ``_get_tool_declarations_from_agent``
+    with two guards so building eval metadata never crashes the runner:
 
-    See https://github.com/googleapis/python-aiplatform/issues/6865.
+    * a missing ``tools`` attribute (workflow agents like ``SequentialAgent``)
+      yields no declarations instead of ``AttributeError``;
+    * entries that aren't introspectable callables (ADK toolsets, e.g. an MCP
+      toolset) are skipped instead of raising ``TypeError``.
+
+    Skipped toolsets stay on the live agent, so their tool calls still run and
+    show up in the resulting traces.
     """
-    if not hasattr(agent, "tools"):
-        object.__setattr__(agent, "tools", [])
-    for sub_agent in getattr(agent, "sub_agents", None) or []:
-        _ensure_eval_compatible(sub_agent)
-    return agent
+    from google.genai import types as genai_types
+
+    declarations = []
+    for tool in getattr(agent, "tools", []) or []:
+        get_decl = getattr(tool, "_get_declaration", None)
+        if callable(get_decl):
+            decl = get_decl()
+            if decl is not None:
+                declarations.append({"function_declarations": [decl]})
+            continue
+        try:
+            decl = genai_types.FunctionDeclaration.from_callable_with_api_option(
+                callable=tool
+            )
+            declarations.append({"function_declarations": [decl]})
+        except Exception:
+            continue  # toolsets aren't introspectable here; the live run keeps them
+    return declarations
+
+
+def _patch_eval_tool_introspection():
+    """Make the eval SDK tolerate ADK toolsets / tool-less workflow agents.
+
+    Both ``run_inference`` and ``eval dataset synthesize`` crash in the SDK's
+    shared ``_get_tool_declarations_from_agent``. Best-effort: a no-op if the
+    SDK layout changes. See
+    https://github.com/googleapis/python-aiplatform/issues/6865.
+    """
+    try:
+        from vertexai._genai.types.evals import AgentConfig
+    except Exception:
+        return
+    AgentConfig._get_tool_declarations_from_agent = staticmethod(  # ty: ignore[invalid-assignment]
+        _safe_tool_declarations
+    )
 
 
 def _load_fresh_agent(agents_dir, agent_name):
@@ -85,6 +117,36 @@ def _load_fresh_agent(agents_dir, agent_name):
     loader = AgentLoader(agents_dir=agents_dir)
     loader.remove_agent_from_cache(agent_name)
     return _unwrap_agent(loader.load_agent(agent_name))
+
+
+def _find_project_dotenv(agent_dir):
+    """Return the nearest ``.env`` at or above ``agent_dir``, or ``None``.
+
+    Mirrors ADK's ``load_dotenv_for_agent`` walk-up so eval loads the same
+    file the agent uses at runtime.
+    """
+    start = Path(agent_dir).resolve()
+    for folder in (start, *start.parents):
+        candidate = folder / ".env"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _load_agent_dotenv(agent_dir):
+    """Load the agent project's *entire* ``.env`` into ``os.environ``.
+
+    Eval runs the user's agent in this subprocess, so it must see the same
+    environment the agent uses at runtime -- *every* ``.env`` var (model
+    config, ``GOOGLE_CLOUD_*``, ``GEMINI_API_KEY``, app-specific settings),
+    not just a chosen few. Pre-existing OS env vars win over ``.env``
+    (``override=False``), matching ADK's ``load_dotenv_for_agent``.
+    """
+    from dotenv import load_dotenv
+
+    dotenv_path = _find_project_dotenv(agent_dir)
+    if dotenv_path:
+        load_dotenv(dotenv_path)
 
 
 def _normalize_agent_data(case_dict, root_agent_name):
@@ -240,16 +302,24 @@ def main(argv=None):
     import vertexai
     from vertexai import types
 
+    _patch_eval_tool_introspection()
+
     argv = list(sys.argv[1:] if argv is None else argv)
     agent_dir = argv[0]
     dataset_path = argv[1]
     output_path = argv[2]
 
-    # Snapshot project / location from env BEFORE loading the user's agent
-    # module. Some agent modules call ``os.environ[...] = ...`` at import
-    # time, which would otherwise clobber the values the CLI passed in.
+    # Load the agent's own .env (all of it) BEFORE importing the agent module
+    # so eval sees the same environment the agent uses at runtime -- model
+    # config, GOOGLE_CLOUD_*, GEMINI_API_KEY, app-specific vars. Reading
+    # project/location before import also avoids agent modules that mutate
+    # os.environ at import time clobbering the values used for the eval client.
+    _load_agent_dotenv(agent_dir)
     project = os.environ.get("GOOGLE_CLOUD_PROJECT") or None
     location = os.environ.get("GOOGLE_CLOUD_LOCATION") or None
+    # Only meaningful on Vertex AI; with an API key (AI Studio) both are unset.
+    if project or location:
+        print(f"[generate] project={project} location={location}", flush=True)
 
     print(f"[generate] loading dataset from {dataset_path}", flush=True)
     raw = json.loads(Path(dataset_path).read_text(encoding="utf-8"))
@@ -276,7 +346,7 @@ def main(argv=None):
     for i, case in enumerate(cases):
         print(f"[generate] inference {i + 1}/{n_cases}", flush=True)
         case = _normalize_agent_data(case, root_agent_name)
-        agent = _ensure_eval_compatible(_load_fresh_agent(agents_dir, agent_name))
+        agent = _load_fresh_agent(agents_dir, agent_name)
         single = types.EvaluationDataset(eval_cases=[types.EvalCase.model_validate(case)])
         try:
             partial = client.evals.run_inference(src=single, agent=agent)

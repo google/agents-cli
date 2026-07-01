@@ -172,9 +172,6 @@ Start with a prototype and add infrastructure when you need it:
 # Add Cloud Run deployment
 agents-cli scaffold enhance --deployment-target cloud_run
 
-# Add a RAG datastore
-agents-cli scaffold enhance --datastore agent_platform_search
-
 # Preview changes without applying
 agents-cli scaffold enhance --deployment-target cloud_run --dry-run
 ```

@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -156,6 +157,19 @@ def get_installed_skills() -> list[dict] | None:
         return None
 
 
+def _is_ci() -> bool:
+    """Return True when running in a CI/automation environment.
+
+    The skills version-drift warning is a local developer-experience nicety: in
+    CI there is no human to act on it and skills are not installed, so the check
+    only adds noise (and may spawn a doomed ``npx`` subprocess). We skip it when
+    a well-known CI marker is present.
+    """
+    return any(
+        os.environ.get(var) for var in ("CI", "BUILD_ID", "GITHUB_ACTIONS", "GITLAB_CI")
+    )
+
+
 def _skills_check_is_due() -> bool:
     """Return True if enough time has elapsed since the last check."""
     try:
@@ -182,9 +196,9 @@ def check_skills_version() -> None:
 
     Scans all installed ``google-agents-cli-*`` skills, compares each
     ``metadata.version`` with the running ``__version__``, and lists
-    the mismatched ones.  Never blocks execution.
+    the mismatched ones.  Never blocks execution. Skipped entirely in CI.
     """
-    if not _skills_check_is_due():
+    if _is_ci() or not _skills_check_is_due():
         return
 
     installed = _find_installed_skills()

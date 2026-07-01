@@ -67,14 +67,14 @@ from google.agents.cli.eval.cmd_grade import cmd_grade
 @click.option(
     "--project",
     default=None,
-    help="GCP project ID. Overrides GOOGLE_CLOUD_PROJECT and ADC.",
+    help="GCP project ID for grading. Overrides GOOGLE_CLOUD_PROJECT and ADC.",
 )
 @click.option(
     "--region",
     default=None,
     help=(
-        "GCP region. Overrides agents-cli-manifest.yaml region "
-        "and the GOOGLE_CLOUD_LOCATION env var."
+        "GCP region for the Vertex eval service (grading). Inference reads "
+        "GOOGLE_CLOUD_LOCATION from the agent's .env."
     ),
 )
 def cmd_run(
@@ -114,11 +114,11 @@ def cmd_run(
     traces_file = str(_paths.default_traces_path(project_root))
 
     console.rule("[bold]Step 1/2: eval generate[/bold]")
+    # generate trusts the agent's own .env for GCP config -- project/region are
+    # only meaningful for grading (the Vertex eval service), forwarded below.
     generate_cb(
         dataset=dataset,
         output=traces_file,
-        project=project,
-        region=region,
     )
 
     console.rule("[bold]Step 2/2: eval grade[/bold]")

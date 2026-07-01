@@ -73,7 +73,7 @@ The pipeline has three stages:
 
 1. **CI (PR checks)** — Triggered on pull request. Runs unit and integration tests.
 2. **Staging CD** — Triggered on merge to `main`. Builds container, deploys to staging, runs load tests.
-   > **Path filter:** Staging CD only triggers when relevant paths change — the agent directory (`app/**` by default), `data_ingestion/**`, `tests/**`, `deployment/**`, or `uv.lock`. The first push after `infra cicd` won't trigger staging CD unless one of these changes. If nothing happens after pushing, this is why.
+   > **Path filter:** Staging CD only triggers when relevant paths change — the agent directory (`app/**` by default), `tests/**`, `deployment/**`, or `uv.lock`. The first push after `infra cicd` won't trigger staging CD unless one of these changes. If nothing happens after pushing, this is why.
 3. **Production CD** — Triggered after successful staging deploy via `workflow_run`. Might require **manual approval** before deploying to production.
    > **Approving:** Go to GitHub Actions → the production workflow run → click "Review deployments" → approve the pending `production` environment. This is GitHub's environment protection rules, not a custom mechanism.
 

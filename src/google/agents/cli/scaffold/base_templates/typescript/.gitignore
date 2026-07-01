@@ -205,3 +205,8 @@ my_env.tfvars
 
 # A2A Inspector
 tools/a2a-inspector/
+
+# Credentials and private keys
+*.pem
+*-key.json
+credentials*.json

@@ -25,6 +25,7 @@ from vertexai._genai.types.common import (
     EvaluationDataset,
 )
 
+import google.agents.cli._gcp_project as _gcp_project
 import google.agents.cli._project as _project
 from google.agents.cli.eval import _paths
 from google.agents.cli.eval.eval_utils import (
@@ -182,7 +183,7 @@ def cmd_grade(
 
     try:
         if needs_gcp:
-            resolved_project = _project.resolve_gcp_project(project, required=True)
+            resolved_project = _gcp_project.resolve_gcp_project(project, required=True)
             resolved_region = resolve_eval_region(region)
             client = vertexai.Client(project=resolved_project, location=resolved_region)
         else:

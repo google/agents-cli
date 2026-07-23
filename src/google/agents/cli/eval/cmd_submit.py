@@ -22,6 +22,7 @@ from vertexai._genai.types.common import (
     EvaluationDataset,
 )
 
+import google.agents.cli._gcp_project as _gcp_project
 import google.agents.cli._project as _project
 from google.agents.cli.eval import _paths
 from google.agents.cli.eval.eval_utils import (
@@ -34,7 +35,7 @@ from google.agents.cli.eval.eval_utils import (
 
 def _get_eval_client(project: str | None, region: str | None) -> vertexai.Client:
     """Resolves GCP project and region, then initializes the Vertex AI Client."""
-    resolved_project = _project.resolve_gcp_project(project, required=True)
+    resolved_project = _gcp_project.resolve_gcp_project(project, required=True)
     return vertexai.Client(project=resolved_project, location=resolve_eval_region(region))
 
 

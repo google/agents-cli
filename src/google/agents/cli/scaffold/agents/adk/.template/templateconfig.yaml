@@ -19,6 +19,14 @@ settings:
   deployment_targets: ["agent_runtime", "cloud_run", "gke", "none"]
   extra_dependencies:
     - "google-adk[gcp,otel-gcp]>=2.2.0,<3.0.0"
+    # opentelemetry-resourcedetector-gcp 1.13.0 (its only non-prerelease) is yanked
+    # ("breaks imports"). ADK caps gcp-logging at <=1.12.0a0 but leaves
+    # resourcedetector at <2, so the resolver reaches the broken build (or fails
+    # now that it's yanked). Pinning to the last good prerelease both excludes
+    # 1.13.0 and, by naming a prerelease as a direct dep, opts this package into
+    # prereleases without a global --prerelease=allow.
+    # TODO: b/538173868 - drop once ADK caps opentelemetry-resourcedetector-gcp upstream.
+    - "opentelemetry-resourcedetector-gcp<=1.12.0a0"
     - "gcsfs>=2024.11.0"
     - "a2a-sdk[http-server]~=0.3.22"
     # google-genai calls aiohttp.StreamReader.readline(max_line_length=...), added in

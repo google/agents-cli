@@ -28,6 +28,7 @@ import backoff
 import click
 from rich.prompt import IntPrompt, Prompt
 
+from google.agents.cli._gcp_project import get_gcp_project_number
 from google.agents.cli._runner import popen_resolved, run_resolved
 
 
@@ -551,6 +552,92 @@ def create_github_repository(repository_owner: str, repository_name: str) -> Non
         raise
 
 
+def _create_state_bucket(bucket_name: str, project_id: str, region: str) -> None:
+    """Create a Terraform state GCS bucket in project_id and enable versioning."""
+    click.echo(f"\n📦 Creating Terraform state bucket: {bucket_name}")
+    run_command(
+        [
+            "gcloud",
+            "storage",
+            "buckets",
+            "create",
+            f"gs://{bucket_name}",
+            f"--project={project_id}",
+            f"--location={region}",
+        ]
+    )
+
+    # Enable versioning on newly created bucket
+    run_command(
+        [
+            "gcloud",
+            "storage",
+            "buckets",
+            "update",
+            f"gs://{bucket_name}",
+            "--versioning",
+        ]
+    )
+
+
+def ensure_bucket_exists(
+    bucket_name: str,
+    project_id: str,
+    region: str,
+    force_bucket: bool = False,
+) -> None:
+    """Ensure a GCS bucket exists and is owned by the expected project_id.
+
+    Three possible states:
+    1. It exists, and belongs to project_id -> no action needed, proceed.
+    2. It exists, but belongs to a different project -> abort with Security Error (unless force_bucket=True).
+    3. The bucket doesn't exist -> create it and enable versioning.
+    """
+    # Check if bucket exists globally
+    describe_result = run_command(
+        [
+            "gcloud",
+            "storage",
+            "buckets",
+            "describe",
+            f"gs://{bucket_name}",
+            "--raw",
+            "--format=json",
+        ],
+        check=False,
+        capture_output=True,
+    )
+
+    # State 3: Bucket doesn't exist anywhere -> create it
+    if describe_result.returncode != 0:
+        _create_state_bucket(bucket_name, project_id, region)
+        return
+
+    # Get the bucket's project number and target project number
+    raw_data = json.loads(describe_result.stdout)
+    bucket_project_number = str(raw_data["projectNumber"])
+    target_project_number = get_gcp_project_number(project_id)
+
+    # State 1: Bucket exists in project -> no action needed
+    if target_project_number and bucket_project_number == target_project_number:
+        click.echo(
+            f"✅ Terraform state bucket 'gs://{bucket_name}' verified in project '{project_id}'"
+        )
+        return
+
+    # State 2: Bucket exists, but belongs to a different project
+    click.echo(
+        f"⚠️ Terraform state bucket 'gs://{bucket_name}' exists in a different GCP project (project number '{bucket_project_number}')."
+    )
+    if not force_bucket:
+        raise click.ClickException(
+            f"Security Error: GCS bucket 'gs://{bucket_name}' exists in another GCP project, not in '{project_id}'. "
+            "Using a foreign bucket for Terraform state poses a security risk (bucket squatting attack).\n"
+            "To override and proceed anyway, re-run with --force-bucket."
+        )
+    click.echo("Proceeding anyway since --force-bucket flag was provided.")
+
+
 class Environment(Enum):
     DEV = "dev"
     STAGING = "staging"
@@ -636,7 +723,9 @@ class E2EDeployment:
         with open(tf_vars_path, "w", encoding="utf-8") as f:
             f.write(content)
 
-    def setup_terraform_state(self, project_dir: Path, env: Environment) -> None:
+    def setup_terraform_state(
+        self, project_dir: Path, env: Environment, force_bucket: bool = False
+    ) -> None:
         """Setup terraform state configuration for dev or prod environment"""
         # Determine terraform directories - we need both for full setup
         tf_dirs = []
@@ -651,47 +740,13 @@ class E2EDeployment:
 
         bucket_name = f"{self.config.cicd_project_id}-terraform-state"
 
-        # Ensure bucket exists and is accessible
-        try:
-            result = run_command(
-                [
-                    "gcloud",
-                    "storage",
-                    "buckets",
-                    "describe",
-                    f"gs://{bucket_name}",
-                ],
-                check=False,
-                capture_output=True,
-            )
-
-            if result.returncode != 0:
-                click.echo(f"\n📦 Creating Terraform state bucket: {bucket_name}")
-                run_command(
-                    [
-                        "gcloud",
-                        "storage",
-                        "buckets",
-                        "create",
-                        f"gs://{bucket_name}",
-                        f"--project={self.config.cicd_project_id}",
-                        f"--location={self.config.region}",
-                    ]
-                )
-
-                run_command(
-                    [
-                        "gcloud",
-                        "storage",
-                        "buckets",
-                        "update",
-                        f"gs://{bucket_name}",
-                        "--versioning",
-                    ]
-                )
-        except Exception as e:
-            click.echo(f"\n❌ Failed to setup state bucket: {e}")
-            raise
+        # Ensure bucket exists and is owned by cicd_project_id
+        ensure_bucket_exists(
+            bucket_name=bucket_name,
+            project_id=self.config.cicd_project_id,
+            region=self.config.region,
+            force_bucket=force_bucket,
+        )
 
         # Create backend.tf in each required directory
         for tf_dir in tf_dirs:
@@ -713,14 +768,18 @@ class E2EDeployment:
             )
 
     def setup_terraform(
-        self, project_dir: Path, env: Environment, local_state: bool = False
+        self,
+        project_dir: Path,
+        env: Environment,
+        local_state: bool = False,
+        force_bucket: bool = False,
     ) -> None:
         """Initialize and apply Terraform for the given environment"""
         click.echo(f"\n🏗️ Setting up Terraform for {env.value} environment")
 
         # Setup state configuration for all required directories if using remote state
         if not local_state:
-            self.setup_terraform_state(project_dir, env)
+            self.setup_terraform_state(project_dir, env, force_bucket=force_bucket)
 
         # Determine which directories to process and their corresponding var files
         tf_configs = []

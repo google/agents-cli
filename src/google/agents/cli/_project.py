@@ -307,49 +307,6 @@ def require_deployment_target(cfg: ProjectConfig) -> None:
         )
 
 
-def resolve_gcp_project(
-    override_project: str | None = None, *, required: bool = False
-) -> str:
-    """Resolves the GCP project ID to use.
-
-    The project ID is resolved in the following order of precedence:
-
-    1.  The ``override_project`` argument if provided.
-        It's expected this would come from a --project command line argument.
-    2.  The ``GOOGLE_CLOUD_PROJECT`` environment variable.
-    3.  Application Default Credentials via :func:`google.auth.default`,
-        which itself checks (in order):
-
-        a.  ``GOOGLE_APPLICATION_CREDENTIALS`` service account JSON file.
-        b.  The gcloud SDK ADC file
-            (``gcloud auth application-default login``); when this file
-            exists but lacks a project, the gcloud SDK falls back to
-            ``gcloud config get-value project``.
-        c.  GAE / GCE / Cloud Run metadata service.
-
-    Returns:
-        The resolved GCP project ID, or an empty string if no project is found.
-    """
-    if override_project:
-        return override_project
-    env_project = os.environ.get("GOOGLE_CLOUD_PROJECT")
-    if env_project:
-        return env_project
-    # Local import: avoids a circular import at module load time
-    # (auth.py imports from _project transitively in some paths).
-    from google.agents.cli.auth import _get_adc_project
-
-    project = _get_adc_project() or ""
-    if required and not project:
-        raise click.ClickException(
-            "Could not determine GCP project. Set one with:\n"
-            "  * pass --project <PROJECT_ID>\n"
-            "  * export GOOGLE_CLOUD_PROJECT=<PROJECT_ID>\n"
-            "  * gcloud config set project <PROJECT_ID>"
-        )
-    return project
-
-
 def require_a2a_project(cfg: ProjectConfig) -> None:
     """Raise if the project is not an A2A agent."""
     if not cfg.is_a2a:

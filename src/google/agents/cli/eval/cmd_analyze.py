@@ -28,11 +28,11 @@ from rich.console import Console
 from rich.table import Table
 from vertexai._genai import _evals_visualization
 
+from google.agents.cli._gcp_project import resolve_gcp_project
 from google.agents.cli._project import (
     chdir_project_root,
     read_project_config,
     require_agent_directory,
-    resolve_gcp_project,
 )
 from google.agents.cli.eval import _paths
 

@@ -15,7 +15,6 @@
 import logging
 import os
 import pathlib
-import random
 import shutil
 import subprocess
 import tempfile
@@ -27,7 +26,7 @@ from click.core import ParameterSource
 from rich.console import Console
 from rich.prompt import IntPrompt, Prompt
 
-from google.agents.cli._project import resolve_gcp_project
+from google.agents.cli._gcp_project import resolve_gcp_project
 
 from ..utils import remote_template, template
 from ..utils.command import run_gcloud_command
@@ -96,7 +95,7 @@ def shared_template_options(f: Callable) -> Callable:
     f = click.option("--debug", is_flag=True, help="Enable debug logging")(f)
     f = click.option(
         "--session-type",
-        type=click.Choice(["in_memory", "cloud_sql", "agent_platform_sessions"]),
+        type=click.Choice(list(template.SESSION_TYPES.keys())),
         help="Type of session storage to use",
     )(f)
     f = click.option(
@@ -1039,13 +1038,6 @@ def display_agent_selection(
     console.print(
         f"     {more_options_num}. [bold]{label}[/] [dim]BQ agent analytics, community agents, custom templates[/]"
     )
-
-    # Random tips shown ~20% of the time
-    tips = [
-        "\U0001f4a1 [dim]New: use --bq-analytics to log agent events to BigQuery[/]",
-    ]
-    if random.random() < 0.2:
-        console.print(f"\n  {random.choice(tips)}")
 
     choice = IntPrompt.ask(
         "\nEnter the number of your template choice", default=1, show_default=True

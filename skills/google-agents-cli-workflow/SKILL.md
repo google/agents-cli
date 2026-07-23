@@ -12,7 +12,7 @@ description: >
 metadata:
   author: Google
   license: Apache-2.0
-  version: 1.2.0
+  version: 1.2.1
   requires:
     bins:
       - agents-cli
@@ -26,8 +26,8 @@ metadata:
 > **Before writing agent code, make sure a scaffolded project exists (see Phase 2).** Skipping scaffolding loses eval boilerplate, CI/CD config, and project conventions.
 
 
-> Requires: google-agents-cli ~= 1.2.0
-> If version is behind, run: uv tool install "google-agents-cli~=1.2.0"
+> Requires: google-agents-cli ~= 1.2.1
+> If version is behind, run: uv tool install "google-agents-cli~=1.2.1"
 
 > Check version: agents-cli info
 > [Install uv](https://docs.astral.sh/uv/getting-started/installation/index.md) first if needed.

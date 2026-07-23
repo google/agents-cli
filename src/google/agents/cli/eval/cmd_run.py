@@ -77,6 +77,23 @@ from google.agents.cli.eval.cmd_grade import cmd_grade
         "GOOGLE_CLOUD_LOCATION from the agent's .env."
     ),
 )
+@click.option(
+    "--url",
+    default=None,
+    help=(
+        "URL of a running ADK agent to run inference against instead of "
+        "loading the local project's agent in-process. Forwarded to "
+        "`eval generate`."
+    ),
+)
+@click.option(
+    "--app-name",
+    default=None,
+    help=(
+        "Agent app name to use in the ADK URL path. Required with --url. "
+        "Forwarded to `eval generate`."
+    ),
+)
 def cmd_run(
     *,
     dataset: str | None,
@@ -85,6 +102,8 @@ def cmd_run(
     config_path: str | None,
     project: str | None,
     region: str | None,
+    url: str | None,
+    app_name: str | None,
 ):
     """Chain `eval generate` and `eval grade` in one command.
 
@@ -119,6 +138,8 @@ def cmd_run(
     generate_cb(
         dataset=dataset,
         output=traces_file,
+        url=url,
+        app_name=app_name,
     )
 
     console.rule("[bold]Step 2/2: eval grade[/bold]")

@@ -26,6 +26,7 @@ import click
 import requests
 
 from google.agents.cli import _tools
+from google.agents.cli._gcp_project import resolve_gcp_project
 from google.agents.cli._project import (
     ProjectConfig,
     chdir_project_root,
@@ -33,7 +34,6 @@ from google.agents.cli._project import (
     find_project_root,
     read_project_config,
     require_deployment_target,
-    resolve_gcp_project,
 )
 from google.agents.cli._runner import popen_resolved, run, run_resolved
 from google.agents.cli.auth import get_access_token

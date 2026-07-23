@@ -15,7 +15,7 @@ description: >
 metadata:
   author: Google
   license: Apache-2.0
-  version: 1.2.0
+  version: 1.2.1
   requires:
     bins:
       - agents-cli

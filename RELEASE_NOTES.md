@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.1] - 2026-07-23
+
+- Fix an import problem on `uv sync` caused by a yanked `opentelemetry-resourcedetector-gcp` version
+- Add optional HTTP-based path for `eval generate` using `--url` (in-progress feature, stay tuned)
+
 ## [1.2.0] - 2026-07-21
 
 - **Cloud telemetry moved to ADK's `otel_to_cloud`, across the CLI and deploys.** `playground` and `run` gain an `--otel-to-cloud` flag that forwards ADK's current `--otel_to_cloud`; the old `--trace-to-cloud` stays as a hidden, still-functional alias that warns when used. On the deployment side, Agent Runtime now exports through `otel_to_cloud` (gated on `GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY`) and generated projects configure Cloud telemetry declaratively in Terraform instead of at runtime. Bundled `google-adk` moves to `>=2.2.0` with the `otel-gcp` extra, and the observability skill was updated to match.

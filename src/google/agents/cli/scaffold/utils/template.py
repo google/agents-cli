@@ -50,6 +50,21 @@ AGENT_ALIASES: dict[str, str] = {
     "adk_a2a": "adk",
 }
 
+SESSION_TYPES = {
+    "in_memory": {
+        "display_name": "in_memory",
+        "description": "Stateless, data in memory",
+    },
+    "cloud_sql": {
+        "display_name": "cloud_sql",
+        "description": "PostgreSQL persistence",
+    },
+    "agent_platform_sessions": {
+        "display_name": "agent_platform_sessions",
+        "description": "Managed session service",
+    },
+}
+
 
 def resolve_agent_alias(name: str | None) -> str | None:
     """Resolve legacy agent name to current name.
@@ -583,29 +598,14 @@ def prompt_session_type_selection(default_value: str | None = None) -> str:
     """Ask user to select a session type for Cloud Run deployment."""
     console = Console()
 
-    session_types = {
-        "in_memory": {
-            "display_name": "in_memory",
-            "description": "Stateless, data in memory",
-        },
-        "cloud_sql": {
-            "display_name": "cloud_sql",
-            "description": "PostgreSQL persistence",
-        },
-        "agent_platform_sessions": {
-            "display_name": "agent_platform_sessions",
-            "description": "Managed session service",
-        },
-    }
-
     default_idx = 1
-    keys = list(session_types.keys())
+    keys = list(SESSION_TYPES.keys())
     if default_value and default_value in keys:
         default_idx = keys.index(default_value) + 1
 
     console.print("\n> Please select a session type:")
     console.print("\n  [bold cyan]💾 Session Types[/]")
-    for idx, (key, info) in enumerate(session_types.items(), 1):
+    for idx, (key, info) in enumerate(SESSION_TYPES.items(), 1):
         display_name = info["display_name"]
         description = info["description"]
         if key == default_value:

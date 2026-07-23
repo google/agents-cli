@@ -504,7 +504,20 @@ def _query_adk_sse(
     renders each event to the terminal as it arrives.
     """
     if not session_id:
-        session_id = create_session(service_url, app_name, "cli-user", headers=headers)
+        try:
+            session_id = create_session(
+                service_url, app_name, "cli-user", headers=headers
+            )
+        except requests.HTTPError as exc:
+            response = exc.response
+            status = response.status_code if response is not None else "unknown"
+            body = response.text if response is not None else str(exc)
+            hint = ""
+            if response is not None and response.status_code in (404, 405):
+                hint = "\n  If this is an A2A agent, try --mode a2a instead."
+            raise click.ClickException(
+                f"Failed to create session (HTTP {status}):\n  {body}{hint}"
+            ) from exc
 
     # Print user message (text part only for display)
     user_text = " ".join(p.get("text", "") for p in parts if "text" in p).strip()
@@ -514,15 +527,23 @@ def _query_adk_sse(
     last_author = None
     artifacts: list[str] = []
     user_message = {"role": "user", "parts": parts}
-    for event in run_sse(
-        service_url,
-        app_name,
-        session_id,
-        user_message=user_message,
-        headers=headers,
-        user_id="cli-user",
-    ):
-        last_author = _print_sse_event(event, last_author, verbose, artifacts)
+    try:
+        for event in run_sse(
+            service_url,
+            app_name,
+            session_id,
+            user_message=user_message,
+            headers=headers,
+            user_id="cli-user",
+        ):
+            last_author = _print_sse_event(event, last_author, verbose, artifacts)
+    except requests.HTTPError as exc:
+        response = exc.response
+        status = response.status_code if response is not None else "unknown"
+        body = response.text if response is not None else str(exc)
+        raise click.ClickException(
+            f"Failed to run agent (HTTP {status}):\n  {body}"
+        ) from exc
 
     click.echo()
     _print_artifacts(artifacts)

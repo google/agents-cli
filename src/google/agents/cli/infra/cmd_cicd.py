@@ -32,6 +32,7 @@ from google.agents.cli._tools import (
 from google.agents.cli.infra._cicd_utils import (
     ProjectConfig,
     create_github_connection,
+    ensure_bucket_exists,
     handle_github_authentication,
     is_github_authenticated,
     run_command,
@@ -305,50 +306,24 @@ def prompt_for_repository_details(
 
 
 def setup_terraform_backend(
-    tf_dir: Path, project_id: str, region: str, repository_name: str
+    tf_dir: Path,
+    project_id: str,
+    region: str,
+    repository_name: str,
+    force_bucket: bool = False,
 ) -> None:
     """Setup terraform backend configuration with GCS bucket"""
     console.print("\n🔧 Setting up Terraform backend...")
 
     bucket_name = f"{project_id}-terraform-state"
 
-    # Ensure bucket exists
-    try:
-        result = run_command(
-            ["gcloud", "storage", "buckets", "describe", f"gs://{bucket_name}"],
-            check=False,
-            capture_output=True,
-        )
-
-        if result.returncode != 0:
-            console.print(f"\n📦 Creating Terraform state bucket: {bucket_name}")
-            # Create bucket
-            run_command(
-                [
-                    "gcloud",
-                    "storage",
-                    "buckets",
-                    "create",
-                    f"gs://{bucket_name}",
-                    f"--project={project_id}",
-                    f"--location={region}",
-                ]
-            )
-
-            # Enable versioning
-            run_command(
-                [
-                    "gcloud",
-                    "storage",
-                    "buckets",
-                    "update",
-                    f"gs://{bucket_name}",
-                    "--versioning",
-                ]
-            )
-    except subprocess.CalledProcessError as e:
-        console.print(f"\n❌ Failed to setup state bucket: {e}")
-        raise
+    # Ensure bucket exists and is owned by project_id
+    ensure_bucket_exists(
+        bucket_name=bucket_name,
+        project_id=project_id,
+        region=region,
+        force_bucket=force_bucket,
+    )
 
     # Create backend.tf in both cicd and single-project directories
     tf_dirs = [
@@ -487,6 +462,14 @@ def create_or_update_secret(secret_id: str, secret_value: str, project_id: str) 
     default=False,
     help="Apply changes. Without this flag, only a plan is shown.",
 )
+@click.option(
+    "--force-bucket",
+    "--force",
+    "force_bucket",
+    is_flag=True,
+    default=False,
+    help="Allow usage of a terraform config bucket that exists in a different GCP project. By default, this is disallowed to guard against bucket squatting attacks.",
+)
 @backoff.on_exception(
     backoff.expo,
     (subprocess.CalledProcessError, click.ClickException),
@@ -510,6 +493,7 @@ def setup_cicd(
     interactive: bool,
     create_repository: bool,
     apply_changes: bool,
+    force_bucket: bool = False,
     cicd_runner: str | None = None,
 ) -> None:
     """Set up CI/CD pipelines and Terraform infrastructure for your agent project.
@@ -740,6 +724,7 @@ def setup_cicd(
             project_id=cicd_project,
             region=region,
             repository_name=repository_name,
+            force_bucket=force_bucket,
         )
         console.print("✅ Remote Terraform backend configured")
     else:

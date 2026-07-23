@@ -19,11 +19,11 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 
-import click
 import requests
 
 _SESSION_TIMEOUT = 30
 _RUN_SSE_TIMEOUT = 120
+_APP_INFO_TIMEOUT = 10
 
 
 def create_session(
@@ -32,18 +32,46 @@ def create_session(
     user_id: str,
     *,
     headers: dict,
+    prior_events: list[dict] | None = None,
 ) -> str:
-    """Create an ADK session and return its ID."""
+    """Create an ADK session and return its ID.
+
+    When ``prior_events`` are supplied, the ADK server seeds the fresh
+    session with them.
+    """
     session_url = f"{base_url}/apps/{app_name}/users/{user_id}/sessions"
-    resp = requests.post(session_url, headers=headers, json={}, timeout=_SESSION_TIMEOUT)
-    if not resp.ok:
-        hint = ""
-        if resp.status_code in (404, 405):
-            hint = "\n  If this is an A2A agent, try --mode a2a instead."
-        raise click.ClickException(
-            f"Failed to create session (HTTP {resp.status_code}):\n  {resp.text}{hint}"
-        )
+    body: dict = {}
+    if prior_events:
+        body["events"] = prior_events
+
+    resp = requests.post(
+        session_url, headers=headers, json=body, timeout=_SESSION_TIMEOUT
+    )
+    resp.raise_for_status()
     return resp.json().get("id")
+
+
+def fetch_app_info(
+    *,
+    base_url: str,
+    app_name: str,
+    headers: dict,
+) -> tuple[str | None, dict]:
+    """Fetch agent metadata from ADK's /apps/{app_name}/app-info endpoint.
+
+    Returns (root_agent_name, agents), where agents is the raw ADK agents
+    map keyed by agent id. root_agent_name may be None if the server omits
+    it; agents may be empty.
+
+    Raises requests.RequestException (or a subclass: ConnectionError,
+    HTTPError, JSONDecodeError) if the endpoint isn't reachable, returns a
+    non-2xx status, or returns a body that isn't valid JSON.
+    """
+    url = f"{base_url}/apps/{app_name}/app-info"
+    resp = requests.get(url, headers=headers, timeout=_APP_INFO_TIMEOUT)
+    resp.raise_for_status()
+    payload = resp.json()
+    return payload.get("rootAgentName"), payload.get("agents") or {}
 
 
 def run_sse(
@@ -72,10 +100,7 @@ def run_sse(
     with requests.post(
         run_url, headers=headers, json=payload, stream=True, timeout=_RUN_SSE_TIMEOUT
     ) as resp:
-        if not resp.ok:
-            raise click.ClickException(
-                f"Failed to run agent (HTTP {resp.status_code}):\n  {resp.text}"
-            )
+        resp.raise_for_status()
         for line in resp.iter_lines(decode_unicode=True):
             if not isinstance(line, str) or not line.startswith("data: "):
                 continue

@@ -31,12 +31,15 @@ from rich.console import Console
 from rich.table import Table
 
 from google.agents.cli._agent_runtime_a2a import build_agent_runtime_a2a_card_url
+from google.agents.cli._gcp_project import (
+    get_gcp_project_number,
+    resolve_gcp_project,
+)
 from google.agents.cli._output import emit
-from google.agents.cli._project import read_project_config, resolve_gcp_project
+from google.agents.cli._project import read_project_config
 from google.agents.cli._runner import run_resolved
 from google.agents.cli._tools import ToolNotFoundError
 from google.agents.cli.auth import get_access_token, get_id_token
-from google.agents.cli.scaffold.utils.command import run_gcloud_command
 from google.agents.cli.scaffold.utils.gcp import (
     get_user_agent,
     get_x_goog_api_client_header,
@@ -552,40 +555,6 @@ def prompt_for_agent_runtime_id(default_from_metadata: str | None) -> str:
             )
 
 
-def get_project_number(project_id: str) -> str | None:
-    """Get project number from project ID.
-
-    Args:
-        project_id: GCP project ID (e.g., 'my-project')
-
-    Returns:
-        Project number as string, or None if lookup fails
-    """
-    try:
-        result = run_gcloud_command(
-            ["projects", "describe", project_id, "--format=value(projectNumber)"],
-            capture_output=True,
-            check=True,
-        )
-        return result.stdout.strip()
-    except subprocess.CalledProcessError:
-        # Maybe it's already a project number, return as-is
-        if project_id.isdigit():
-            return project_id
-        return None
-    except FileNotFoundError:
-        console.print("Warning: gcloud command not found")
-        # Maybe it's already a project number, return as-is
-        if project_id.isdigit():
-            return project_id
-        return None
-    except Exception:
-        # Fallback for any other errors
-        if project_id.isdigit():
-            return project_id
-        return None
-
-
 def list_gemini_enterprise_apps(
     project_number: str,
     location: str = "global",
@@ -684,7 +653,7 @@ def prompt_for_gemini_enterprise_components(
 
     # Convert project ID to project number
     console.print(f"[dim]Looking up project number for '{project_id}'...[/]")
-    project_number = get_project_number(project_id)
+    project_number = get_gcp_project_number(project_id)
     if not project_number:
         console.print(
             f"⚠️  Could not find project number for '{project_id}'",
@@ -1124,7 +1093,7 @@ def _list_gemini_enterprise_apps(project_id: str | None, interactive: bool) -> N
             "    gcloud config set project PROJECT_ID"
         )
 
-    pn = get_project_number(resolved_project_id)
+    pn = get_gcp_project_number(resolved_project_id)
     if not pn:
         raise click.ClickException(
             f"Could not resolve project number for '{resolved_project_id}'."

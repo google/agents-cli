@@ -23,13 +23,15 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal, get_args
 
-import agentplatform._genai.types.common as vertex_types
 import backoff
 import click
 import yaml
-from agentplatform._genai import _evals_visualization
-from agentplatform._genai._evals_constant import SUPPORTED_PREDEFINED_METRICS
+from agentplatform._genai import _evals_visualization  # noqa: TID251 - b/512125999
+from agentplatform._genai._evals_constant import (  # noqa: TID251 - b/512125999
+    SUPPORTED_PREDEFINED_METRICS,
+)
 
+from google.agents.cli._agent_platform_types import types as vertex_types
 from google.agents.cli._output import Console
 
 Execution = Literal["local", "remote"]

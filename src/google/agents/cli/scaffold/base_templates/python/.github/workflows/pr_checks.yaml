@@ -61,7 +61,7 @@ jobs:
       - name: Run integration tests
         # Integration tests run the agent in-process; pytest doesn't load .env.
         env:
-          GOOGLE_GENAI_USE_VERTEXAI: 'true'
+          GOOGLE_GENAI_USE_ENTERPRISE: 'true'
           GOOGLE_CLOUD_PROJECT: {% raw %}${{ vars.CICD_PROJECT_ID }}{% endraw %}
           GOOGLE_CLOUD_LOCATION: global
         run: uv run pytest tests/integration

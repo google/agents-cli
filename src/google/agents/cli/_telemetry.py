@@ -76,8 +76,6 @@ class _Signal:
 _TELEMETRY_LOGS_URL = "https://telemetry.googleapis.com/v1/logs"
 # Log id: entries land at logName=projects/<project>/logs/agents-cli.
 _LOG_ID = "agents-cli"
-# Experiment label initially gating the feature.
-_EXPERIMENT = "cli_telemetry"
 # Commands we never emit signals for, matched as path prefixes: "login" also
 # covers its subcommands and an extension's override of it ("login~ext").
 _SKIP_COMMANDS = frozenset({"login", "setup"})
@@ -107,21 +105,6 @@ def _env_opted_out() -> bool:
     return False
 
 
-def is_experiment_enabled() -> bool:
-    """True if the ``cli_telemetry`` experiment is active.
-
-    Gates the whole feature: when off, telemetry never emits and
-    ``agents-cli info`` doesn't mention it at all.
-    """
-    try:
-        from google.agents.cli._experiments import resolve_experiment
-
-        return bool(resolve_experiment(_EXPERIMENT))
-    except Exception:
-        # If experiment resolution fails, treat the feature as off.
-        return False
-
-
 def is_telemetry_enabled() -> bool:
     """True if telemetry is configured to emit (not opted out).
 
@@ -129,7 +112,7 @@ def is_telemetry_enabled() -> bool:
     deliver — emission additionally requires resolvable credentials and a
     project at runtime (checked in the child process).
     """
-    return is_experiment_enabled() and not _env_opted_out()
+    return not _env_opted_out()
 
 
 def error_class_of(exc: BaseException) -> str:

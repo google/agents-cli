@@ -85,6 +85,16 @@ resource "google_bigquery_table" "genai_user_message" {
 
   schema = file("${path.module}/../shared/genai_logs_schema.json")
 
+  # Prevents table recreation and data loss:
+  # 1. Cloud Logging appends columns (including nested fields) as entries arrive.
+  # 2. Terraform reads them as drops and force-replaces the table, deleting
+  #    exported logs.
+  # Schema updates apply only to new tables; completions.sql cannot assume
+  # columns added to genai_logs_schema.json exist on existing tables.
+  lifecycle {
+    ignore_changes = [schema]
+  }
+
   depends_on = [google_bigquery_dataset.telemetry_dataset]
 }
 
@@ -102,6 +112,11 @@ resource "google_bigquery_table" "genai_choice" {
   }
 
   schema = file("${path.module}/../shared/genai_logs_schema.json")
+
+  # Prevents table recreation when Cloud Logging appends columns (see genai_user_message).
+  lifecycle {
+    ignore_changes = [schema]
+  }
 
   depends_on = [google_bigquery_dataset.telemetry_dataset]
 }

@@ -14,7 +14,7 @@
 
 steps:
   # Install dependencies
-  - name: "node:20-slim"
+  - name: "node:22"
     id: install-dependencies
     entrypoint: /bin/bash
     args:
@@ -23,7 +23,7 @@ steps:
         npm ci
 
   # Build TypeScript
-  - name: "node:20-slim"
+  - name: "node:22"
     id: build
     entrypoint: /bin/bash
     args:
@@ -32,7 +32,7 @@ steps:
         npm run build
 
   # Run unit tests
-  - name: "node:20-slim"
+  - name: "node:22"
     id: unit-tests
     entrypoint: /bin/bash
     env:
@@ -45,7 +45,7 @@ steps:
         npx vitest run tests/unit
 
   # Run integration tests
-  - name: "node:20-slim"
+  - name: "node:22"
     id: integration-tests
     entrypoint: /bin/bash
     env:

@@ -302,7 +302,7 @@ class EscalationChecker(BaseAgent):
 # uncomment GEMINI_API_KEY (GOOGLE_API_KEY is also accepted).
 
 # Vertex AI (prod)
-# Set: GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION, GOOGLE_GENAI_USE_VERTEXAI=True
+# Set: GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION, GOOGLE_GENAI_USE_ENTERPRISE=True
 
 agent = Agent(model="gemini-3.8-flash", ...)
 ```
@@ -322,7 +322,7 @@ agent = Agent(model=LiteLlm(model="ollama_chat/llama3:instruct"), ...)
 ```python
 from google.adk.models import Gemini
 
-# Vertex AI hosted Gemini (set GOOGLE_GENAI_USE_VERTEXAI=True)
+# Vertex AI hosted Gemini (set GOOGLE_GENAI_USE_ENTERPRISE=True)
 agent = Agent(model=Gemini(model="gemini-3.8-flash"), ...)
 ```
 

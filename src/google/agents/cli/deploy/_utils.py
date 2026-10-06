@@ -18,10 +18,15 @@ from __future__ import annotations
 
 import re
 import shlex
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import click
+
 if TYPE_CHECKING:
+    from rich.table import Table
+
     from google.agents.cli._project import ProjectConfig
 
 # Shared machine-shape defaults for the imperative deploy paths: the deploy
@@ -42,6 +47,38 @@ DEFAULT_MAX_INSTANCES = 10
 # can raise --concurrency (and --memory) after load testing.
 # https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/runtime/optimize-and-scale#underutilized-workers
 DEFAULT_CONCURRENCY = 8
+
+
+@dataclass(frozen=True)
+class MachineShape:
+    """Machine sizing flags; ``None`` means the flag was not passed.
+
+    Unset values stay ``None`` so each target decides how to treat them: Agent
+    Runtime omits them from the FieldMask (preserving live values on update),
+    Cloud Run fills defaults only when creating the service.
+    """
+
+    cpu: str | None = None
+    memory: str | None = None
+    min_instances: int | None = None
+    max_instances: int | None = None
+    concurrency: int | None = None
+
+    def with_defaults(self) -> MachineShape:
+        """Fill each unset value with its ``DEFAULT_*`` constant."""
+        return MachineShape(
+            cpu=DEFAULT_CPU if self.cpu is None else self.cpu,
+            memory=DEFAULT_MEMORY if self.memory is None else self.memory,
+            min_instances=DEFAULT_MIN_INSTANCES
+            if self.min_instances is None
+            else self.min_instances,
+            max_instances=DEFAULT_MAX_INSTANCES
+            if self.max_instances is None
+            else self.max_instances,
+            concurrency=DEFAULT_CONCURRENCY
+            if self.concurrency is None
+            else self.concurrency,
+        )
 
 
 def redact_command(args: list[str]) -> str:
@@ -97,6 +134,42 @@ def parse_key_value_pairs(kv_string: str | None) -> dict[str, str]:
     return result
 
 
+def parse_kv_flag(flag: str, value: str | None) -> dict[str, str]:
+    """``parse_key_value_pairs`` for a CLI flag, failing with a ClickException."""
+    try:
+        return parse_key_value_pairs(value)
+    except ValueError as e:
+        raise click.ClickException(
+            f"Error parsing {flag} flag value '{value}': {e}"
+        ) from e
+
+
+def parse_secrets(secrets_string: str | None) -> dict[str, dict[str, str]]:
+    """Parse secrets from ENV_VAR=SECRET_ID or ENV_VAR=SECRET_ID:VERSION format."""
+    try:
+        raw = parse_key_value_pairs(secrets_string)
+    except ValueError as e:
+        raise click.ClickException(f"Error parsing secrets: {e}") from e
+
+    result: dict[str, dict[str, str]] = {}
+    for key, spec in raw.items():
+        if ":" not in spec:
+            secret_id, version = spec, "latest"
+        else:
+            secret_id, _, version = spec.rpartition(":")
+        result[key] = {"secret": secret_id, "version": version}
+    return result
+
+
+def print_table(table: Table) -> None:
+    """Print a rich table after a blank line."""
+    from google.agents.cli._output import Console
+
+    console = Console()
+    console.print()
+    console.print(table)
+
+
 def read_project_dotenv(project_root: str | Path) -> dict[str, str]:
     """Read the project-root ``.env`` into a dict, or ``{}`` when absent.
 
@@ -131,8 +204,6 @@ def validate_deployment_region(
 
     normalized = region.strip().lower()
     if not re.match(r"^[a-z]+-[a-z]+\d+$", normalized):
-        import click
-
         target_str = f" for {deployment_target}" if deployment_target else ""
         raise click.ClickException(
             f"Region '{region}' is not a valid single regional location and is not supported{target_str} deployments.\n"

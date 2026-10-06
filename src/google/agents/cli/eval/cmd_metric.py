@@ -17,7 +17,9 @@
 import re
 
 import click
-from agentplatform._genai._evals_constant import SUPPORTED_PREDEFINED_METRICS
+from agentplatform._genai._evals_constant import (  # noqa: TID251 - b/512125999
+    SUPPORTED_PREDEFINED_METRICS,
+)
 from rich.table import Table
 
 from google.agents.cli._click import LazyGroup

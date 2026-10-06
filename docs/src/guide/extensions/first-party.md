@@ -24,7 +24,7 @@ The LangChain template runs a [LangChain](https://python.langchain.com) agent th
 
 ```bash
 agents-cli create my-agent \
-    --agent google/agents-cli/extensions/langchain/template@v1.8.0 \
+    --agent google/agents-cli/extensions/langchain/template@v1.9.0 \
     -d cloud_run
 cd my-agent && agents-cli install
 ```
@@ -66,7 +66,7 @@ AGENTS_CLI_DISABLE_OVERRIDES=1 agents-cli run --url https://<service-url> --mode
 ### Full journey
 
 ```bash
-agents-cli create my-agent --agent google/agents-cli/extensions/langchain/template@v1.8.0 -d cloud_run
+agents-cli create my-agent --agent google/agents-cli/extensions/langchain/template@v1.9.0 -d cloud_run
 cd my-agent && agents-cli install
 agents-cli run "what's the weather in San Francisco?"       # in-process graph
 agents-cli eval generate --dataset tests/eval/datasets/basic-dataset.json -o tests/eval/output/

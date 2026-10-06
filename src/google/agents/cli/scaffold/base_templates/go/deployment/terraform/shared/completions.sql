@@ -19,7 +19,7 @@
 -- Log data is exported directly to BigQuery via log sinks.
 -- The GenAI log tables (input_logs_table / output_logs_table) are pre-created by
 -- Terraform and populated by Cloud Logging via the sink.
--- Labels are flattened into individual columns (dots replaced with underscores).
+-- Labels and OTel resource attributes are flattened into individual columns (dots replaced with underscores).
 
 -- Prompt + history messages (one OTLP record per message in the request),
 -- flattened to one row per part.
@@ -43,7 +43,11 @@ WITH input_parts AS (
     -- the UNION; deeply nested values are already trimmed at OTLP ingest (depth 5).
     JSON_QUERY(TO_JSON_STRING(part.functionCall), '$.args') AS tool_args,
     JSON_QUERY(TO_JSON_STRING(part.functionResponse), '$.response') AS tool_response,
-    CAST(NULL AS STRING) AS finish_reasons
+    CAST(NULL AS STRING) AS finish_reasons,
+    -- telemetry.googleapis.com exports OTel attributes under otel, not labels. Existing
+    -- tables may lack service_version, so JSON extraction yields NULL. The otel record must
+    -- exist: declared in schema for new tables, added by Cloud Logging on the first entry.
+    JSON_VALUE(TO_JSON_STRING(otel.resource.attributes), '$.service_version') AS service_version
   FROM `${project_id}.${dataset_id}.${input_logs_table}`
   CROSS JOIN UNNEST(jsonPayload.content.parts) AS part WITH OFFSET AS part_idx
   WHERE jsonPayload.content IS NOT NULL
@@ -67,7 +71,8 @@ output_parts AS (
     part.fileData.fileUri AS file_uri,
     JSON_QUERY(TO_JSON_STRING(part.functionCall), '$.args') AS tool_args,
     JSON_QUERY(TO_JSON_STRING(part.functionResponse), '$.response') AS tool_response,
-    jsonPayload.finish_reason AS finish_reasons
+    jsonPayload.finish_reason AS finish_reasons,
+    JSON_VALUE(TO_JSON_STRING(otel.resource.attributes), '$.service_version') AS service_version
   FROM `${project_id}.${dataset_id}.${output_logs_table}`
   CROSS JOIN UNNEST(jsonPayload.content.parts) AS part WITH OFFSET AS part_idx
   WHERE jsonPayload.content IS NOT NULL
@@ -104,7 +109,8 @@ typed AS (
     file_uri AS uri,
     tool_args,
     tool_response,
-    finish_reasons
+    finish_reasons,
+    service_version
   FROM all_parts
 ),
 
@@ -171,6 +177,9 @@ SELECT
   CAST(NULL AS STRING) AS usage_output_tokens,
   CAST(NULL AS STRING) AS agent_name,
   finish_reasons,
+
+  -- Deployment revision from OTel resource attribute service.version; NULL when unset by the deployment.
+  service_version,
 
   -- Additional metadata
   uri,

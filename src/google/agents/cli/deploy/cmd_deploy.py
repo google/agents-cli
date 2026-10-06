@@ -14,20 +14,12 @@
 
 """agents-cli deploy command — deploy the agent."""
 
-import json
 import logging
 import os
-import subprocess
-import sys
-import time
-from pathlib import Path
 
-import backoff
 import click
-import requests
+from click.core import ParameterSource
 
-from google.agents.cli import _tools
-from google.agents.cli._agent_platform import AgentPlatformClient
 from google.agents.cli._gcp_project import resolve_gcp_project
 from google.agents.cli._project import (
     ProjectConfig,
@@ -37,291 +29,93 @@ from google.agents.cli._project import (
     read_project_config,
     require_deployment_target,
 )
-from google.agents.cli._runner import popen_resolved, run, run_resolved
-from google.agents.cli.auth import get_access_token
+from google.agents.cli.deploy._cloud_validation import validate_agent_runtime_deployment
 from google.agents.cli.deploy._utils import (
     DEFAULT_CONCURRENCY,
     DEFAULT_CPU,
     DEFAULT_MAX_INSTANCES,
     DEFAULT_MEMORY,
     DEFAULT_MIN_INSTANCES,
-    parse_key_value_pairs,
-    read_project_dotenv,
-    redact_command,
+    MachineShape,
+    parse_kv_flag,
     resolve_service_name,
     validate_deployment_region,
 )
 from google.agents.cli.deploy.agent_runtime import (
+    build_psc_interface_config,
     check_agent_runtime_operation,
     deploy_agent_runtime,
-    parse_secrets,
+    list_agent_runtime_deployments,
+    print_agent_runtime_dry_run,
 )
-from google.agents.cli.scaffold.utils.language import get_project_version
-
-
-def _cloud_run_service_exists(*, project: str, region: str, service: str) -> bool:
-    """True if a Cloud Run service already exists (Cloud Run Admin API v2 GET).
-
-    Used to choose create (apply our conservative defaults) vs. update (send only
-    the flags the user set, letting gcloud preserve the rest). Uses a REST GET
-    rather than `gcloud run services describe` to avoid ~2s of gcloud startup and
-    the run_v2 dependency, mirroring the REST pattern in publish/cmd_publish.py.
-    """
-    url = (
-        f"https://{region}-run.googleapis.com/v2/projects/{project}"
-        f"/locations/{region}/services/{service}"
-    )
-    resp = requests.get(
-        url, headers={"Authorization": f"Bearer {get_access_token()}"}, timeout=30
-    )
-    if resp.status_code == 404:
-        return False
-    resp.raise_for_status()
-    return True
-
-
-def _build_psc_interface_config(
-    *,
-    network_attachment: str | None,
-    dns_peering_domain: str | None,
-    dns_peering_project: str | None,
-    dns_peering_network: str | None,
-) -> dict | None:
-    """Build a PSC interface config dict from CLI flags.
-
-    Returns None when no networking flags are set.
-    Raises ClickException when DNS peering flags are used without --network-attachment.
-    """
-    has_dns_peering = any([dns_peering_domain, dns_peering_project, dns_peering_network])
-
-    if not network_attachment and not has_dns_peering:
-        return None
-
-    if not network_attachment and has_dns_peering:
-        raise click.ClickException(
-            "--dns-peering-domain, --dns-peering-project, and --dns-peering-network "
-            "require --network-attachment.\n"
-            "  PSC DNS peering is only valid when a network attachment is configured."
-        )
-
-    config: dict = {"network_attachment": network_attachment}
-
-    if has_dns_peering:
-        if not all([dns_peering_domain, dns_peering_project, dns_peering_network]):
-            missing = []
-            if not dns_peering_domain:
-                missing.append("--dns-peering-domain")
-            if not dns_peering_project:
-                missing.append("--dns-peering-project")
-            if not dns_peering_network:
-                missing.append("--dns-peering-network")
-            raise click.ClickException(
-                f"Incomplete DNS peering configuration — missing: {', '.join(missing)}.\n"
-                "  All three flags (--dns-peering-domain, --dns-peering-project, "
-                "--dns-peering-network) must be provided together."
-            )
-        config["dns_peering_configs"] = [
-            {
-                "domain": dns_peering_domain,
-                "target_project": dns_peering_project,
-                "target_network": dns_peering_network,
-            }
-        ]
-
-    return config
-
-
-def _load_deploy_config(
-    deployment_target: str | None,
-) -> tuple[ProjectConfig, bool]:
-    """Resolve project config for a deploy.
-
-    When --deployment-target is given, deploy can run without a manifest. A
-    project root (when present) is chdir'd into because deploy builds from cwd
-    (--source ., relative terraform dirs).
-
-    Returns the config and whether a manifest was found; the caller warns about
-    the fallback defaults (including the resolved service name) when it wasn't.
-    """
-    project_root = find_project_root()
-    if project_root is None and deployment_target is None:
-        raise click.ClickException(
-            "No agents-cli-manifest.yaml found in the current directory or its parents.\n"
-            "  Run this command from your project root, pass --deployment-target to\n"
-            "  deploy without a manifest, or create a project first:\n"
-            "    agents-cli create my-agent"
-        )
-    if project_root is not None:
-        chdir_project_root(project_root)
-
-    cfg = read_project_config()
-    check_cli_version(cfg)
-    if deployment_target:  # explicit flag overrides the manifest
-        cfg.deployment_target = deployment_target
-    require_deployment_target(cfg)
-
-    return cfg, project_root is not None
-
-
-def _resolve_deploy_service_name(
-    cfg: ProjectConfig, service_name_override: str | None
-) -> str:
-    """Resolve the deployed service name, rejecting --service-name for GKE.
-
-    GKE resource names (cluster, namespace, deployment, service, Artifact
-    Registry repo) are owned by Terraform's var.project_name, which the CLI does
-    not set at deploy time. An override would only rename the kubectl-side
-    references, leaving them pointing at resources Terraform never created — so
-    for GKE the override is rejected and the name stays pinned to the project.
-    """
-    if service_name_override and cfg.deployment_target == "gke":
-        raise click.ClickException(
-            "--service-name is not supported for GKE deployments.\n"
-            "  GKE resource names are derived from the project name via "
-            "Terraform (var.project_name) and cannot be overridden at deploy "
-            "time.\n"
-            "  Use Cloud Run or Agent Runtime to customize the service name."
-        )
-    return resolve_service_name(cfg, service_name_override)
-
-
-# Right after a project/repo/service is first created, the Cloud Run Service
-# Agent often isn't yet allowed to pull the (cross-project) image, so the deploy
-# fails with a 403 that gcloud itself flags as transient ("permissions might
-# take a few minutes to propagate"). These clear on their own within minutes, so
-# we retry them. Matching is intentionally narrow — we only match the image-pull
-# propagation signatures so genuine permission misconfigurations (e.g. a deployer
-# that permanently lacks a role) fail fast instead of burning the retry budget.
-_CLOUD_RUN_TRANSIENT_DEPLOY_SIGNATURES = (
-    "permissions might take a few minutes to propagate",
-    "must have permission to read the image",
-    "artifactregistry.repositories.downloadArtifacts",
+from google.agents.cli.deploy.cloud_run import (
+    check_cloud_run_status,
+    deploy_cloud_run,
+    list_cloud_run_deployments,
 )
+from google.agents.cli.deploy.gke import deploy_gke, list_gke_deployments
 
-# Retry budget for transient Cloud Run deploy failures. IAM propagation can take
-# several minutes, so we retry until max_time with a capped exponential backoff:
-# waits ramp 5s, 10s, 20s then hold at 30s (each full-jittered), i.e. steady
-# ~30s polling until the deadline. max_tries is unset so max_time is the sole
-# stop condition.
-_CLOUD_RUN_DEPLOY_MAX_TIME = 600
-_CLOUD_RUN_DEPLOY_BACKOFF_FACTOR = 5
-_CLOUD_RUN_DEPLOY_BACKOFF_MAX_VALUE = 30
-
-
-class _TransientCloudRunDeployError(click.ClickException):
-    """A Cloud Run deploy failure expected to clear on retry (IAM propagation).
-
-    Subclasses ClickException so that if every retry is exhausted, backoff
-    re-raises it and the CLI still exits with a clean, actionable message.
-    """
+_AGENT_RUNTIME = "agent_runtime"
+_CLOUD_RUN = "cloud_run"
+_GKE = "gke"
+_DEPLOYMENT_TARGETS = (_AGENT_RUNTIME, _CLOUD_RUN, _GKE)
+_TARGET_DISPLAY_NAMES = {
+    _AGENT_RUNTIME: "Agent Runtime",
+    _CLOUD_RUN: "Cloud Run",
+    _GKE: "GKE",
+}
 
 
-@backoff.on_exception(
-    backoff.expo,
-    _TransientCloudRunDeployError,
-    factor=_CLOUD_RUN_DEPLOY_BACKOFF_FACTOR,
-    max_value=_CLOUD_RUN_DEPLOY_BACKOFF_MAX_VALUE,
-    max_tries=None,
-    max_time=_CLOUD_RUN_DEPLOY_MAX_TIME,
-    jitter=backoff.full_jitter,
-    on_backoff=lambda details: logging.warning(
-        "Cloud Run deploy hit a transient IAM-propagation error; retrying in "
-        "%.0fs (attempt %d, %.0fs/%ds elapsed)...",
-        details["wait"],
-        details["tries"] + 1,  # the upcoming attempt; details['tries'] = ones done
-        details["elapsed"],
-        _CLOUD_RUN_DEPLOY_MAX_TIME,
+_SIZING_HINT = (
+    "On GKE, configure sizing via Terraform and the HorizontalPodAutoscaler "
+    "under deployment/terraform/."
+)
+# Flags that only some deployment targets support, in the order they are checked:
+# (flag, targets that support it, hint shown on the other targets).
+_TARGET_ONLY_FLAGS: tuple[tuple[str, tuple[str, ...], str], ...] = (
+    ("--network-attachment", (_AGENT_RUNTIME,), ""),
+    ("--dns-peering-domain", (_AGENT_RUNTIME,), ""),
+    ("--dns-peering-project", (_AGENT_RUNTIME,), ""),
+    ("--dns-peering-network", (_AGENT_RUNTIME,), ""),
+    ("--agent-gateway-egress", (_AGENT_RUNTIME,), ""),
+    ("--agent-gateway-ingress", (_AGENT_RUNTIME,), ""),
+    ("--key", (_AGENT_RUNTIME,), ""),
+    ("--agent-identity", (_AGENT_RUNTIME,), ""),
+    ("--no-agent-identity", (_AGENT_RUNTIME,), ""),
+    # TODO: b/555632530 - extend --update-only to Cloud Run and GKE, which have
+    # the same "configuration owned by Terraform" problem but are untested for it.
+    ("--update-only", (_AGENT_RUNTIME,), ""),
+    (
+        "--secrets",
+        (_AGENT_RUNTIME, _CLOUD_RUN),
+        "On GKE, mount secrets via Kubernetes Secrets or the Secret Manager CSI driver.",
     ),
+    # Container-build flags split by target: Agent Runtime builds from the
+    # project Dockerfile (--build-args); Cloud Run / GKE take a prebuilt --image.
+    ("--build-args", (_AGENT_RUNTIME,), ""),
+    ("--framework", (_AGENT_RUNTIME,), "Cloud Run and GKE record no framework."),
+    (
+        "--image",
+        (_CLOUD_RUN, _GKE),
+        "Agent Runtime builds from the project Dockerfile and does not support "
+        "prebuilt images.",
+    ),
+    ("--timeout", (_CLOUD_RUN,), ""),
+    ("--ingress", (_CLOUD_RUN,), ""),
+    # On GKE these are owned by Terraform and the HorizontalPodAutoscaler; reject
+    # them rather than silently ignoring them.
+    ("--cpu", (_AGENT_RUNTIME, _CLOUD_RUN), _SIZING_HINT),
+    ("--memory", (_AGENT_RUNTIME, _CLOUD_RUN), _SIZING_HINT),
+    ("--min-instances", (_AGENT_RUNTIME, _CLOUD_RUN), _SIZING_HINT),
+    ("--max-instances", (_AGENT_RUNTIME, _CLOUD_RUN), _SIZING_HINT),
+    ("--concurrency", (_AGENT_RUNTIME, _CLOUD_RUN), _SIZING_HINT),
+    (
+        "--labels",
+        (_AGENT_RUNTIME, _CLOUD_RUN),
+        "On GKE, resource labels are managed via Terraform under deployment/terraform/.",
+    ),
+    ("--no-wait", (_AGENT_RUNTIME, _CLOUD_RUN), ""),
 )
-def _run_cloud_run_deploy_with_retry(args: list[str], *, project: str) -> None:
-    """Run ``gcloud run deploy``, streaming output, retrying transient IAM errors.
-
-    Streams stderr to the terminal in real time (char by char, since gcloud
-    renders progress with carriage returns rather than newlines) while capturing
-    it for error classification. Raises:
-      * ``_TransientCloudRunDeployError`` for cross-project IAM propagation
-        failures, which backoff retries.
-      * ``click.ClickException`` for all other failures, which fail fast.
-    """
-    process = popen_resolved(args, stderr=subprocess.PIPE, text=True)
-
-    assert process.stderr is not None
-    stderr_chars = []
-    while True:
-        char = process.stderr.read(1)
-        if not char:
-            break
-        sys.stderr.write(char)
-        sys.stderr.flush()
-        stderr_chars.append(char)
-
-    process.wait()
-
-    if process.returncode == 0:
-        return
-
-    stderr = "".join(stderr_chars)
-    if "SERVICE_DISABLED" in stderr:
-        raise click.ClickException(
-            "Cloud Run or Cloud Build API is not enabled.\n"
-            "Please enable them by running:\n"
-            f"  gcloud services enable cloudbuild.googleapis.com run.googleapis.com --project={project}"
-        )
-    if any(sig in stderr for sig in _CLOUD_RUN_TRANSIENT_DEPLOY_SIGNATURES):
-        raise _TransientCloudRunDeployError(
-            "Cloud Run deployment failed due to a transient IAM-propagation error "
-            f"(exit code {process.returncode}). This usually clears within a few "
-            "minutes after a project, repository, or service is first created."
-        )
-    raise click.ClickException(
-        f"Cloud Run deployment failed (exit code {process.returncode})"
-    )
-
-
-def _print_cloud_run_next_steps(
-    *,
-    service_name: str,
-    region: str,
-    project: str,
-    service_url: str | None,
-) -> None:
-    """Print copy-pasteable next steps for talking to a deployed Cloud Run agent.
-
-    gcloud already prints the Service URL and a proxy hint, but nothing about
-    how to actually interact with the agent — which is exactly where users got
-    stuck (b/557288939). ``agents-cli run`` handles the identity token that
-    ``--no-allow-unauthenticated`` requires, so surface both the direct call
-    (when the URL is known) and the local-proxy flow.
-    """
-    url = (service_url or "").rstrip("/")
-    proxy_parts = [
-        "gcloud",
-        "run",
-        "services",
-        "proxy",
-        service_name,
-        "--region",
-        region,
-        "--project",
-        project,
-    ]
-
-    click.secho("\n✅ Deployed to Cloud Run.", fg="green")
-    click.echo("\nTalk to your agent:")
-    if url:
-        click.echo(f'  agents-cli run --url {url} --mode a2a "hello"')
-    else:
-        click.echo('  agents-cli run --url <SERVICE_URL> --mode a2a "hello"')
-        click.echo(
-            "  (find <SERVICE_URL> in the Service URL above or via "
-            "`agents-cli deploy --status`)"
-        )
-    click.echo("\nOr proxy locally, then use the proxy URL:")
-    click.echo(f"  {' '.join(proxy_parts)}")
-    click.echo('  agents-cli run --url http://127.0.0.1:8080 --mode a2a "hello"')
-    click.echo(
-        "\nFor ADK agents, the ADK HTTP API is also served — swap --mode a2a for --mode adk."
-    )
 
 
 @click.command("deploy")
@@ -330,7 +124,7 @@ def _print_cloud_run_next_steps(
 @click.option(
     "--deployment-target",
     "-d",
-    type=click.Choice(["agent_runtime", "cloud_run", "gke"]),
+    type=click.Choice(_DEPLOYMENT_TARGETS),
     default=None,
     help="Deployment target. Overrides agents-cli-manifest.yaml and lets deploy "
     "run without a manifest.",
@@ -452,7 +246,8 @@ def _print_cloud_run_next_steps(
     "-n",
     is_flag=True,
     default=False,
-    help="Print what would be executed without running it.",
+    help="Print what would be executed without running it. For Agent Runtime, "
+    "also run read-only Google Cloud checks.",
 )
 @click.option(
     "--list",
@@ -535,49 +330,59 @@ def _print_cloud_run_next_steps(
     "Omit the flag to leave the current binding alone.",
 )
 @click.option(
+    "--key",
+    default=None,
+    help="Cloud KMS key for customer-managed encryption (Agent Runtime). "
+    "Format: projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY. "
+    "Set on create only; cannot be changed later.",
+)
+@click.option(
     "--ingress",
     type=click.Choice(["all", "internal", "internal-and-cloud-load-balancing"]),
     default=None,
     help="Ingress traffic allowed to the service (Cloud Run).",
 )
+@click.pass_context
 def cmd_deploy(
+    ctx: click.Context,
     *,
-    project,
-    region,
-    deployment_target,
-    secrets,
-    agent_identity,
-    update_env_vars,
-    iap,
-    ingress,
-    port,
-    framework,
-    memory,
-    cpu,
-    min_instances,
-    max_instances,
-    concurrency,
-    timeout,
-    service_account,
-    service_name_override,
-    image,
-    cluster_name,
-    dry_run,
-    list_deployments,
-    no_wait,
-    update_only,
-    status,
-    interactive,
-    no_confirm_project,
-    network_attachment,
-    dns_peering_domain,
-    dns_peering_project,
-    dns_peering_network,
-    agent_gateway_egress,
-    agent_gateway_ingress,
-    build_args,
-    labels,
-):
+    project: str | None,
+    region: str | None,
+    deployment_target: str | None,
+    secrets: str | None,
+    agent_identity: bool | None,
+    update_env_vars: str | None,
+    iap: bool,
+    ingress: str | None,
+    port: int | None,
+    framework: str | None,
+    memory: str | None,
+    cpu: str | None,
+    min_instances: int | None,
+    max_instances: int | None,
+    concurrency: int | None,
+    timeout: int | None,
+    service_account: str | None,
+    service_name_override: str | None,
+    image: str | None,
+    cluster_name: str | None,
+    dry_run: bool,
+    list_deployments: bool,
+    no_wait: bool,
+    update_only: bool,
+    status: bool,
+    interactive: bool,
+    no_confirm_project: bool,
+    network_attachment: str | None,
+    dns_peering_domain: str | None,
+    dns_peering_project: str | None,
+    dns_peering_network: str | None,
+    agent_gateway_egress: str | None,
+    agent_gateway_ingress: str | None,
+    build_args: str | None,
+    labels: str | None,
+    key: str | None,
+) -> None:
     """Deploy the agent.
 
     \b
@@ -610,19 +415,7 @@ def cmd_deploy(
     service_name = _resolve_deploy_service_name(cfg, service_name_override)
 
     if not has_manifest:
-        # No manifest: surface the defaults in play — including the resolved
-        # service name — and the cwd we're building from.
-        logging.warning(
-            "No agents-cli-manifest.yaml found — deploying with defaults:\n"
-            "    • service name:    %s\n"
-            "    • agent directory: %s\n"
-            "    • building from:   %s\n"
-            "  Pass --service-name to set the service name, run from a scaffolded "
-            "project, or see `agents-cli deploy --help` for all flags.",
-            service_name,
-            cfg.agent_directory,
-            os.getcwd(),
-        )
+        _warn_deploying_without_manifest(cfg, service_name)
 
     project_explicitly_passed = bool(project)
     # Resolve project once upfront — all deployment targets need it
@@ -636,177 +429,52 @@ def cmd_deploy(
         _list_deployments(cfg, project, region)
         return
 
-    # Prompt for confirmation if project was resolved automatically and not skipping
-    confirm_project = not project_explicitly_passed and not no_confirm_project
-    if confirm_project:
-        if not interactive:
-            raise click.ClickException(
-                f"About to deploy to Google Cloud project '{project}' (resolved from `gcloud config`) — confirmation required.\n"
-                "  To proceed, either:\n"
-                f"    • Pass it explicitly:    --project {project}\n"
-                "    • Skip the prompt:       --no-confirm-project\n"
-                "    • Run interactively:     -i"
-            )
-        if not click.confirm(
-            f"Deploying to Google Cloud project '{project}'. Proceed?", default=True
-        ):
-            raise click.ClickException("Aborted by user.")
-
     # Build PSC interface config from networking flags
-    psc_interface_config = _build_psc_interface_config(
+    psc_interface_config = build_psc_interface_config(
         network_attachment=network_attachment,
         dns_peering_domain=dns_peering_domain,
         dns_peering_project=dns_peering_project,
         dns_peering_network=dns_peering_network,
     )
 
-    if psc_interface_config and cfg.deployment_target != "agent_runtime":
-        raise click.ClickException(
-            "--network-attachment and --dns-peering-* flags are only supported "
-            f"for Agent Runtime deployments (current target: {cfg.deployment_target})."
-        )
-
-    if (agent_gateway_egress is not None or agent_gateway_ingress is not None) and (
-        cfg.deployment_target != "agent_runtime"
-    ):
-        raise click.ClickException(
-            "--agent-gateway-egress and --agent-gateway-ingress are only supported "
-            f"for Agent Runtime deployments (current target: {cfg.deployment_target})."
-        )
-
-    if agent_identity is not None and cfg.deployment_target != "agent_runtime":
-        raise click.ClickException(
-            "--agent-identity and --no-agent-identity are only supported for "
-            f"Agent Runtime deployments (current target: {cfg.deployment_target})."
-        )
-
-    # TODO: b/555632530 - extend --update-only to Cloud Run and GKE, which have
-    # the same "configuration owned by Terraform" problem but are untested for it.
-    if update_only and cfg.deployment_target != "agent_runtime":
-        raise click.ClickException(
-            "--update-only is only supported for Agent Runtime deployments "
-            f"(current target: {cfg.deployment_target})."
-        )
-
-    if secrets and cfg.deployment_target not in ("agent_runtime", "cloud_run"):
-        raise click.ClickException(
-            "--secrets is only supported for Agent Runtime and Cloud Run deployments "
-            f"(current target: {cfg.deployment_target}).\n"
-            "  For GKE, mount secrets via Kubernetes Secrets or the Secret Manager "
-            "CSI driver."
-        )
-
-    # Container-build flags split by target: Agent Runtime builds from the
-    # project Dockerfile (--build-args); Cloud Run / GKE take a prebuilt --image.
-    if build_args and cfg.deployment_target != "agent_runtime":
-        raise click.ClickException(
-            "The --build-args flag is only supported for Agent Runtime deployments."
-        )
-    # Checks the flag, not the resolved value, so a Cloud Run project can still
-    # record a framework.
-    if framework is not None and cfg.deployment_target != "agent_runtime":
-        raise click.ClickException(
-            "The --framework flag is only supported for Agent Runtime "
-            f"deployments (current target: {cfg.deployment_target}); Cloud Run "
-            "and GKE record no framework."
-        )
+    shape = MachineShape(
+        cpu=cpu,
+        memory=memory,
+        min_instances=min_instances,
+        max_instances=max_instances,
+        concurrency=concurrency,
+    )
+    _validate_flags_for_target(cfg.deployment_target, _passed_flags(ctx))
     framework = cfg.framework if framework is None else framework
-    if image and cfg.deployment_target == "agent_runtime":
-        raise click.ClickException(
-            "The --image flag is only supported for Cloud Run and GKE deployments. "
-            "Agent Runtime does not support prebuilt images."
-        )
-    if timeout is not None and cfg.deployment_target != "cloud_run":
-        raise click.ClickException(
-            "The --timeout flag is only supported for Cloud Run deployments "
-            f"(current target: {cfg.deployment_target})."
-        )
-    if ingress is not None and cfg.deployment_target != "cloud_run":
-        raise click.ClickException(
-            "The --ingress flag is only supported for Cloud Run deployments "
-            f"(current target: {cfg.deployment_target})."
-        )
 
-    # CPU / memory / instance / concurrency sizing works on Agent Runtime and
-    # Cloud Run, but on GKE these are configured via Terraform and the
-    # HorizontalPodAutoscaler — reject them rather than silently ignoring.
-    if cfg.deployment_target == "gke":
-        gke_unsupported = {
-            "--cpu": cpu,
-            "--memory": memory,
-            "--min-instances": min_instances,
-            "--max-instances": max_instances,
-            "--concurrency": concurrency,
-        }
-        misused = [flag for flag, value in gke_unsupported.items() if value is not None]
-        if misused:
-            raise click.ClickException(
-                f"{', '.join(misused)} {'is' if len(misused) == 1 else 'are'} not "
-                "supported for GKE deployments — configure sizing via Terraform and "
-                "the HorizontalPodAutoscaler under deployment/terraform/."
-            )
+    parsed_labels = parse_kv_flag("--labels", labels)
 
-    # --labels is Cloud Run / Agent Runtime only. GKE resources are Terraform-owned,
-    # so labels belong there.
-    if labels and cfg.deployment_target not in ("agent_runtime", "cloud_run"):
-        raise click.ClickException(
-            "--labels is not supported for GKE deployments — GKE resource labels "
-            "are managed via Terraform under deployment/terraform/."
-        )
+    # Prompt only once every flag is known to be valid, so a bad flag never
+    # costs the user a confirmation.
+    if not project_explicitly_passed and not no_confirm_project:
+        _confirm_resolved_project(project, interactive=interactive)
 
-    try:
-        parsed_labels = parse_key_value_pairs(labels)
-    except ValueError as e:
-        raise click.ClickException(
-            f"Error parsing --labels flag value '{labels}': {e}"
-        ) from e
-
-    # The sizing flags (cpu/memory/min/max/concurrency) are left as-is (possibly
-    # None) so each deployment target can decide how to handle unset values:
-    #   - Agent Runtime: pass None → FieldMask omits the field → preserves on update
-    #   - Cloud Run: apply defaults on create, omit on update (see _shape_flag below)
-    if cfg.deployment_target == "agent_runtime":
+    if cfg.deployment_target == _AGENT_RUNTIME:
         if dry_run:
-            # Fill defaults FOR DISPLAY ONLY — the real call passes raw (possibly-None)
-            # values so Agent Runtime's FieldMask can preserve existing settings on update.
-            runtime_shape = {
-                "cpu": cpu if cpu is not None else DEFAULT_CPU,
-                "memory": memory if memory is not None else DEFAULT_MEMORY,
-                "min_instances": min_instances
-                if min_instances is not None
-                else DEFAULT_MIN_INSTANCES,
-                "max_instances": max_instances
-                if max_instances is not None
-                else DEFAULT_MAX_INSTANCES,
-                "container_concurrency": concurrency
-                if concurrency is not None
-                else DEFAULT_CONCURRENCY,
-            }
-            msg = f"  Would deploy to Agent Runtime: project={project}, region={region}"
-            for key, value in runtime_shape.items():
-                msg += f"\n  {key}: {value}"
-            msg += "\n  (defaults apply on create; existing values preserved on update)"
-            if update_only:
-                msg += (
-                    "\n  --update-only: an absent engine fails the deploy "
-                    "rather than being created."
-                )
-            if psc_interface_config:
-                msg += f"\n  PSC network attachment: {psc_interface_config['network_attachment']}"
-                for dc in psc_interface_config.get("dns_peering_configs", []):
-                    msg += (
-                        f"\n  DNS peering: {dc['domain']}"
-                        f" → {dc['target_project']}/{dc['target_network']}"
-                    )
-            for label, gateway in (
-                ("egress", agent_gateway_egress),
-                ("ingress", agent_gateway_ingress),
-            ):
-                if gateway:
-                    msg += f"\n  Agent Gateway {label}: {gateway}"
-                elif gateway is not None:
-                    msg += f"\n  Agent Gateway {label}: (cleared)"
-            click.echo(msg)
+            validate_agent_runtime_deployment(
+                project=project,
+                region=region,
+                display_name=service_name,
+                service_account=service_account,
+                secrets=secrets,
+                update_only=update_only,
+                agent_identity=agent_identity,
+            )
+            print_agent_runtime_dry_run(
+                project=project,
+                region=region,
+                shape=shape,
+                update_only=update_only,
+                psc_interface_config=psc_interface_config,
+                agent_gateway_egress=agent_gateway_egress,
+                agent_gateway_ingress=agent_gateway_ingress,
+                kms_key=key,
+            )
             return
         deploy_agent_runtime(
             cfg=cfg,
@@ -826,159 +494,35 @@ def cmd_deploy(
             build_args=build_args,
             port=port,
             framework=framework,
-            cpu=cpu,
-            memory=memory,
-            min_instances=min_instances,
-            max_instances=max_instances,
-            container_concurrency=concurrency,
+            cpu=shape.cpu,
+            memory=shape.memory,
+            min_instances=shape.min_instances,
+            max_instances=shape.max_instances,
+            container_concurrency=shape.concurrency,
+            kms_key=key,
         )
 
-    elif cfg.deployment_target == "cloud_run":
-        _tools.require_tool(
-            "gcloud",
-            "Install the Google Cloud SDK: https://cloud.google.com/sdk/docs/install",
+    elif cfg.deployment_target == _CLOUD_RUN:
+        deploy_cloud_run(
+            project=project,
+            region=region,
+            service_name=service_name,
+            image=image,
+            shape=shape,
+            timeout=timeout,
+            ingress=ingress,
+            port=port,
+            iap=iap,
+            service_account=service_account,
+            update_env_vars=update_env_vars,
+            secrets=secrets,
+            labels=parsed_labels,
+            no_wait=no_wait,
+            dry_run=dry_run,
         )
 
-        args = ["gcloud", "run", "deploy", service_name, "--project", project]
-        if region:
-            args.extend(["--region", region])
-        if image:
-            args.extend(["--image", image])
-        else:
-            args.extend(["--source", "."])
-
-        # For sizing flags: user value always wins; on create fall back to our
-        # conservative defaults; on update omit so gcloud preserves the live value.
-        # Dry-run skips the network call and treats the deploy as a create for display.
-        creating = (
-            True
-            if dry_run
-            else not _cloud_run_service_exists(
-                project=project, region=region, service=service_name
-            )
-        )
-
-        def _shape_flag(flag: str, value, default):
-            if value is not None:
-                args.extend([flag, str(value)])
-            elif creating:
-                args.extend([flag, str(default)])
-
-        _shape_flag("--memory", memory, DEFAULT_MEMORY)
-        _shape_flag("--cpu", cpu, DEFAULT_CPU)
-        _shape_flag("--min-instances", min_instances, DEFAULT_MIN_INSTANCES)
-        _shape_flag("--max-instances", max_instances, DEFAULT_MAX_INSTANCES)
-        _shape_flag("--concurrency", concurrency, DEFAULT_CONCURRENCY)
-        args.append("--no-allow-unauthenticated")
-        args.append("--no-cpu-throttling")
-        if timeout is not None:
-            args.extend(["--timeout", str(timeout)])
-        if ingress:
-            args.extend(["--ingress", ingress])
-        if port:
-            args.extend(["--port", str(port)])
-        if iap:
-            args.append("--iap")
-        if service_account:
-            args.extend(["--service-account", service_account])
-
-        # Inject environment variables. Precedence: --update-env-vars > .env > defaults.
-        project_root = find_project_root() or "."
-        env_var_map = read_project_dotenv(project_root)
-        try:
-            env_var_map.update(parse_key_value_pairs(update_env_vars))
-        except ValueError as e:
-            raise click.ClickException(
-                f"Error parsing --update-env-vars flag value '{update_env_vars}': {e}"
-            ) from e
-
-        # Skip the version read (and its warning) when the user has already supplied one.
-        if "AGENT_VERSION" not in env_var_map:
-            env_var_map["AGENT_VERSION"] = get_project_version(project_root)
-        # Fail closed: ADK defaults content-in-spans to true; keep it off for bare deploys.
-        env_var_map.setdefault("ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS", "false")
-
-        # Set APP_URL so the service knows its own URL (used by A2A agent cards, etc.)
-        if "APP_URL" not in env_var_map:
-            try:
-                result = run_resolved(
-                    [
-                        "gcloud",
-                        "projects",
-                        "describe",
-                        project,
-                        "--format=value(projectNumber)",
-                    ],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-                project_number = result.stdout.strip()
-                env_var_map["APP_URL"] = (
-                    f"https://{service_name}-{project_number}.{region}.run.app"
-                )
-            except (subprocess.CalledProcessError, OSError):
-                click.echo(
-                    "  ⚠️  Could not determine project number — skipping APP_URL injection."
-                )
-        env_var_str = ",".join(f"{k}={v}" for k, v in env_var_map.items())
-        args.extend(["--update-env-vars", env_var_str])
-
-        # Mount secrets as env vars (ENV=SECRET[:VERSION], version defaults to latest).
-        # Use --update-secrets (merge) to match the --update-env-vars semantics above,
-        # rather than --set-secrets, which would drop any not listed here.
-        if secrets:
-            parsed_secrets = parse_secrets(secrets)
-            overlap = parsed_secrets.keys() & env_var_map.keys()
-            if overlap:
-                raise click.ClickException(
-                    f"{', '.join(sorted(overlap))} cannot be set as both a plain "
-                    "environment variable and a secret. Cloud Run requires each key "
-                    "to be one or the other — rename it or drop it from --update-env-vars."
-                )
-            secret_str = ",".join(
-                f"{env}={spec['secret']}:{spec['version']}"
-                for env, spec in parsed_secrets.items()
-            )
-            args.extend(["--update-secrets", secret_str])
-
-        # Merge user labels with the default ones, seeded LAST so
-        # user-supplied ones can't override it.
-        if parsed_labels.get("created-by") not in (None, "agents-cli"):
-            logging.warning(
-                "Ignoring --labels created-by=%s: 'created-by' is currently reserved.",
-                parsed_labels["created-by"],
-            )
-        cr_labels = {**parsed_labels, "created-by": "agents-cli"}
-        # --update-labels merges (preserves existing labels), consistent with
-        # --update-env-vars / --update-secrets above; emit exactly one flag.
-        args.extend(
-            ["--update-labels", ",".join(f"{k}={v}" for k, v in cr_labels.items())]
-        )
-
-        if no_wait:
-            args.append("--async")
-
-        display_cmd = redact_command(args)
-        if dry_run:
-            click.echo(f"  Would run: {display_cmd}")
-            return
-        click.secho(f"  ▸ {display_cmd}", fg="cyan", dim=True)
-
-        _run_cloud_run_deploy_with_retry(args, project=project)
-
-        if not no_wait:
-            _print_cloud_run_next_steps(
-                service_name=service_name,
-                region=region,
-                project=project,
-                service_url=env_var_map.get("APP_URL"),
-            )
-
-    elif cfg.deployment_target == "gke":
-        if no_wait:
-            raise click.ClickException("--no-wait is not supported for GKE deployments.")
-        _deploy_gke(
+    elif cfg.deployment_target == _GKE:
+        deploy_gke(
             project=project,
             region=region,
             image=image,
@@ -996,6 +540,81 @@ def cmd_deploy(
         )
 
 
+def _load_deploy_config(
+    deployment_target: str | None,
+) -> tuple[ProjectConfig, bool]:
+    """Resolve project config for a deploy.
+
+    When --deployment-target is given, deploy can run without a manifest. A
+    project root (when present) is chdir'd into because deploy builds from cwd
+    (--source ., relative terraform dirs).
+
+    Returns the config and whether a manifest was found; the caller warns about
+    the fallback defaults (including the resolved service name) when it wasn't.
+    """
+    project_root = find_project_root()
+    if project_root is None and deployment_target is None:
+        raise click.ClickException(
+            "No agents-cli-manifest.yaml found in the current directory or its parents.\n"
+            "  Run this command from your project root, pass --deployment-target to\n"
+            "  deploy without a manifest, or create a project first:\n"
+            "    agents-cli create my-agent"
+        )
+    if project_root is not None:
+        chdir_project_root(project_root)
+
+    cfg = read_project_config()
+    check_cli_version(cfg)
+    if deployment_target:  # explicit flag overrides the manifest
+        cfg.deployment_target = deployment_target
+    require_deployment_target(cfg)
+    if cfg.deployment_target not in _DEPLOYMENT_TARGETS:
+        raise click.ClickException(
+            f"Unknown deployment target '{cfg.deployment_target}'.\n"
+            "  Set create_params.deployment_target in agents-cli-manifest.yaml to one "
+            f"of: {', '.join(_DEPLOYMENT_TARGETS)}, or pass --deployment-target."
+        )
+
+    return cfg, project_root is not None
+
+
+def _resolve_deploy_service_name(
+    cfg: ProjectConfig, service_name_override: str | None
+) -> str:
+    """Resolve the deployed service name, rejecting --service-name for GKE.
+
+    GKE resource names (cluster, namespace, deployment, service, Artifact
+    Registry repo) are owned by Terraform's var.project_name, which the CLI does
+    not set at deploy time. An override would only rename the kubectl-side
+    references, leaving them pointing at resources Terraform never created — so
+    for GKE the override is rejected and the name stays pinned to the project.
+    """
+    if service_name_override and cfg.deployment_target == _GKE:
+        raise click.ClickException(
+            "--service-name is not supported for GKE deployments.\n"
+            "  GKE resource names are derived from the project name via "
+            "Terraform (var.project_name) and cannot be overridden at deploy "
+            "time.\n"
+            "  Use Cloud Run or Agent Runtime to customize the service name."
+        )
+    return resolve_service_name(cfg, service_name_override)
+
+
+def _warn_deploying_without_manifest(cfg: ProjectConfig, service_name: str) -> None:
+    """Warn which defaults (service name, agent dir, build cwd) a bare deploy uses."""
+    logging.warning(
+        "No agents-cli-manifest.yaml found — deploying with defaults:\n"
+        "    • service name:    %s\n"
+        "    • agent directory: %s\n"
+        "    • building from:   %s\n"
+        "  Pass --service-name to set the service name, run from a scaffolded "
+        "project, or see `agents-cli deploy --help` for all flags.",
+        service_name,
+        cfg.agent_directory,
+        os.getcwd(),
+    )
+
+
 def _check_deploy_status(
     cfg: ProjectConfig,
     project: str,
@@ -1003,550 +622,106 @@ def _check_deploy_status(
     service_name: str,
 ) -> None:
     """Check the status of a pending --no-wait deployment."""
-    if cfg.deployment_target == "agent_runtime":
+    if cfg.deployment_target == _AGENT_RUNTIME:
         check_agent_runtime_operation(
             cfg=cfg,
             project=project,
             location=region,
         )
-    elif cfg.deployment_target == "cloud_run":
-        _check_cloud_run_status(project, region, service_name)
-    elif cfg.deployment_target == "gke":
+    elif cfg.deployment_target == _CLOUD_RUN:
+        check_cloud_run_status(project, region, service_name)
+    elif cfg.deployment_target == _GKE:
         raise click.ClickException("--status is not supported for GKE deployments.")
     else:
         raise click.ClickException(f"Unknown deployment target: {cfg.deployment_target}")
 
 
-def _check_cloud_run_status(
-    project: str,
-    region: str,
-    service_name: str,
-) -> None:
-    """Check the status of the Cloud Run service."""
-    _tools.require_tool(
-        "gcloud",
-        "Install the Google Cloud SDK: https://cloud.google.com/sdk/docs/install",
-    )
-    args = [
-        "gcloud",
-        "run",
-        "services",
-        "describe",
-        service_name,
-        "--format=json",
-        "--project",
-        project,
-    ]
-    if region:
-        args.extend(["--region", region])
-
-    result = run(args, capture=True, print_cmd=False, check=False)
-    if result.returncode != 0:
-        raise click.ClickException(
-            f"Failed to describe Cloud Run service '{service_name}'.\n"
-            "  The service may not exist yet or the deployment may have failed."
-        )
-
-    svc = json.loads(result.stdout)
-    conditions = svc.get("status", {}).get("conditions", [])
-    ready = any(
-        c.get("type") == "Ready" and c.get("status") == "True" for c in conditions
-    )
-
-    if ready:
-        url = svc.get("status", {}).get("url", "")
-        click.echo(f"✅ Cloud Run service '{service_name}' is ready.")
-        if url:
-            click.echo(f"   URL: {url}")
-    else:
-        reason = ""
-        for c in conditions:
-            if c.get("type") == "Ready":
-                reason = c.get("message", "")
-                break
-        click.echo(f"⏳ Cloud Run service '{service_name}' is not yet ready.")
-        if reason:
-            click.echo(f"   Reason: {reason}")
-
-
-def _build_image_with_cloud_build(*, image: str, project: str) -> None:
-    """Build and push an image with Cloud Build, polling for the result.
-
-    Submits with ``--async`` and polls ``builds describe`` instead of streaming
-    logs. gcloud's default log streaming exits non-zero when the caller can't
-    read the default logs bucket (e.g. under VPC-SC, or without project Viewer)
-    even though the build itself succeeds; polling works in every environment.
-    The build is viewable at the printed console URL.
-    """
-    submit = run(
-        [
-            "gcloud",
-            "builds",
-            "submit",
-            "--tag",
-            image,
-            "--project",
-            project,
-            "--async",
-            "--format=value(id)",
-        ],
-        capture=True,
-        check_err_msg="Failed to submit Cloud Build",
-    )
-    build_id = (submit.stdout or "").strip()
-    if not build_id:
-        raise click.ClickException("Cloud Build did not return a build ID.")
-    build_url = f"https://console.cloud.google.com/cloud-build/builds/{build_id}?project={project}"
-    click.echo(f"  Build {build_id} — logs: {build_url}")
-
-    deadline = time.monotonic() + 1800  # 30 min safety cap
-    while True:
-        if time.monotonic() > deadline:
-            raise click.ClickException(
-                f"Timed out waiting for Cloud Build {build_id}. See {build_url}"
-            )
-        time.sleep(5)
-        status = run(
-            [
-                "gcloud",
-                "builds",
-                "describe",
-                build_id,
-                "--project",
-                project,
-                "--format=value(status)",
-            ],
-            capture=True,
-            print_cmd=False,
-            check=False,
-        ).stdout.strip()
-        if status == "SUCCESS":
-            click.echo("  ✅ Build succeeded.")
-            return
-        if status in {"FAILURE", "INTERNAL_ERROR", "TIMEOUT", "CANCELLED", "EXPIRED"}:
-            raise click.ClickException(
-                f"Cloud Build {build_id} ended with status {status}. See {build_url}"
-            )
-
-
-def _deploy_gke(
-    *,
-    project,
-    region,
-    image,
-    cluster_name,
-    update_env_vars,
-    dry_run,
-    service_name,
-    session_type,
-):
-    """GKE deployment: single linear flow with conditional steps.
-
-    When ``image`` is provided (CI/CD mode), skips terraform and docker build.
-    When ``image`` is None (local dev mode), runs targeted terraform + build flow.
-    Both paths share cluster credentials, kubectl rollout, env-var injection
-    (AGENT_VERSION, any --update-env-vars, and APP_URL), and external IP steps.
-
-    ``session_type`` selects which optional resources the targeted apply must
-    include; see ``deploy_targets`` below.
-    """
-    deploy_targets = [
-        "google_container_cluster.app",
-        "google_artifact_registry_repository.docker_repo",
-        "google_compute_router_nat.nat",
-        "google_compute_firewall.allow_internal",
-        "google_service_account.app_sa",
-        "google_project_iam_member.app_sa_roles",
-        "google_project_iam_member.default_compute_sa_storage_object_creator",
-        "google_service_account_iam_member.workload_identity_binding",
-        "google_project_service_identity.vertex_sa",
-        "kubernetes_namespace_v1.app",
-        "kubernetes_service_account_v1.app",
-        "kubernetes_deployment_v1.app",
-        "kubernetes_service_v1.app",
-        "kubernetes_horizontal_pod_autoscaler_v2.app",
-        "kubernetes_pod_disruption_budget_v1.app",
-    ]
-
-    if session_type == "cloud_sql":
-        deploy_targets += [
-            "random_password.db_password",
-            "google_sql_database_instance.session_db",
-            "google_sql_database.database",
-            "google_sql_user.db_user",
-            "google_secret_manager_secret.db_password",
-            "google_secret_manager_secret_version.db_password",
-            "kubernetes_secret_v1.db_password",
-        ]
-    _tools.require_tool(
-        "gcloud",
-        "Install the Google Cloud SDK: https://cloud.google.com/sdk/docs/install",
-    )
-    _tools.require_tool(
-        "kubectl", "Install kubectl: https://kubernetes.io/docs/tasks/tools/"
-    )
-    cluster_name = cluster_name or service_name
-
-    if not image:
-        _tools.require_tool(
-            "terraform",
-            "Install Terraform: https://developer.hashicorp.com/terraform/install",
-        )
-
-    if dry_run:
-        if not image:
-            tf_dir = "deployment/terraform/single-project"
-            click.echo(f"  Would run: terraform -chdir={tf_dir} init -input=false")
-            click.echo(
-                f"  Would run: terraform -chdir={tf_dir} apply -auto-approve -input=false"
-                f" -target=({len(deploy_targets)} targets)"
-            )
-            click.echo(
-                "  Would run: gcloud builds submit --tag ... --async (then poll status)"
-            )
-        click.echo("  Would run: gcloud container clusters get-credentials ...")
-        click.echo(
-            f"  Would run: kubectl set image ... {image or f'{region}-docker.pkg.dev/{project}/{service_name}/{service_name}:latest'}"
-        )
-        click.echo("  Would run: kubectl get svc ... (service IP)")
-        click.echo("  Would run: kubectl set env ... AGENT_VERSION=... APP_URL=...")
-        click.echo("  Would run: kubectl rollout status ...")
-        return
-
-    # Step 1: Targeted Terraform (local dev only)
-    if not image:
-        tf_dir = "deployment/terraform/single-project"
-        click.echo("\n🏗️  Provisioning infrastructure with Terraform...")
-        # -input=false: report a missing variable instead of blocking on a prompt.
-        run(
-            ["terraform", f"-chdir={tf_dir}", "init", "-input=false"],
-            check_err_msg="Terraform init failed",
-        )
-        apply_args = [
-            "terraform",
-            f"-chdir={tf_dir}",
-            "apply",
-            "-auto-approve",
-            "-input=false",
-            f"-var=project_id={project}",
-        ]
-        for target in deploy_targets:
-            apply_args.extend(["-target", target])
-        run(apply_args, check_err_msg="Terraform apply failed")
-
-    # Step 2: Get cluster credentials
-    click.echo("\n🔑 Getting cluster credentials...")
-    run(
-        [
-            "gcloud",
-            "container",
-            "clusters",
-            "get-credentials",
-            cluster_name,
-            "--region",
-            region,
-            "--project",
-            project,
-        ],
-        check_err_msg="Failed to get cluster credentials",
-    )
-
-    # Step 3: Build and push container image (local dev only)
-    if not image:
-        image = f"{region}-docker.pkg.dev/{project}/{service_name}/{service_name}:latest"
-        click.echo(f"\n🐳 Building container image: {image}")
-        _build_image_with_cloud_build(image=image, project=project)
-
-    # Step 4: Update container image
-    click.echo("\n🔄 Rolling out deployment...")
-    run(
-        [
-            "kubectl",
-            "set",
-            "image",
-            f"deployment/{service_name}",
-            f"{service_name}={image}",
-            "-n",
-            service_name,
-        ],
-        check_err_msg="kubectl set image failed",
-    )
-
-    # Step 5: Inject runtime env vars (AGENT_VERSION, --update-env-vars, APP_URL).
-    # A user-supplied value (via --update-env-vars) takes precedence over the
-    # CLI-derived defaults, matching the Cloud Run and Agent Runtime paths.
-    project_root = find_project_root() or Path.cwd()
-    env_var_map = read_project_dotenv(project_root)
-    try:
-        env_var_map.update(parse_key_value_pairs(update_env_vars))
-    except ValueError as e:
-        raise click.ClickException(f"argument --update-env-vars: {e}") from e
-
-    # Skip the version read (and its warning) when the user has already supplied one.
-    if "AGENT_VERSION" not in env_var_map:
-        env_var_map["AGENT_VERSION"] = get_project_version(project_root)
-    # Fail closed: ADK defaults content-in-spans to true; keep it off for bare deploys.
-    env_var_map.setdefault("ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS", "false")
-
-    click.echo("\n🌐 Getting service IP...")
-    ip_result = run(
-        [
-            "kubectl",
-            "get",
-            "service",
-            service_name,
-            "-n",
-            service_name,
-            "-o",
-            "jsonpath={.status.loadBalancer.ingress[0].ip}",
-        ],
-        capture=True,
-        print_cmd=False,
-        check=False,
-    )
-    service_ip = ip_result.stdout.strip() if ip_result.returncode == 0 else ""
-    if service_ip:
-        click.echo(f"  Service IP: {service_ip}")
-        # APP_URL is used by A2A agents for the agent card URL.
-        env_var_map.setdefault("APP_URL", f"http://{service_ip}:8080")
-    else:
-        click.echo("  ⚠️  Could not determine service IP — skipping APP_URL injection.")
-
-    kubectl_env_args = [
-        "kubectl",
-        "set",
-        "env",
-        f"deployment/{service_name}",
-        *(f"{k}={v}" for k, v in env_var_map.items()),
-        "-n",
-        service_name,
-    ]
-    click.secho(f"  ▸ {redact_command(kubectl_env_args)}", fg="cyan", dim=True)
-    run(
-        kubectl_env_args,
-        print_cmd=False,
-        check_err_msg="Failed to set environment variables",
-    )
-
-    # Step 6: Wait for rollout
-    try:
-        run(
-            [
-                "kubectl",
-                "rollout",
-                "status",
-                f"deployment/{service_name}",
-                "-n",
-                service_name,
-                "--timeout=600s",
-            ],
-            check_err_msg="Rollout failed",
-        )
-    except click.ClickException:
-        _echo_rollout_diagnostics(service_name)
-        raise
-
-    # Step 7: Print summary
-    click.echo("\n\n✅ GKE deployment complete!")
-    if service_ip:
-        click.echo(f"   Internal service IP: {service_ip}")
-    click.echo(
-        f"   For local access: kubectl port-forward svc/{service_name} 8080:8080 -n {service_name}"
-    )
-
-
-def _echo_rollout_diagnostics(service_name: str) -> None:
-    """Print pod and event state for a deployment whose rollout did not finish."""
-    click.echo("\n🔍 Rollout diagnostics (the rollout above did not complete):")
-    diagnostics: list[tuple[str, list[str]]] = [
-        ("Pods", ["kubectl", "get", "pods", "-o", "wide", "-n", service_name]),
-        (
-            "Pod details",
-            [
-                "kubectl",
-                "describe",
-                "pods",
-                "-l",
-                f"app={service_name}",
-                "-n",
-                service_name,
-            ],
-        ),
-        (
-            "Events",
-            [
-                "kubectl",
-                "get",
-                "events",
-                "--sort-by=.lastTimestamp",
-                "-n",
-                service_name,
-            ],
-        ),
-    ]
-    for title, args in diagnostics:
-        click.echo(f"\n--- {title} ---")
-        # check=False: a diagnostic that fails must not replace the rollout error.
-        run(args, print_cmd=False, check=False)
-
-
 def _list_deployments(cfg: ProjectConfig, project: str, region: str) -> None:
     """List existing deployments for the current project's deployment target."""
-    if cfg.deployment_target == "agent_runtime":
-        _list_agent_runtime_deployments(project, region)
-    elif cfg.deployment_target == "cloud_run":
-        _list_cloud_run_deployments(project, region)
-    elif cfg.deployment_target == "gke":
-        _list_gke_deployments()
+    if cfg.deployment_target == _AGENT_RUNTIME:
+        list_agent_runtime_deployments(project, region)
+    elif cfg.deployment_target == _CLOUD_RUN:
+        list_cloud_run_deployments(project, region)
+    elif cfg.deployment_target == _GKE:
+        list_gke_deployments()
     else:
         raise click.ClickException(f"Unknown deployment target: {cfg.deployment_target}")
 
 
-def _list_agent_runtime_deployments(project: str, location: str) -> None:
-    """List Agent Runtime deployments via the Agent Platform SDK."""
-    import warnings
+def _confirm_resolved_project(project: str, *, interactive: bool) -> None:
+    """Confirm a project that was resolved automatically rather than passed.
 
-    warnings.filterwarnings(
-        "ignore", category=FutureWarning, module="google.cloud.aiplatform"
-    )
-
-    client = AgentPlatformClient(project=project, location=location)
-    agents = list(client.agent_engines.list())
-
-    if not agents:
-        click.echo(f"No Agent Runtime deployments found in {project} ({location}).")
-        return
-
-    from rich.table import Table
-
-    from google.agents.cli._output import Console
-
-    table = Table(title=f"Agent Runtime Deployments — {project} ({location})")
-    table.add_column("Display Name", style="bold")
-    table.add_column("Resource Name", style="dim")
-    table.add_column("Create Time")
-
-    for agent in agents:
-        res = agent.api_resource
-        display_name = (res.display_name if res else None) or "—"
-        name = (res.name if res else None) or "—"
-        create_time = res.create_time if res else None
-        time_str = create_time.strftime("%Y-%m-%d %H:%M") if create_time else "—"
-        table.add_row(display_name, name, time_str)
-
-    console = Console()
-    console.print()
-    console.print(table)
-
-
-def _list_cloud_run_deployments(project: str, region: str | None) -> None:
-    """List Cloud Run services via gcloud."""
-    _tools.require_tool(
-        "gcloud",
-        "Install the Google Cloud SDK: https://cloud.google.com/sdk/docs/install",
-    )
-
-    args = [
-        "gcloud",
-        "run",
-        "services",
-        "list",
-        "--format=json",
-        "--project",
-        project,
-    ]
-    if region:
-        args.extend(["--region", region])
-
-    result = run(args, capture=True, print_cmd=False, check=False)
-    if result.returncode != 0:
-        raise click.ClickException("Failed to list Cloud Run services.")
-
-    services = json.loads(result.stdout) if result.stdout.strip() else []
-
-    if not services:
-        location_label = f" in {region}" if region else ""
-        click.echo(f"No Cloud Run services found{location_label} ({project}).")
-        return
-
-    from rich.table import Table
-
-    from google.agents.cli._output import Console
-
-    title_parts = ["Cloud Run Services", f"— {project}"]
-    if region:
-        title_parts.append(f"({region})")
-    table = Table(title=" ".join(title_parts))
-    table.add_column("Service Name", style="bold")
-    table.add_column("Region")
-    table.add_column("URL", style="dim")
-    table.add_column("Last Deployed")
-
-    for svc in services:
-        metadata = svc.get("metadata", {})
-        status = svc.get("status", {})
-        name = metadata.get("name", "—")
-        labels = metadata.get("labels", {})
-        svc_region = labels.get("cloud.googleapis.com/location", "—")
-        url = status.get("url", "—")
-        # Cloud Run uses metadata.creationTimestamp or status conditions
-        conditions = status.get("conditions", [])
-        ready_time = "—"
-        for cond in conditions:
-            if cond.get("type") == "Ready" and cond.get("lastTransitionTime"):
-                ready_time = cond["lastTransitionTime"][:16].replace("T", " ")
-                break
-        table.add_row(name, svc_region, url, ready_time)
-
-    console = Console()
-    console.print()
-    console.print(table)
-
-
-def _list_gke_deployments() -> None:
-    """List GKE deployments via kubectl."""
-    _tools.require_tool(
-        "kubectl", "Install kubectl: https://kubernetes.io/docs/tasks/tools/"
-    )
-
-    result = run(
-        ["kubectl", "get", "deployments", "-o", "json"],
-        capture=True,
-        print_cmd=False,
-        check=False,
-    )
-    if result.returncode != 0:
+    Without --interactive there is no one to answer a prompt, so fail with the
+    ways to proceed instead of deploying to a project the user never named.
+    """
+    if not interactive:
         raise click.ClickException(
-            "Failed to list GKE deployments.\n"
-            "  Ensure kubectl is configured with cluster credentials."
+            f"About to deploy to Google Cloud project '{project}' (resolved from `gcloud config`) — confirmation required.\n"
+            "  To proceed, either:\n"
+            f"    • Pass it explicitly:    --project {project}\n"
+            "    • Skip the prompt:       --no-confirm-project\n"
+            "    • Run interactively:     -i"
         )
+    if not click.confirm(
+        f"Deploying to Google Cloud project '{project}'. Proceed?", default=True
+    ):
+        raise click.ClickException("Aborted by user.")
 
-    data = json.loads(result.stdout) if result.stdout.strip() else {}
-    items = data.get("items", [])
 
-    if not items:
-        click.echo("No GKE deployments found in the current cluster.")
+def _passed_flags(ctx: click.Context) -> set[str]:
+    """CLI names of the options typed on the command line, e.g. ``{"--timeout"}``.
+
+    Asks Click where each value came from instead of inspecting values, so an
+    explicitly empty value (``--key ""``) counts as passed while a default does not.
+    Values from an env var, a ``default_map``, or ``ctx.invoke`` are not
+    COMMANDLINE and so are not checked; deploy uses none of those today.
+    """
+    passed = set()
+    for param in ctx.command.params:
+        name = param.name
+        if (
+            name is None
+            or ctx.get_parameter_source(name) is not ParameterSource.COMMANDLINE
+        ):
+            continue
+        # --agent-identity/--no-agent-identity: name the form the user typed.
+        if param.secondary_opts and ctx.params[name] is False:
+            passed.add(param.secondary_opts[0])
+        # The table only lists -- names, so a param without one can't match a row.
+        elif opt := next((opt for opt in param.opts if opt.startswith("--")), None):
+            passed.add(opt)
+    return passed
+
+
+def _validate_flags_for_target(deployment_target: str, passed_flags: set[str]) -> None:
+    """Reject flags that the deployment target does not support."""
+    rejected = [
+        (flag, targets, hint)
+        for flag, targets, hint in _TARGET_ONLY_FLAGS
+        if flag in passed_flags and deployment_target not in targets
+    ]
+    if not rejected:
         return
+    # Report the first rejected flag together with any others that share its
+    # supported targets and hint, e.g. "--cpu, --memory are only supported ...".
+    _, targets, hint = rejected[0]
+    flags = [flag for flag, t, h in rejected if (t, h) == (targets, hint)]
+    raise click.ClickException(
+        _unsupported_flags_message(flags, targets, hint, deployment_target)
+    )
 
-    from rich.table import Table
 
-    from google.agents.cli._output import Console
-
-    table = Table(title="GKE Deployments")
-    table.add_column("Name", style="bold")
-    table.add_column("Ready")
-    table.add_column("Namespace")
-    table.add_column("Created")
-
-    for dep in items:
-        metadata = dep.get("metadata", {})
-        status = dep.get("status", {})
-        name = metadata.get("name", "—")
-        namespace = metadata.get("namespace", "—")
-        ready = f"{status.get('readyReplicas', 0)}/{status.get('replicas', 0)}"
-        created = metadata.get("creationTimestamp", "—")[:16].replace("T", " ")
-        table.add_row(name, ready, namespace, created)
-
-    console = Console()
-    console.print()
-    console.print(table)
+def _unsupported_flags_message(
+    flags: list[str], targets: tuple[str, ...], hint: str, deployment_target: str
+) -> str:
+    """'<flags> is/are only supported for <targets> deployments (current target: <t>).'"""
+    names = [_TARGET_DISPLAY_NAMES[t] for t in targets]
+    supported = (
+        names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+    )
+    verb = "is" if len(flags) == 1 else "are"
+    message = (
+        f"{', '.join(flags)} {verb} only supported for {supported} deployments "
+        f"(current target: {deployment_target})."
+    )
+    return f"{message}\n  {hint}" if hint else message

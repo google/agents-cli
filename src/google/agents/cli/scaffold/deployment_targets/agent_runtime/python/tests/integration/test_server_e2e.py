@@ -208,20 +208,34 @@ def test_a2a_chat_stream(server_fixture: subprocess.Popen[str]) -> None:
 
 def test_agent_card(server_fixture: subprocess.Popen[str]) -> None:
     """Test that the A2A agent card is served at the well-known URI."""
-    response = requests.get(AGENT_CARD_URL, timeout=10)
-    assert response.status_code == 200, f"A2A endpoint returned {response.status_code}"
+    for _ in range(3):
+        response = requests.get(AGENT_CARD_URL, timeout=10)
+        assert response.status_code == 200, (
+            f"A2A endpoint returned {response.status_code}"
+        )
 
-    served_agent_card = response.json()
-    # supportedInterfaces is the A2A 1.0 marker (replaces url/preferredTransport).
-    for field in (
-        "name",
-        "description",
-        "skills",
-        "capabilities",
-        "version",
-        "supportedInterfaces",
-    ):
-        assert field in served_agent_card, f"Missing field in agent card: {field}"
+        served_agent_card = response.json()
+        # supportedInterfaces is the A2A 1.0 marker (replaces url/preferredTransport).
+        for field in (
+            "name",
+            "description",
+            "skills",
+            "capabilities",
+            "version",
+            "supportedInterfaces",
+        ):
+            assert field in served_agent_card, f"Missing field in agent card: {field}"
+
+        interfaces = served_agent_card.get("supportedInterfaces", [])
+        v03_interfaces = [
+            i
+            for i in interfaces
+            if i.get("protocolBinding") == "JSONRPC"
+            and i.get("protocolVersion") == "0.3"
+        ]
+        assert len(v03_interfaces) == 1, (
+            f"Expected exactly one v0.3 interface, found {len(v03_interfaces)}"
+        )
 
 
 def test_reasoning_engine_stream(server_fixture: subprocess.Popen[str]) -> None:

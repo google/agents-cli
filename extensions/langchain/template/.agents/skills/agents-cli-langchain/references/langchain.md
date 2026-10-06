@@ -29,7 +29,7 @@ Wrap them in a `StateGraph` node if you need to bring one along.
 when you can:
 
 ```bash
-agents-cli create my-lc-agent --agent google/agents-cli/extensions/langchain/template@v1.8.0 -d cloud_run --cicd-runner github_actions
+agents-cli create my-lc-agent --agent google/agents-cli/extensions/langchain/template@v1.9.0 -d cloud_run --cicd-runner github_actions
 ```
 
 For a project that skipped them, `agents-cli scaffold enhance -d cloud_run
@@ -78,7 +78,7 @@ AGENTS_CLI_DISABLE_OVERRIDES=1 agents-cli run --url https://<service-url> --mode
 ## Journey
 
 ```bash
-agents-cli create my-lc-agent --agent google/agents-cli/extensions/langchain/template@v1.8.0 -d cloud_run
+agents-cli create my-lc-agent --agent google/agents-cli/extensions/langchain/template@v1.9.0 -d cloud_run
 cd my-lc-agent && agents-cli install
 agents-cli run "hello"                     # in-process graph invocation
 agents-cli eval generate --dataset tests/eval/datasets/basic-dataset.json -o tests/eval/output/

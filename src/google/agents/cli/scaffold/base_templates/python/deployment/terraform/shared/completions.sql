@@ -34,6 +34,9 @@ WITH log_refs AS (
     labels.gen_ai_usage_input_tokens AS usage_input_tokens,
     labels.gen_ai_usage_output_tokens AS usage_output_tokens,
     labels.gen_ai_agent_name AS agent_name,
+    -- Terraform sets the table schema only at creation, so older tables may lack
+    -- service_version; JSON extraction returns NULL instead of failing the view.
+    JSON_VALUE(TO_JSON_STRING(labels), '$.service_version') AS service_version,
     labels.gen_ai_response_finish_reasons AS finish_reasons
   FROM `${project_id}.${dataset_id}.${genai_logs_table}`
   WHERE labels.gen_ai_input_messages_ref IS NOT NULL
@@ -51,6 +54,7 @@ unpivoted_refs AS (
     usage_input_tokens,
     usage_output_tokens,
     agent_name,
+    service_version,
     finish_reasons,
     input_ref AS messages_ref_uri,
     'input' AS message_type
@@ -68,6 +72,7 @@ unpivoted_refs AS (
     usage_input_tokens,
     usage_output_tokens,
     agent_name,
+    service_version,
     finish_reasons,
     output_ref AS messages_ref_uri,
     'output' AS message_type
@@ -86,6 +91,7 @@ joined_data AS (
     lr.usage_input_tokens,
     lr.usage_output_tokens,
     lr.agent_name,
+    lr.service_version,
     lr.finish_reasons,
     lr.messages_ref_uri,
     lr.message_type,
@@ -109,6 +115,7 @@ flattened AS (
     usage_input_tokens,
     usage_output_tokens,
     agent_name,
+    service_version,
     finish_reasons,
     messages_ref_uri,
     message_type,
@@ -188,6 +195,9 @@ SELECT
   usage_output_tokens,
   agent_name,
   finish_reasons,
+
+  -- Deployment revision from OTel resource attribute service.version; NULL when unset by the deployment.
+  service_version,
 
   -- Additional metadata
   uri,

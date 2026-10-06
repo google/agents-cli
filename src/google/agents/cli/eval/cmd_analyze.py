@@ -24,7 +24,7 @@ from pathlib import Path
 
 import agentplatform
 import click
-from agentplatform._genai import _evals_visualization
+from agentplatform._genai import _evals_visualization  # noqa: TID251 - b/512125999
 from rich.table import Table
 
 from google.agents.cli._agent_platform import AgentPlatformClient

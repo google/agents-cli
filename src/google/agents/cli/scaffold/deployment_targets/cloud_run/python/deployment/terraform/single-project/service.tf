@@ -124,7 +124,7 @@ resource "google_cloud_run_v2_service" "app" {
       }
 
       env {
-        name  = "GOOGLE_GENAI_USE_VERTEXAI"
+        name  = "GOOGLE_GENAI_USE_ENTERPRISE"
         value = "True"
       }
 

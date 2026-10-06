@@ -4,7 +4,7 @@
 
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
-| `--agent` | `-a` | `adk` | Agent template — local name (`adk` for Python, `adk_go` for Go), local path (`local@/path`), adk-samples shortcut (`adk@<name>`, legacy `python/agents/` tree only), or remote Git URL |
+| `--agent` | `-a` | `adk` | Agent template — local name (`adk` for Python, `adk_go` for Go), local path (`local@/path`), or remote Git URL |
 | `--deployment-target` | `-d` | `agent_runtime` | Deployment target (`agent_runtime`, `cloud_run`, `gke`, `none`) |
 | `--region` | | `us-east1` | GCP region |
 | `--prototype` | `-p` | off | Skip CI/CD and Terraform (recommended for first pass) |

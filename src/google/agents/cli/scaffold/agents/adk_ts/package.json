@@ -23,8 +23,8 @@
     "vitest": "^4.1.11"
   },
   "dependencies": {
-    "@google/adk": "^0.3.0",
-    "@google/adk-devtools": "^0.3.0",
+    "@google/adk": "^2.2.0",
+    "@google/adk-devtools": "^2.2.0",
     "zod": "^4.2.1"
   },
   "overrides": {

@@ -16,12 +16,12 @@
 
 from __future__ import annotations
 
-from agentplatform._genai.types import common
-from agentplatform._genai.types import evals as evals_types
 from google.genai import types as genai_types
 
+from google.agents.cli._agent_platform_types import types
 
-def strip_thought_signatures(events: list[evals_types.AgentEvent]) -> None:
+
+def strip_thought_signatures(events: list[types.evals.AgentEvent]) -> None:
     """Remove thought_signature from every event's content parts."""
     for event in events:
         if event.content and event.content.parts:
@@ -29,7 +29,7 @@ def strip_thought_signatures(events: list[evals_types.AgentEvent]) -> None:
                 part.thought_signature = None
 
 
-def rewrite_model_author_events(case: common.EvalCase, root_agent_name: str) -> None:
+def rewrite_model_author_events(case: types.EvalCase, root_agent_name: str) -> None:
     """Rewrite events with author=='model' to use root_agent_name."""
     if not case.agent_data:
         return
@@ -40,7 +40,7 @@ def rewrite_model_author_events(case: common.EvalCase, root_agent_name: str) -> 
 
 
 def final_response_content_from_events(
-    events: list[evals_types.AgentEvent],
+    events: list[types.evals.AgentEvent],
 ) -> genai_types.Content | None:
     """Extract the final agent text response from a list of events.
 
@@ -76,7 +76,7 @@ def raise_if_error(event: dict) -> None:
         )
 
 
-def parse_content_event(event: dict) -> evals_types.AgentEvent | None:
+def parse_content_event(event: dict) -> types.evals.AgentEvent | None:
     """Parse an agent event into an ``AgentEvent``, or raise.
 
     Used by both transports. Raises when the event signals a failure, is
@@ -93,7 +93,7 @@ def parse_content_event(event: dict) -> evals_types.AgentEvent | None:
     if not content and not state_delta:
         return None
 
-    return evals_types.AgentEvent(
+    return types.evals.AgentEvent(
         author=event.get("author"),
         content=content or None,
         event_time=event.get("timestamp") or None,
@@ -101,7 +101,7 @@ def parse_content_event(event: dict) -> evals_types.AgentEvent | None:
     )
 
 
-def to_adk_event_payload(event: evals_types.AgentEvent) -> dict:
+def to_adk_event_payload(event: types.evals.AgentEvent) -> dict:
     """Serialize a seeded prior event into ADK's ``Event`` wire shape.
 
     ADK reads a state delta from ``actions.state_delta`` and ignores unknown

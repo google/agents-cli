@@ -124,35 +124,9 @@ class _MainGroup(LazyGroup):
         if not extension_set.commands:
             return
 
-        applied: list[str] = []
         for name, resolved in extension_set.commands.items():
-            if self._install(name, resolved):
-                applied.append(name)
-            applied.extend(self._mirror_onto_aliases(name, resolved, extension_set))
-
-        if applied:
-            # Name the source (extension + scope) of each applied command so it is
-            # always visible WHICH extension is taking over a command — project
-            # scope means an extension committed to / auto-loaded from this repo.
-            def _detail(name: str) -> str:
-                r = extension_set.commands.get(name)
-                if r is None:
-                    return name
-                # A blocked command is claimed but will refuse to run, so don't
-                # report it as though the extension's vector is in play.
-                state = " BLOCKED" if r.blocked_requires else ""
-                return f"{name} [{r.extension_name}/{r.scope}{state}]"
-
-            details = [_detail(n) for n in sorted(applied)]
-            # Logged at WARNING (not INFO) so the takeover is visible by
-            # default: auto-loaded project-scope extensions run with the same
-            # trust as the repo you're in, and naming each override's source
-            # is the compensating control for that (no silent takeover).
-            logging.warning(
-                "agents-cli: applying %d extension command(s): %s",
-                len(applied),
-                ", ".join(details),
-            )
+            self._install(name, resolved)
+            self._mirror_onto_aliases(name, resolved, extension_set)
 
     def _mirror_onto_aliases(
         self, dotted: str, resolved: ResolvedCommand, extension_set: ExtensionSet

@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Build stage
-FROM node:20-slim AS builder
+# Build stage. Uses the full image because installing native dependencies
+# (e.g. better-sqlite3, pulled in by @google/adk-devtools) runs node-gyp, which
+# needs python3 and make; the slim image has neither.
+FROM node:22 AS builder
 
 WORKDIR /workspace
 
@@ -24,16 +26,16 @@ RUN npm ci
 # Copy source and build config
 COPY {{cookiecutter.agent_directory}}/ ./{{cookiecutter.agent_directory}}/
 COPY tsconfig.json ./
-RUN npm run build
+RUN npm run build && npm prune --omit=dev
 
-# Runtime stage
-FROM node:20-slim AS runtime
+# Runtime stage (same Debian base as node:22, so the installed modules are compatible)
+FROM node:22-slim AS runtime
 
 WORKDIR /workspace
 
-# Copy package files and install production deps only
+# Copy package files and production deps installed in the build stage
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+COPY --from=builder /workspace/node_modules ./node_modules
 
 # Copy built application
 COPY --from=builder /workspace/dist ./dist
@@ -62,5 +64,6 @@ ENV NODE_EXTRA_CA_CERTS=${AGENT_GATEWAY_ROOT_CERTIFICATES:+/usr/local/share/ca-c
 
 EXPOSE 8080
 
-# Use ADK devtools api_server with compiled JavaScript
-CMD ["npx", "@google/adk-devtools", "api_server", "dist/agent.js", "--port", "8080"]
+# Use ADK devtools api_server with compiled JavaScript. It binds to localhost by
+# default, which is unreachable from outside the container.
+CMD ["npx", "@google/adk-devtools", "api_server", "dist/agent.js", "--host", "0.0.0.0", "--port", "8080"]

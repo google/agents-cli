@@ -15,14 +15,12 @@
 import logging
 
 import click
-from agentplatform._genai.types.common import (
-    EvaluationDataset,
-)
 from rich.table import Table
 
 import google.agents.cli._gcp_project as _gcp_project
 import google.agents.cli._project as _project
 from google.agents.cli._agent_platform import AgentPlatformClient
+from google.agents.cli._agent_platform_types import types
 from google.agents.cli._output import Console
 from google.agents.cli.eval import _paths
 from google.agents.cli.eval.eval_utils import (
@@ -103,7 +101,7 @@ def cmd_submit(
     try:
         with open(dataset, encoding="utf-8") as f:
             data = f.read()
-            ds = EvaluationDataset.model_validate_json(data)
+            ds = types.EvaluationDataset.model_validate_json(data)
     except Exception as e:
         raise click.ClickException("Failed to load evaluation dataset.") from e
 

@@ -62,6 +62,11 @@ def run_override(
     resolved: ResolvedCommand, argv: list[str], *, display_path: str
 ) -> None:
     """Run a resolved override's vector, exiting with its code on failure."""
+    if resolved.contribution.kind == "override":
+        click.echo(
+            f"running {display_path!r} via extension {resolved.extension_name!r} ({resolved.scope} scope)",
+            err=True,
+        )
     cwd = find_project_root() or Path.cwd()
     try:
         code = run_extension_command(
@@ -177,6 +182,11 @@ def make_override_command(
     )
     @click.argument("extra_args", nargs=-1, type=click.UNPROCESSED)
     def _cmd(extra_args: tuple[str, ...]) -> None:
+        if contribution.kind == "override":
+            click.echo(
+                f"running {display_path!r} via extension {extension_name!r} ({scope} scope)",
+                err=True,
+            )
         cwd = find_project_root() or Path.cwd()
         try:
             code = run_extension_command(

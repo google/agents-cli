@@ -163,7 +163,7 @@ class TestGradeContract:
         """Drift guard against the built-in: `eval grade` loads a trace with this
         model (see cmd_grade.py), so a shape the service would reject fails here.
         """
-        from agentplatform._genai.types.common import EvaluationDataset
+        from agentplatform import types
 
         mod = _load()
         dataset = {
@@ -171,7 +171,7 @@ class TestGradeContract:
         }
         out = mod.generate_traces(dataset, "bot", lambda p: "yo")
 
-        case = EvaluationDataset.model_validate(out).eval_cases[0]
+        case = types.EvaluationDataset.model_validate(out).eval_cases[0]
         assert case.agent_data.turns[0].turn_index == 0
         assert case.responses[0].response.parts[0].text == "yo"
 

@@ -28,9 +28,6 @@ class Experiment(NamedTuple):
 _REGISTRY: dict[str, Experiment] = {
     # Hides the `build` command until Go (compiled-language) support launches.
     "build_command": Experiment("build_command", bool, True),
-    # Gates CLI usage telemetry (see _telemetry.py). Off by default
-    # during validation. Users can opt out via DO_NOT_TRACK / AGENTS_CLI_TELEMETRY.
-    "cli_telemetry": Experiment("cli_telemetry", bool, False),
 }
 
 

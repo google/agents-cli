@@ -13,7 +13,7 @@ description: >
 metadata:
   author: Google
   license: Apache-2.0
-  version: 1.8.0
+  version: 1.9.0
   requires:
     bins:
       - agents-cli
@@ -37,6 +37,7 @@ For deeper details, consult these reference files in `references/`:
 - **`batch-inference.md`** — BigQuery Remote Function trigger; for Pub/Sub / Eventarc on ADK see `/google-agents-cli-adk-code`
 - **`cicd-pipeline.md`** — Full CI/CD pipeline setup, `infra cicd` flags, runner comparison, WIF auth, pipeline stages
 - **`testing-deployed-agents.md`** — Testing instructions per deployment target, curl examples, load tests
+- **`cmek.md`** — Customer-managed encryption keys on Agent Runtime: key grants, `deploy --key` for dev, Terraform edits for staging/prod
 
 > **Observability:** See the `/google-agents-cli-observability` skill for Cloud Trace, prompt-response logging, BigQuery Analytics, and third-party integrations.
 
@@ -116,6 +117,7 @@ agents-cli infra single-project --apply
 | `--dns-peering-network` | VPC network name in the target project for DNS peering (requires `--network-attachment`) | Agent Runtime |
 | `--agent-gateway-egress` | Bind the agent to an [Agent Gateway](https://docs.cloud.google.com/gemini-enterprise-agent-platform/govern/gateways/agent-gateway-overview) governing outbound traffic. Full resource name of a gateway with `governedAccessPath=AGENT_TO_ANYWHERE`. Empty value unbinds; omit to leave unchanged. See [Agent Gateway](#agent-gateway) | Agent Runtime |
 | `--agent-gateway-ingress` | Bind the agent to an Agent Gateway governing inbound traffic. Full resource name of a gateway with `governedAccessPath=CLIENT_TO_AGENT`. Empty value unbinds; omit to leave unchanged | Agent Runtime |
+| `--key` | Cloud KMS key for customer-managed encryption (CMEK), as a full `projects/PROJECT/locations/REGION/keyRings/RING/cryptoKeys/KEY` name. Set on create only; for dev deployments (staging/prod set the key in Terraform). See [Customer-managed encryption](#customer-managed-encryption-cmek) | Agent Runtime |
 | `--memory` | Memory limit (default: `4Gi`) | Agent Runtime, Cloud Run |
 | `--cpu` | CPU limit (default: `1`) | Agent Runtime, Cloud Run |
 | `--min-instances` | Minimum number of instances (default: `0`, i.e. scale to zero; the generated Terraform uses `1`) | Agent Runtime, Cloud Run |
@@ -410,6 +412,13 @@ keeps it. Deploying with `--agent-gateway-egress` against a Dockerfile that lack
 fails with a pointer to the command above; `--no-agent-gateway` removes the setup again.
 
 Background: [Agent Gateway overview](https://docs.cloud.google.com/gemini-enterprise-agent-platform/govern/gateways/agent-gateway-overview).
+
+## Customer-managed encryption (CMEK)
+
+An Agent Runtime agent can be encrypted with your Cloud KMS key. The key is fixed at creation,
+so set it where the agent is created: `deploy --key` for dev deployments, or the Terraform files
+for staging/prod (`infra cicd`) and `infra single-project`; `--key` cannot add a key to an agent
+Terraform created. Required key grants and the Terraform edits: `references/cmek.md`.
 
 ## Semantic Governance
 

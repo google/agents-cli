@@ -169,10 +169,7 @@ See the [contributing guide](CONTRIBUTING.md) for details.
 
 ## Telemetry
 
-> **Note:** Telemetry is experimental and off by default. It only runs when
-> enabled with `AGENTS_CLI_EXPERIMENTS='{"cli_telemetry": true}'`.
-
-`agents-cli` can emit a single usage signal per command invocation to help
+By default, `agents-cli` emits a single usage signal per command invocation to help
 improve the tool and better understand how it's used. Each signal
 is a structured log entry written to **your own Google Cloud project**:
 `GOOGLE_CLOUD_PROJECT`, or else the default project of your Application Default

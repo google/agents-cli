@@ -52,7 +52,7 @@ resource "google_vertex_ai_reasoning_engine" "app" {
       }
 
       env {
-        name  = "GOOGLE_GENAI_USE_VERTEXAI"
+        name  = "{% if cookiecutter.language == "python" %}GOOGLE_GENAI_USE_ENTERPRISE{% else %}GOOGLE_GENAI_USE_VERTEXAI{% endif %}"
         value = "True"
       }
 

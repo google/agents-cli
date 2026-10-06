@@ -24,9 +24,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import click
-from agentplatform import types
-from agentplatform._genai.types import common
-from agentplatform._genai.types import evals as evals_types
 from google.genai import types as genai_types
 
 from google.agents.cli._adk_client import (
@@ -35,6 +32,7 @@ from google.agents.cli._adk_client import (
     fetch_app_info,
     run_sse,
 )
+from google.agents.cli._agent_platform_types import types
 from google.agents.cli._modes import MODE_ADK, MODE_ADK_LIVE
 from google.agents.cli._output import Console
 from google.agents.cli._project import (
@@ -65,8 +63,8 @@ _FALLBACK_ROOT_AGENT_NAME = "root_agent"
 
 
 def split_case_history(
-    case: common.EvalCase,
-) -> tuple[list[evals_types.AgentEvent], genai_types.Content]:
+    case: types.EvalCase,
+) -> tuple[list[types.evals.AgentEvent], genai_types.Content]:
     """Split a case into prior events and user message to send.
 
     A state delta on the trailing event is kept as a content-less prior event,
@@ -85,7 +83,7 @@ def split_case_history(
     if case.prompt:
         return [], case.prompt
 
-    prior_events: list[evals_types.AgentEvent] = []
+    prior_events: list[types.evals.AgentEvent] = []
     for turn in turns:
         prior_events.extend(turn.events or [])
     if not prior_events or prior_events[-1].author != "user":
@@ -103,11 +101,11 @@ def split_case_history(
 
 
 def merge_events_into_case(
-    case: common.EvalCase,
-    new_events: list[evals_types.AgentEvent],
+    case: types.EvalCase,
+    new_events: list[types.evals.AgentEvent],
     *,
-    agents_map: dict[str, evals_types.AgentConfig],
-) -> common.EvalCase:
+    agents_map: dict[str, types.evals.AgentConfig],
+) -> types.EvalCase:
     """Merge new_events (from /run_sse) into case and return a new case.
 
     new_events must be non-empty.
@@ -127,19 +125,19 @@ def merge_events_into_case(
     merged = case.model_copy(deep=True)
 
     if merged.agent_data is None:
-        merged = merged.model_copy(update={"agent_data": evals_types.AgentData(turns=[])})
+        merged = merged.model_copy(update={"agent_data": types.evals.AgentData(turns=[])})
     agent_data = merged.agent_data
     assert agent_data is not None
 
     if agents_map:
         agent_data.agents = agents_map
 
-    turns: list[evals_types.ConversationTurn] = agent_data.turns or []
+    turns: list[types.evals.ConversationTurn] = agent_data.turns or []
     if turns:
         turns[-1].events = list((turns[-1].events or []) + list(new_events))
     else:
         turns.append(
-            evals_types.ConversationTurn(
+            types.evals.ConversationTurn(
                 turn_index=0, turn_id="turn_0", events=list(new_events)
             )
         )
@@ -150,22 +148,22 @@ def merge_events_into_case(
         if merged.responses is None:
             merged = merged.model_copy(update={"responses": []})
         assert merged.responses is not None
-        merged.responses.append(common.ResponseCandidate(response=final_response))
+        merged.responses.append(types.ResponseCandidate(response=final_response))
 
     return merged
 
 
 def run_case(
     *,
-    case: common.EvalCase,
+    case: types.EvalCase,
     base_url: str,
     app_name: str,
     headers: dict,
     root_agent_name: str,
-    agents_map: dict[str, evals_types.AgentConfig],
+    agents_map: dict[str, types.evals.AgentConfig],
     user_id: str = "eval-cli-user",
     live: bool,
-) -> tuple[common.EvalCase, str | None]:
+) -> tuple[types.EvalCase, str | None]:
     """Run one eval case against a running ADK server.
 
     Returns (merged_case, None) on success, (original_case, error_msg)
@@ -259,7 +257,7 @@ def _resolve_agents_metadata(url: str, app_name: str, headers: dict) -> tuple[st
     # ADK's /app-info only recurses into LlmAgent sub-agents, so every entry
     # is guaranteed to be an LlmAgent.
     agents_map = {
-        agent_id: evals_types.AgentConfig(
+        agent_id: types.evals.AgentConfig(
             agent_id=agent_id,
             agent_type="LlmAgent",
             description=info.get("description"),
@@ -276,15 +274,15 @@ def _resolve_agents_metadata(url: str, app_name: str, headers: dict) -> tuple[st
 
 def _dispatch_cases(
     *,
-    eval_cases: list[common.EvalCase],
+    eval_cases: list[types.EvalCase],
     base_url: str,
     app_name: str,
     headers: dict,
     root_agent_name: str,
-    agents_map: dict[str, evals_types.AgentConfig],
+    agents_map: dict[str, types.evals.AgentConfig],
     concurrency: int,
     live: bool,
-) -> tuple[list[common.EvalCase], list[tuple[int, str]]]:
+) -> tuple[list[types.EvalCase], list[tuple[int, str]]]:
     """Run all eval_cases in parallel over the selected transport.
 
     Returns (merged_successes, failures) where merged_successes preserves
@@ -292,12 +290,12 @@ def _dispatch_cases(
     (case_index, err_msg) tuples. Per-case errors are recorded -- one
     failing case does not abort the run.
     """
-    merged: list[common.EvalCase | None] = [None] * len(eval_cases)
+    merged: list[types.EvalCase | None] = [None] * len(eval_cases)
     failures: list[tuple[int, str]] = []
 
     def _submit(
-        index: int, case: common.EvalCase
-    ) -> tuple[int, common.EvalCase, str | None]:
+        index: int, case: types.EvalCase
+    ) -> tuple[int, types.EvalCase, str | None]:
         merged_case, err = run_case(
             case=case,
             base_url=base_url,
@@ -364,7 +362,7 @@ def _run_cases(
         )
 
     try:
-        typed_cases = [common.EvalCase.model_validate(c) for c in eval_cases]
+        typed_cases = [types.EvalCase.model_validate(c) for c in eval_cases]
     except Exception as exc:
         raise click.ClickException(
             f"Dataset contains a malformed eval case: {type(exc).__name__}: {exc}"

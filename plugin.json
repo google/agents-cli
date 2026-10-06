@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "google-agents-cli",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "Scaffold, develop, evaluate, and deploy AI agents with Google ADK. Bundles skills for the agent development lifecycle.",
   "author": { "name": "Google LLC" },
   "homepage": "https://github.com/google/agents-cli",

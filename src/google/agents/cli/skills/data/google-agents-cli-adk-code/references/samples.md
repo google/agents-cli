@@ -20,9 +20,6 @@ git sparse-checkout add core/python/<recipe>
 cat core/python/<recipe>/AGENTS.md
 ```
 
-(The `--agent adk@<name>` scaffold shortcut reaches only the legacy `python/agents/` tree, not
-`core/`.)
-
 ## Topic → recipe
 
 Capabilities below are **not** scaffold flags — they come from studying a recipe and adapting it.

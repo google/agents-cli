@@ -73,5 +73,21 @@
         ]
       }
     ]
+  },
+  {
+    "name": "otel", "type": "RECORD", "mode": "NULLABLE",
+    "fields": [
+      {
+        "name": "resource", "type": "RECORD", "mode": "NULLABLE",
+        "fields": [
+          {
+            "name": "attributes", "type": "RECORD", "mode": "NULLABLE",
+            "fields": [
+              { "name": "service_version", "type": "STRING", "mode": "NULLABLE" }
+            ]
+          }
+        ]
+      }
+    ]
   }
 ]

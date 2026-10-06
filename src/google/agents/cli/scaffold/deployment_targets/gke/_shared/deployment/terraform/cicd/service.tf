@@ -426,7 +426,7 @@ resource "kubernetes_deployment_v1" "app_staging" {
           }
 
           env {
-            name  = "GOOGLE_GENAI_USE_VERTEXAI"
+            name  = "{% if cookiecutter.language == "python" %}GOOGLE_GENAI_USE_ENTERPRISE{% else %}GOOGLE_GENAI_USE_VERTEXAI{% endif %}"
             value = "True"
           }
 {%- if cookiecutter.session_type == "cloud_sql" %}
@@ -777,7 +777,7 @@ resource "kubernetes_deployment_v1" "app_prod" {
           }
 
           env {
-            name  = "GOOGLE_GENAI_USE_VERTEXAI"
+            name  = "{% if cookiecutter.language == "python" %}GOOGLE_GENAI_USE_ENTERPRISE{% else %}GOOGLE_GENAI_USE_VERTEXAI{% endif %}"
             value = "True"
           }
 {%- if cookiecutter.session_type == "cloud_sql" %}

@@ -32,7 +32,8 @@ This project is organized as follows:
 ## Requirements
 
 Before you begin, ensure you have:
-- **Node.js 20+**: JavaScript runtime (used for all dependencies in this project) - [Install](https://nodejs.org/)
+- **Node.js 22.17+**: JavaScript runtime (used for all dependencies in this project) - [Install](https://nodejs.org/)
+- **Python 3.10+**: Build tool required by `node-gyp` for native dependencies (`better-sqlite3`) - [Install](https://www.python.org/)
 - **npm**: Node package manager (comes with Node.js) - add packages with `npm install <package>`
 - **Google Cloud SDK**: For GCP services - [Install](https://cloud.google.com/sdk/docs/install)
 - **Terraform**: For infrastructure deployment - [Install](https://developer.hashicorp.com/terraform/downloads)

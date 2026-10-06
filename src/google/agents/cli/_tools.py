@@ -43,7 +43,8 @@ DEFAULT_INSTALL_HINTS = {
     "npx": "Install Node.js (https://nodejs.org/en/download) and try again.",
     "npm": "Install Node.js (https://nodejs.org/en/download) and try again.",
     "gcloud": "Install the Google Cloud SDK (https://cloud.google.com/sdk/docs/install) and ensure it is in your PATH.",
-    "terraform": "Install Terraform (https://developer.hashicorp.com/terraform/downloads) and ensure it is in your PATH.",
+    "terraform": "Install Terraform (https://developer.hashicorp.com/terraform/install) and ensure it is in your PATH.",
+    "kubectl": "Install kubectl (https://kubernetes.io/docs/tasks/tools/) and ensure it is in your PATH.",
     "gh": "Install the GitHub CLI (https://cli.github.com/) and ensure it is in your PATH.",
     "git": "Install Git (https://git-scm.com/downloads) and ensure it is in your PATH.",
     "uv": "Install uv (https://docs.astral.sh/uv/getting-started/installation/) and ensure it is in your PATH.",
@@ -55,6 +56,12 @@ DEFAULT_INSTALL_HINTS = {
 
 class ToolNotFoundError(click.ClickException):
     """Raised when a required external tool is not found on PATH."""
+
+    pass
+
+
+class ToolNotExecutableError(click.ClickException):
+    """Raised when a required external tool is found but cannot be executed."""
 
     pass
 

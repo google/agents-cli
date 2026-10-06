@@ -101,9 +101,6 @@ def cmd_info(as_json: bool) -> None:
     installed_skills = get_installed_skills()
     project_root = find_project_root()
     os_info = platform.platform()
-    # Telemetry is experimental: only surface it in `info` while the experiment
-    # is active. When off, the feature is invisible here entirely.
-    show_telemetry = _telemetry.is_experiment_enabled()
     telemetry_enabled = _telemetry.is_telemetry_enabled()
     extension_set = load_extension_set(project_root, user_config_root())
     if project_root is None:
@@ -117,16 +114,14 @@ def cmd_info(as_json: bool) -> None:
                 "extensions": extension_set.command_rows(),
                 "extension_conflicts": extension_set.conflict_rows(),
                 "extension_incompatible": extension_set.incompatible_rows(),
+                "telemetry_enabled": telemetry_enabled,
             }
-            if show_telemetry:
-                payload["telemetry_enabled"] = telemetry_enabled
             emit(payload)
         else:
             click.echo(f"CLI version:        {__version__}")
             click.echo(f"CLI install path:   {_CLI_INSTALL_PATH}")
             click.echo(f"OS info:            {os_info}")
-            if show_telemetry:
-                click.echo(f"Telemetry:          {_telemetry_status(telemetry_enabled)}")
+            click.echo(f"Telemetry:          {_telemetry_status(telemetry_enabled)}")
             _print_installed_skills(installed_skills)
             _print_extensions(extension_set)
             click.echo()
@@ -154,9 +149,8 @@ def cmd_info(as_json: bool) -> None:
         "extensions": extension_set.command_rows(),
         "extension_conflicts": extension_set.conflict_rows(),
         "extension_incompatible": extension_set.incompatible_rows(),
+        "telemetry_enabled": telemetry_enabled,
     }
-    if show_telemetry:
-        info["telemetry_enabled"] = telemetry_enabled
 
     if as_json:
         emit(info)
@@ -165,8 +159,7 @@ def cmd_info(as_json: bool) -> None:
     click.echo(f"CLI version:        {__version__}")
     click.echo(f"CLI install path:   {_CLI_INSTALL_PATH}")
     click.echo(f"OS info:            {os_info}")
-    if show_telemetry:
-        click.echo(f"Telemetry:          {_telemetry_status(telemetry_enabled)}")
+    click.echo(f"Telemetry:          {_telemetry_status(telemetry_enabled)}")
     _print_installed_skills(installed_skills)
     click.echo()
     click.echo(f"Project root:       {project_root}")

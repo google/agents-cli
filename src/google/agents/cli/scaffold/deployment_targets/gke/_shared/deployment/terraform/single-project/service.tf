@@ -385,7 +385,7 @@ resource "kubernetes_deployment_v1" "app" {
           }
 
           env {
-            name  = "GOOGLE_GENAI_USE_VERTEXAI"
+            name  = "{% if cookiecutter.language == "python" %}GOOGLE_GENAI_USE_ENTERPRISE{% else %}GOOGLE_GENAI_USE_VERTEXAI{% endif %}"
             value = "True"
           }
 {%- if cookiecutter.session_type == "cloud_sql" %}

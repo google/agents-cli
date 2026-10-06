@@ -96,12 +96,10 @@ def _patch_eval_tool_introspection():
     https://github.com/googleapis/python-aiplatform/issues/6865.
     """
     try:
-        from agentplatform._genai.types.evals import AgentConfig
+        AgentConfig = types.evals.AgentConfig
     except Exception:
         return
-    AgentConfig._get_tool_declarations_from_agent = staticmethod(  # ty: ignore[invalid-assignment]
-        _safe_tool_declarations
-    )
+    AgentConfig._get_tool_declarations_from_agent = staticmethod(_safe_tool_declarations)
 
 
 def _final_response_from_invocations(invocations):

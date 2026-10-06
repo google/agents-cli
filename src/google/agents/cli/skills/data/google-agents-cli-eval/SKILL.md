@@ -12,7 +12,7 @@ description: >
 metadata:
   author: Google
   license: Apache-2.0
-  version: 1.8.0
+  version: 1.9.0
   requires:
     bins:
       - agents-cli
@@ -334,7 +334,7 @@ app = App(root_agent=root_agent, name="flight_booking_assistant")
 400 FAILED_PRECONDITION: Unsupported region for Vertex Evaluation Service: <region>
 ```
 
-`eval generate` (without the `--url` flag) and `eval dataset synthesize` run your agent locally, so they honor the agent's own `.env` — notably `GOOGLE_CLOUD_LOCATION`, which selects the model endpoint **when the agent uses Vertex AI** (`GOOGLE_GENAI_USE_VERTEXAI=true`); it's unused with a `GEMINI_API_KEY` (AI Studio). They take **no** `--region` and never override your `.env` with the manifest `region`; change the model region by editing `.env` — or, better for a single agent, pin it in code with `Gemini(model=…, client_kwargs={"location": …})`, which beats the env var and leaves it free for everything else. One caveat for `synthesize`: its scenario-generation step is a **server-side** eval call at `GOOGLE_CLOUD_LOCATION`, so keep that an eval-supported region (`global` by default) even though the agent itself could run elsewhere.
+`eval generate` (without the `--url` flag) and `eval dataset synthesize` run your agent locally, so they honor the agent's own `.env` — notably `GOOGLE_CLOUD_LOCATION`, which selects the model endpoint **when the agent uses Vertex AI** (`GOOGLE_GENAI_USE_ENTERPRISE=true`); it's unused with a `GEMINI_API_KEY` (AI Studio). They take **no** `--region` and never override your `.env` with the manifest `region`; change the model region by editing `.env` — or, better for a single agent, pin it in code with `Gemini(model=…, client_kwargs={"location": …})`, which beats the env var and leaves it free for everything else. One caveat for `synthesize`: its scenario-generation step is a **server-side** eval call at `GOOGLE_CLOUD_LOCATION`, so keep that an eval-supported region (`global` by default) even though the agent itself could run elsewhere.
 
 **No eval region fits your data-residency rules?** Fall back to **local custom metrics** — a `custom_metrics` entry with a `custom_function` (`execution: local`, the default) grades in-process with no GCP region required. You lose the managed built-in metrics, but your `custom_function` can still call an LLM judge in a compliant region itself — so LLM-as-judge grading stays available anywhere.
 

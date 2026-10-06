@@ -58,7 +58,7 @@ Set your project and location:
 ```bash
 gcloud config set project YOUR_PROJECT_ID
 export GOOGLE_CLOUD_LOCATION="us-east1"
-export GOOGLE_GENAI_USE_VERTEXAI=TRUE
+export GOOGLE_GENAI_USE_ENTERPRISE=TRUE
 ```
 
 

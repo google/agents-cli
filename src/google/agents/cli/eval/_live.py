@@ -18,8 +18,6 @@ one persistent ADK /run_live WebSocket.
 
 from __future__ import annotations
 
-from agentplatform._genai.types import common
-from agentplatform._genai.types import evals as evals_types
 from google.genai import types as genai_types
 from websockets.exceptions import ConnectionClosed
 
@@ -31,6 +29,7 @@ from google.agents.cli._adk_client import (
     is_transcription_event,
     stream_live_events,
 )
+from google.agents.cli._agent_platform_types import types
 from google.agents.cli._remote import resolve_agent_endpoints
 from google.agents.cli.eval._events import (
     final_response_content_from_events,
@@ -60,7 +59,7 @@ _LIVE_CONTROL_KEYS = (
 )
 
 
-def strip_media_parts(events: list[evals_types.AgentEvent]) -> None:
+def strip_media_parts(events: list[types.evals.AgentEvent]) -> None:
     """Drop inline audio/video parts from Live events, keeping any other parts."""
     for event in events:
         if not (event.content and event.content.parts):
@@ -77,7 +76,7 @@ def strip_media_parts(events: list[evals_types.AgentEvent]) -> None:
         ]
 
 
-def extract_user_turns(case: common.EvalCase) -> list[genai_types.Content]:
+def extract_user_turns(case: types.EvalCase) -> list[genai_types.Content]:
     """Return the ordered list of user-authored turn contents for a case.
 
     Raises ValueError if the case has neither a prompt nor any user turn.
@@ -99,7 +98,7 @@ def extract_user_turns(case: common.EvalCase) -> list[genai_types.Content]:
     return user_contents
 
 
-def has_authored_agent_turns(case: common.EvalCase) -> bool:
+def has_authored_agent_turns(case: types.EvalCase) -> bool:
     """True if any turn carries a non-user (agent/tool) authored event."""
     turns = (case.agent_data.turns if case.agent_data else None) or []
     for turn in turns:
@@ -109,7 +108,7 @@ def has_authored_agent_turns(case: common.EvalCase) -> bool:
     return False
 
 
-def input_state_events(case: common.EvalCase) -> list[evals_types.AgentEvent]:
+def input_state_events(case: types.EvalCase) -> list[types.evals.AgentEvent]:
     """Content-less copies of the user-authored state deltas to seed.
 
     A delta the agent authored is a recording of what its callbacks wrote, and
@@ -126,12 +125,12 @@ def input_state_events(case: common.EvalCase) -> list[evals_types.AgentEvent]:
     ]
 
 
-def _transcription_to_event(event: dict) -> evals_types.AgentEvent | None:
+def _transcription_to_event(event: dict) -> types.evals.AgentEvent | None:
     """Convert a *finished* Live transcription frame into a text AgentEvent, else None."""
     transcript = finished_transcript(event)
     if transcript is None:
         return None
-    return evals_types.AgentEvent(
+    return types.evals.AgentEvent(
         author=transcript.author,
         content=genai_types.Content(
             role=transcript.role, parts=[genai_types.Part(text=transcript.text)]
@@ -139,13 +138,13 @@ def _transcription_to_event(event: dict) -> evals_types.AgentEvent | None:
     )
 
 
-def normalize_live_events(raw_events: list[dict]) -> list[evals_types.AgentEvent]:
+def normalize_live_events(raw_events: list[dict]) -> list[types.evals.AgentEvent]:
     """Turn a stream of raw ``/run_live`` frames into gradable ``AgentEvent``s.
 
     Live-only. ``/run_sse`` calls :func:`parse_content_event` directly, which
     has no notion of the transcription frames handled here.
     """
-    events: list[evals_types.AgentEvent] = []
+    events: list[types.evals.AgentEvent] = []
     for event in raw_events:
         raise_if_error(event)
 
@@ -178,18 +177,18 @@ def normalize_live_events(raw_events: list[dict]) -> list[evals_types.AgentEvent
     return events
 
 
-def _user_event_for_turn(sent: genai_types.Content) -> evals_types.AgentEvent | None:
+def _user_event_for_turn(sent: genai_types.Content) -> types.evals.AgentEvent | None:
     """Build the user event for one Live turn from the turn we authored.
 
     That is ground truth for what was asked. Turns are sent as text, so
     stripping media normally leaves it intact.
     """
-    authored = evals_types.AgentEvent(author="user", content=sent)
+    authored = types.evals.AgentEvent(author="user", content=sent)
     strip_media_parts([authored])
     return authored if authored.content and authored.content.parts else None
 
 
-def _clean_live_events(raw_events: list[dict]) -> list[evals_types.AgentEvent]:
+def _clean_live_events(raw_events: list[dict]) -> list[types.evals.AgentEvent]:
     """Normalize + strip one Live turn's raw frames into gradable agent events."""
     events = normalize_live_events(raw_events)
     strip_thought_signatures(events)
@@ -199,13 +198,13 @@ def _clean_live_events(raw_events: list[dict]) -> list[evals_types.AgentEvent]:
 
 def _build_turn(
     turn_idx: int, sent: genai_types.Content, raw_events: list[dict]
-) -> evals_types.ConversationTurn:
+) -> types.evals.ConversationTurn:
     """Assemble one conversation turn from the frames the agent sent back."""
     # Some agents echo the user turn back as an input transcription. Drop those
     # so the turn doesn't record the user twice; the authored turn is used.
     agent_events = [e for e in _clean_live_events(raw_events) if e.author != "user"]
     user_event = _user_event_for_turn(sent)
-    return evals_types.ConversationTurn(
+    return types.evals.ConversationTurn(
         turn_index=turn_idx,
         turn_id=f"turn_{turn_idx}",
         events=[e for e in (user_event, *agent_events) if e is not None],
@@ -214,14 +213,14 @@ def _build_turn(
 
 def run_case_live(
     *,
-    case: common.EvalCase,
+    case: types.EvalCase,
     base_url: str,
     app_name: str,
     headers: dict,
     root_agent_name: str,
-    agents_map: dict[str, evals_types.AgentConfig],
+    agents_map: dict[str, types.evals.AgentConfig],
     user_id: str,
-) -> tuple[common.EvalCase, str | None]:
+) -> tuple[types.EvalCase, str | None]:
     """Play every user turn of a case over one persistent ``/run_live`` socket.
 
     Same contract as :func:`cmd_generate.run_case`: (merged_case, None) on
@@ -260,7 +259,7 @@ def run_case_live(
         c.model_dump(mode="json", exclude_none=True, by_alias=True) for c in user_turns
     ]
 
-    built_turns: list[evals_types.ConversationTurn] = []
+    built_turns: list[types.evals.ConversationTurn] = []
     try:
         for turn_idx, events in enumerate(
             group_turns(
@@ -306,7 +305,7 @@ def run_case_live(
     ]
 
     merged = case.model_copy(deep=True)
-    agent_data = merged.agent_data or evals_types.AgentData(turns=[])
+    agent_data = merged.agent_data or types.evals.AgentData(turns=[])
     if agents_map:
         agent_data.agents = agents_map
     agent_data.turns = built_turns
@@ -319,7 +318,7 @@ def run_case_live(
     final_response = final_response_content_from_events(all_agent_events)
     if final_response is not None:
         responses = list(merged.responses or [])
-        responses.append(common.ResponseCandidate(response=final_response))
+        responses.append(types.ResponseCandidate(response=final_response))
         merged = merged.model_copy(update={"responses": responses})
 
     return merged, None

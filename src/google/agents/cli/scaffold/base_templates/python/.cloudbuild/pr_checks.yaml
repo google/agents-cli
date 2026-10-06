@@ -50,7 +50,7 @@ options:
     - 'UV_PYTHON=3.12'
     - 'CI=true'
     # Integration tests run the agent in-process; pytest doesn't load .env.
-    - 'GOOGLE_GENAI_USE_VERTEXAI=true'
+    - 'GOOGLE_GENAI_USE_ENTERPRISE=true'
     - 'GOOGLE_CLOUD_PROJECT=${PROJECT_ID}'
     - 'GOOGLE_CLOUD_LOCATION=global'
   defaultLogsBucketBehavior: REGIONAL_USER_OWNED_BUCKET

@@ -14,6 +14,7 @@
 
 """Subprocess helpers for agents CLI."""
 
+import contextlib
 import io
 import os
 import shlex
@@ -222,6 +223,30 @@ def run_extension_command(
     return result.returncode
 
 
+@contextlib.contextmanager
+def _wrap_launch_errors(executable: str | None, args: list[str]):
+    """Turn a resolved tool's launch-time OSError into a ToolNotExecutableError.
+
+    On Windows, shutil.which doesn't check ACLs or security policies, so a
+    blocked tool resolves fine and only fails at launch, even with check=False.
+    Only ERROR_ACCESS_DENIED maps to PermissionError; policy blocks (e.g.
+    WinError 4551 from Application Control) surface as a plain OSError.
+    FileNotFoundError and unresolved executables (``executable is None``) keep
+    the raw error so callers' own handling still applies.
+    """
+    try:
+        yield
+    except FileNotFoundError:
+        raise
+    except (PermissionError, OSError) as e:
+        if executable is None:
+            raise
+        msg = f"'{executable}' was found at '{args[0]}' but could not be executed: {e}"
+        if _tools.is_windows():
+            msg += "\n  It may be blocked by a security policy (e.g. AppLocker, WDAC, Defender)."
+        raise _tools.ToolNotExecutableError(msg) from e
+
+
 def run_resolved(
     args: list[str], *, resolve_executable: bool = True, **kwargs
 ) -> subprocess.CompletedProcess:
@@ -235,6 +260,8 @@ def run_resolved(
 
     Raises:
         ToolNotFoundError: If resolve_executable is True and the tool cannot be found.
+        ToolNotExecutableError: If resolve_executable is True and the OS refuses
+            to execute the resolved tool.
 
     Returns:
         CompletedProcess instance.
@@ -242,13 +269,15 @@ def run_resolved(
     if isinstance(args, str):
         raise ValueError("args must be a list of strings, not a single string.")
 
+    executable = None
     if resolve_executable and args:
         executable = args[0]
         # Create a shallow copy to avoid modifying the original list passed by reference
         args = args.copy()
         args[0] = _tools.require_tool(executable)
 
-    return subprocess.run(args, **kwargs)
+    with _wrap_launch_errors(executable, args):
+        return subprocess.run(args, **kwargs)
 
 
 def popen_resolved(
@@ -264,6 +293,8 @@ def popen_resolved(
 
     Raises:
         ToolNotFoundError: If resolve_executable is True and the tool cannot be found.
+        ToolNotExecutableError: If resolve_executable is True and the OS refuses
+            to execute the resolved tool.
 
     Returns:
         Popen instance.
@@ -271,13 +302,15 @@ def popen_resolved(
     if isinstance(args, str):
         raise ValueError("args must be a list of strings, not a single string.")
 
+    executable = None
     if resolve_executable and args:
         executable = args[0]
         # Create a shallow copy to avoid modifying the original list passed by reference
         args = args.copy()
         args[0] = _tools.require_tool(executable)
 
-    return subprocess.Popen(args, **kwargs)
+    with _wrap_launch_errors(executable, args):
+        return subprocess.Popen(args, **kwargs)
 
 
 def popen_resolved_detached(
@@ -298,6 +331,8 @@ def popen_resolved_detached(
 
     Raises:
         ToolNotFoundError: If resolve_executable is True and the tool cannot be found.
+        ToolNotExecutableError: If resolve_executable is True and the OS refuses
+            to execute the resolved tool.
 
     Returns:
         Popen instance.

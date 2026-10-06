@@ -19,7 +19,7 @@ dependencies = [
 {#- TODO: b/542047689 - asyncpg/sqlalchemy are only used by cloud_sql sessions;
     move them to an extra that the Dockerfile installs. #}
     "asyncpg>=0.30.0,<1.0.0",
-    "sqlalchemy>=2,<3",
+    "sqlalchemy[asyncio]>=2,<3",
     "python-multipart>=0.0.20,<1.0.0",
 {%- elif cookiecutter.deployment_target == 'agent_runtime' %}
     "google-cloud-aiplatform[evaluation,agent-engines]>={{ aiplatform_floor }},<{{ aiplatform_upper }}",

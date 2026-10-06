@@ -20,14 +20,11 @@ import os
 from pathlib import Path
 
 import click
-from agentplatform._genai.types.common import (
-    EvaluationDataset,
-    EvaluationResult,
-)
 
 import google.agents.cli._gcp_project as _gcp_project
 import google.agents.cli._project as _project
 from google.agents.cli._agent_platform import AgentPlatformClient
+from google.agents.cli._agent_platform_types import types
 from google.agents.cli._output import Console
 from google.agents.cli.eval import _paths
 from google.agents.cli.eval.eval_utils import (
@@ -71,7 +68,7 @@ def _load_traces_eval_cases(traces_path: str) -> tuple[list, int]:
     for filepath in json_files:
         try:
             with open(filepath, encoding="utf-8") as f:
-                dataset_part = EvaluationDataset.model_validate_json(f.read())
+                dataset_part = types.EvaluationDataset.model_validate_json(f.read())
                 if dataset_part.eval_cases:
                     all_eval_cases.extend(dataset_part.eval_cases)
         except Exception as e:
@@ -83,7 +80,7 @@ def _load_traces_eval_cases(traces_path: str) -> tuple[list, int]:
     return all_eval_cases, len(json_files)
 
 
-def _warn_on_dropped_cases(result: EvaluationResult) -> None:
+def _warn_on_dropped_cases(result: types.EvaluationResult) -> None:
     """Name the cases that errored, which the mean and the exit status hide."""
     errored = {
         m.metric_name: m.num_cases_error
@@ -241,7 +238,7 @@ def cmd_grade(
             "rejects them.[/dim]"
         )
 
-    merged_dataset = EvaluationDataset(eval_cases=all_eval_cases)
+    merged_dataset = types.EvaluationDataset(eval_cases=all_eval_cases)
 
     try:
         if uses_eval_service:

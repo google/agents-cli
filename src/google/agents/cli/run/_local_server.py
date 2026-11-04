@@ -349,6 +349,7 @@ LANGUAGE_HANDLERS = {
     "go": _go_serve_command,
     "java": None,
     "typescript": None,
+    "kotlin": None,
 }
 
 
@@ -389,6 +390,9 @@ def _start_server(
 
     env = os.environ.copy()
     env["USE_IN_MEMORY_SESSION"] = "true" if use_in_memory_session else "false"
+    # The A2A agent card advertises APP_URL, so it must name this server, not an
+    # inherited value or the template's port-8000 fallback.
+    env["APP_URL"] = f"http://127.0.0.1:{port}"
     env.setdefault("PYTHONUNBUFFERED", "1")
     if language == "python":
         # Keep `uv run` from re-locking against a machine-wide mirror.

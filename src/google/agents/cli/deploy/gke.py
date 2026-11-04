@@ -24,6 +24,7 @@ import click
 from google.agents.cli import _tools
 from google.agents.cli._project import find_project_root
 from google.agents.cli._runner import run
+from google.agents.cli.deploy._gke_validation import validate_gke_deployment
 from google.agents.cli.deploy._utils import (
     KeyValueChanges,
     print_table,
@@ -83,8 +84,9 @@ def deploy_gke(
     ``session_type`` selects which optional resources the targeted apply must
     include; see ``_GKE_CLOUD_SQL_TARGETS``.
     """
+    uses_cloud_sql = session_type == "cloud_sql"
     deploy_targets = list(_GKE_DEPLOY_TARGETS)
-    if session_type == "cloud_sql":
+    if uses_cloud_sql:
         deploy_targets += _GKE_CLOUD_SQL_TARGETS
     _tools.require_tool("gcloud")
     _tools.require_tool("kubectl")
@@ -94,6 +96,13 @@ def deploy_gke(
         _tools.require_tool("terraform")
 
     if dry_run:
+        report = validate_gke_deployment(
+            project=project,
+            region=region,
+            cluster_name=cluster_name,
+            image=image,
+            uses_cloud_sql=uses_cloud_sql,
+        )
         if not image:
             tf_dir = SINGLE_PROJECT_TF_DIR.as_posix()
             click.echo(f"  Would run: terraform -chdir={tf_dir} init -input=false")
@@ -111,6 +120,7 @@ def deploy_gke(
         click.echo("  Would run: kubectl get svc ... (service IP)")
         click.echo("  Would run: kubectl set env ... AGENT_VERSION=... APP_URL=...")
         click.echo("  Would run: kubectl rollout status ...")
+        report.raise_if_failed()
         return
 
     # Step 1: Targeted Terraform (local dev only)

@@ -172,4 +172,5 @@ LANGUAGE_HANDLERS = {
     "go": _lint_go,
     "java": None,
     "typescript": None,
+    "kotlin": None,
 }

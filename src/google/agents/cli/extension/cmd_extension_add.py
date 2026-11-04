@@ -45,10 +45,16 @@ from google.agents.cli.extension._paths import (
     user_config_root,
     vendored_extensions_dir,
 )
-from google.agents.cli.extension._refs import RefParseError, parse_ref
+from google.agents.cli.extension._refs import (
+    LATEST,
+    UNPINNED_REF,
+    RefParseError,
+    parse_ref,
+)
 from google.agents.cli.extension._resolver import (
     ResolverError,
     materialize,
+    pin_ref,
     resolve_sha,
 )
 from google.agents.cli.extension._skills import (
@@ -163,7 +169,15 @@ def _check_command_conflicts(
         "affect your other projects."
     ),
 )
-@click.option("--ref", "ref_override", default=None, help="Pin a branch, tag, or SHA.")
+@click.option(
+    "--ref",
+    "ref_override",
+    default=None,
+    help=(
+        "Pin a branch, tag, or SHA. For a first-party extension, "
+        f"{LATEST} pins the latest release."
+    ),
+)
 @require_confirmation("Install this extension?")
 def cmd_add(
     reference: str,
@@ -177,6 +191,11 @@ def cmd_add(
         ref = parse_ref(reference, ref_override=ref_override)
     except RefParseError as e:
         raise click.ClickException(str(e)) from e
+    if ref.kind == "local" and ref_override is not None:
+        raise click.UsageError(
+            "--ref does not apply to a local@ extension: a local folder has no "
+            "branches or tags. Drop --ref."
+        )
 
     if not confirm_trust(ref, auto_approve=auto_approve):
         raise click.ClickException("Aborted: extension not trusted.")
@@ -202,8 +221,11 @@ def cmd_add(
     installed_extensions = {entry.name for entry in entries}
     other_scope = other_scope_extensions(scope, root)
     try:
+        ref = pin_ref(ref)
         sha = resolve_sha(ref)
-        name, extension_dir = materialize(ref, sha, vendored_extensions_dir(root))
+        name, extension_dir = materialize(
+            ref, sha, vendored_extensions_dir(root), ref_flag="--ref"
+        )
     except ResolverError as e:
         raise click.ClickException(str(e)) from e
 
@@ -235,7 +257,7 @@ def cmd_add(
         raise
 
     entry = ExtensionEntry(
-        name=name, source=ref.raw, ref=ref.ref or "HEAD", sha=sha, scope=scope
+        name=name, source=ref.raw, ref=ref.ref or UNPINNED_REF, sha=sha, scope=scope
     )
     try:
         upsert_extension_entry(manifest, entry)

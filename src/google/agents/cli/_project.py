@@ -35,15 +35,32 @@ DEFAULT_FRAMEWORK = "google-adk"
 # Base template used when a project does not name one. `adk` is an alias for it.
 DEFAULT_BASE_TEMPLATE = "adk_python"
 
-# Values of create_params.agent_runtime.identity_default.
 AGENT_IDENTITY = "agent_identity"
 SERVICE_ACCOUNT = "service_account"
-AGENT_RUNTIME_IDENTITY_DEFAULTS = (AGENT_IDENTITY, SERVICE_ACCOUNT)
 
-# create_params the manifest keeps in a per-target section, as flat key ->
-# (section, key in the section). The flat key is the ProjectConfig field.
+
+@dataclass(frozen=True)
+class NestedCreateParam:
+    """Where a create_param lives in the manifest, and what it may be set to."""
+
+    section: str
+    key: str
+    allowed: tuple[str, ...]
+
+
+# create_params the manifest keeps in a per-target section, keyed by the
+# ProjectConfig field they populate.
 NESTED_CREATE_PARAMS = {
-    "agent_runtime_identity_default": ("agent_runtime", "identity_default"),
+    "agent_runtime_identity_default": NestedCreateParam(
+        section="agent_runtime",
+        key="identity_default",
+        allowed=(AGENT_IDENTITY, SERVICE_ACCOUNT),
+    ),
+    "cloud_run_identity_default": NestedCreateParam(
+        section="cloud_run",
+        key="identity_default",
+        allowed=(AGENT_IDENTITY, SERVICE_ACCOUNT),
+    ),
 }
 
 # The create commands shown when a command runs outside a project, indented to
@@ -84,13 +101,22 @@ class ProjectConfig:
     agent_gateway: bool = False
     agent_guidance_filename: str = "GEMINI.md"
     agent_runtime_identity_default: str = SERVICE_ACCOUNT
+    cloud_run_identity_default: str = SERVICE_ACCOUNT
     # The ADK name of the root agent. Empty means "derive it from the project
     # name"; see resolve_root_agent_name.
     root_agent_name: str = ""
+    # create_params.app_name as written; empty when the manifest predates it.
+    # Read `app_name` instead.
+    raw_app_name: str = ""
 
     @property
     def language(self) -> str:
         return self.raw_language or "python"
+
+    @property
+    def app_name(self) -> str:
+        """The {app_name} the server serves the agent under (/apps/{app_name}/...)."""
+        return self.raw_app_name or agent_package_name(self.agent_directory)
 
     @property
     def create_params(self) -> dict[str, Any]:
@@ -103,6 +129,7 @@ class ProjectConfig:
             "agent_guidance_filename": self.agent_guidance_filename,
             "root_agent_name": self.root_agent_name,
             "agent_runtime_identity_default": self.agent_runtime_identity_default,
+            "cloud_run_identity_default": self.cloud_run_identity_default,
         }
 
     @classmethod
@@ -143,24 +170,25 @@ class ProjectConfig:
         cfg.is_a2a = create_params.get("is_a2a", cfg.is_a2a)
         cfg.agent_gateway = create_params.get("agent_gateway", cfg.agent_gateway)
         cfg.root_agent_name = create_params.get("root_agent_name") or ""
+        cfg.raw_app_name = create_params.get("app_name") or ""
 
-        for flat_key, (section, key) in NESTED_CREATE_PARAMS.items():
-            values = create_params.get(section)
+        for flat_key, param in NESTED_CREATE_PARAMS.items():
+            values = create_params.get(param.section)
             if values is None:
                 continue
             if not isinstance(values, Mapping):
                 raise click.ClickException(
-                    f"malformed create_params.{section} in {filename}"
+                    f"malformed create_params.{param.section} in {filename}"
                 )
-            if key in values:
-                setattr(cfg, flat_key, values[key])
-
-        if cfg.agent_runtime_identity_default not in AGENT_RUNTIME_IDENTITY_DEFAULTS:
-            raise click.ClickException(
-                f"invalid create_params.agent_runtime.identity_default in {filename}: "
-                f"'{cfg.agent_runtime_identity_default}' is not one of "
-                f"{', '.join(AGENT_RUNTIME_IDENTITY_DEFAULTS)}"
-            )
+            if param.key not in values:
+                continue
+            if values[param.key] not in param.allowed:
+                raise click.ClickException(
+                    f"invalid create_params.{param.section}.{param.key} in "
+                    f"{filename}: '{values[param.key]}' is not one of "
+                    f"{', '.join(param.allowed)}"
+                )
+            setattr(cfg, flat_key, values[param.key])
 
         return cfg
 

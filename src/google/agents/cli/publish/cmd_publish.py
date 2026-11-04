@@ -24,7 +24,6 @@ from urllib.parse import urlparse
 
 import click
 import requests
-from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
 from rich.table import Table
 
 from google.agents.cli._agent_platform import AgentPlatformClient
@@ -38,14 +37,18 @@ from google.agents.cli._output import (
     emit,
     programmatic_mode_error,
 )
-from google.agents.cli._project import read_project_config
-from google.agents.cli._remote import build_agent_runtime_passthrough_url
-from google.agents.cli.auth import get_access_token, get_id_token
+from google.agents.cli._project import agent_package_name, read_project_config
+from google.agents.cli._remote import (
+    build_agent_runtime_card_url,
+    build_remote_headers,
+    fetch_agent_card,
+)
+from google.agents.cli.auth import get_access_token
 from google.agents.cli.scaffold.utils.gcp import (
     get_user_agent,
     get_x_goog_api_client_header,
 )
-from google.agents.cli.scaffold.utils.language import get_language_config
+from google.agents.cli.scaffold.utils.language import a2a_base_path
 from google.agents.cli.scaffold.utils.logging import display_welcome_banner
 
 # All human-facing output (progress, tables, prompts, errors) goes to stderr so
@@ -167,64 +170,32 @@ def _build_api_headers(
     return headers
 
 
-def _requires_access_token(url: str) -> bool:
-    """Return True if the URL is a googleapis.com endpoint.
-
-    googleapis.com endpoints require access tokens. All other URLs
-    receive audience-scoped ID tokens instead.
-    """
-    parsed = urlparse(url)
-    hostname = parsed.hostname or ""
-    return hostname.endswith(".googleapis.com")
-
-
 def fetch_agent_card_from_url(url: str) -> dict | None:
-    """Fetch and return an agent card from a URL, or None on failure.
+    """Return the card as served, or None if it can't be fetched.
 
-    Uses an access token for googleapis.com URLs and an audience-scoped
-    ID token for all other URLs.
+    Gemini needs the 0.3 fields the 1.0 parse drops.
     """
     try:
-        headers = {}
-
-        if _requires_access_token(url):
-            # googleapis.com requires access tokens for API authentication
-            access_token = get_access_token()
-            headers["Authorization"] = f"Bearer {access_token}"
-        else:
-            # All other URLs get an audience-scoped ID token.
-            # ID tokens are bound to the target audience, making them safe
-            # even if the URL points to an untrusted endpoint.
-            parsed = urlparse(url)
-            if parsed.scheme != "https":
-                logging.warning(
-                    "URL uses %s:// — credentials may be exposed in transit. "
-                    "Use https:// for production endpoints.",
-                    parsed.scheme,
-                )
-            audience = f"{parsed.scheme}://{parsed.netloc}"
-            try:
-                identity_token = get_id_token(audience)
-                headers["Authorization"] = f"Bearer {identity_token}"
-            except Exception as auth_err:
-                logging.warning(
-                    "Could not obtain ID token: %s. Proceeding without "
-                    "authentication. If the endpoint requires auth, the request "
-                    "will fail.",
-                    auth_err,
-                )
-
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-
-        return response.json()
-    except requests.exceptions.HTTPError as e:
-        hint = ""
-        if e.response is not None and e.response.status_code in (401, 403):
-            hint = (
+        headers = build_remote_headers((), url)
+        scheme = urlparse(url).scheme
+        if "Authorization" in headers and scheme != "https":
+            logging.warning(
+                "URL uses %s:// — credentials may be exposed in transit. "
+                "Use https:// for production endpoints.",
+                scheme,
+            )
+        return fetch_agent_card(url, headers, timeout=10).raw
+    except requests.HTTPError as e:
+        is_auth_error = e.response is not None and e.response.status_code in (401, 403)
+        hint = (
+            (
                 " Authentication failed. Ensure you are logged in with "
                 "'gcloud auth application-default login'."
             )
+            if is_auth_error
+            else ""
+        )
+
         logging.warning("HTTP error fetching agent card from %s: %s.%s", url, e, hint)
         return None
     except Exception as e:
@@ -252,17 +223,20 @@ def construct_agent_card_url_from_metadata(
             parsed = parse_agent_runtime_id(remote_agent_runtime_id)
             if parsed:
                 location = parsed["location"]
-                # Prefer the agent_directory and language recorded at deploy
-                # time so publish works from outside the project dir; fall back
-                # to local config for metadata written before it was persisted.
-                agent_directory = metadata.get("agent_directory")
+                # Prefer the app_name and language recorded at deploy time so
+                # publish works from outside the project dir; fall back to local
+                # config for metadata written before they were persisted.
+                app_name = metadata.get("app_name")
+                if not app_name and metadata.get("agent_directory"):
+                    # Metadata from before app_name: the app was the basename.
+                    app_name = agent_package_name(metadata["agent_directory"])
                 language = metadata.get("language")
-                if not agent_directory or not language:
+                if not app_name or not language:
                     cfg = read_project_config()
                     missing = []
-                    if not agent_directory:
-                        agent_directory = cfg.agent_directory
-                        missing.append("agent_directory")
+                    if not app_name:
+                        app_name = cfg.app_name
+                        missing.append("app_name")
                     if not language:
                         language = cfg.language
                         missing.append("language")
@@ -274,22 +248,17 @@ def construct_agent_card_url_from_metadata(
                         "metadata. Missing fields: %r",
                         missing,
                     )
-                a2a_path_factory: Callable[[str], str] | None = get_language_config(
-                    language
-                ).get("a2a_base_path_factory")
-                if a2a_path_factory is None:
+                a2a_path = a2a_base_path(language, app_name)
+                if a2a_path is None:
                     logging.warning(
                         "No A2A base path is defined for language '%s'; defaulting "
                         "to the root path. The agent card URL may be wrong.",
                         language,
                     )
                     a2a_path = ""
-                else:
-                    a2a_path = a2a_path_factory(agent_directory)
-                base_url = build_agent_runtime_passthrough_url(
-                    location, remote_agent_runtime_id
+                return build_agent_runtime_card_url(
+                    location, remote_agent_runtime_id, a2a_path
                 )
-                return f"{base_url}{a2a_path}{AGENT_CARD_WELL_KNOWN_PATH}"
 
     return None
 

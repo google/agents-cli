@@ -1,0 +1,291 @@
+/* Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/* Lifecycle page widgets, built by scripts/lifecycle.js. Loaded only on /guide/lifecycle/.
+   Same rules as the rest of the site: tokens from base.css, sentence-case 13px labels,
+   no shadows, gradients or hover lifts. Green (--pass) only for a passed check; the span-kind
+   legend (yellow agent, blue model, green tool) is the one exception. */
+
+.lifecycle-anim {
+  margin: 24px 0;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: var(--page);
+  overflow: hidden;
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+.lifecycle-anim p { margin: 0; }
+
+/* shared */
+.lc-mono  { font-family: var(--code); font-size: 13px; }
+.lc-muted { color: var(--ink-3); }
+.lc-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 34px; padding: 0 14px; border-radius: 999px;
+  border: 1px solid var(--ink); background: var(--ink); color: var(--page);
+  font: 500 13px var(--sans); cursor: pointer; white-space: nowrap;
+}
+.lc-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 86%, var(--page)); }
+.lc-btn:disabled { opacity: .55; cursor: default; }
+.lc-btn--ghost { background: var(--page); color: var(--ink); border-color: var(--rule); }
+.lc-btn--ghost:hover:not(:disabled) { background: var(--page); border-color: var(--ink-3); }
+.lc-key { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; vertical-align: 0; }
+.lc-key--agent { background: var(--yellow); }
+.lc-key--model { background: var(--blue); }
+.lc-key--tool  { background: var(--green); }
+.lc-fade-in { animation: lc-fade-in .25s ease-out both; }
+@keyframes lc-fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* 1 and 8. transcript and playground */
+/* every turn is laid out from the start (hidden ones keep their space), so no min-height and no reflow */
+.lc-transcript { display: flex; flex-direction: column; }
+.lc-pending { visibility: hidden; }
+.lc-playground .lc-transcript__body { min-height: 120px; }
+.lc-playground .lc-transcript__body:empty::before { content: 'No turns yet. Send the first prompt to start the session.'; margin: auto; color: var(--ink-3); font-size: 13px; }
+/* bar on top of a widget: title on the left, status on the right */
+.lc-transcript__head, .lc-eval__head, .lc-trace__head {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 16px; border-bottom: 1px solid var(--rule); background: var(--surface-2);
+  font-size: 13px; color: var(--ink-2);
+}
+.lc-transcript__title { font-family: var(--code); font-size: 13px; color: var(--ink-2); }
+.lc-transcript__status { font-size: 13px; color: var(--ink-3); }
+.lc-transcript__body { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.lc-transcript__foot, .lc-eval__foot {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 16px; border-top: 1px solid var(--rule); background: var(--surface-2);
+  font-size: 13px; color: var(--ink-3);
+}
+.lc-row { display: flex; }
+.lc-row--right { justify-content: flex-end; }
+.lc-bubble { max-width: 80%; padding: 10px 14px; border-radius: 10px; font-size: 14px; line-height: 1.5; }
+.lc-bubble--user { background: var(--surface); color: var(--ink); }
+.lc-bubble--agent { background: var(--page); color: var(--ink); border: 1px solid var(--rule); }
+.lc-tool {
+  max-width: 90%; padding: 8px 12px; border-radius: 10px;
+  background: var(--surface-2); border: 1px solid var(--rule);
+  font-family: var(--code); font-size: 13px; line-height: 1.5;
+}
+.lc-tool__sig { color: var(--ink-2); overflow-wrap: anywhere; }
+.lc-tool__name { color: var(--ink); font-weight: 600; }
+.lc-tool__name::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 8px; background: var(--green); }
+.lc-tool__result { margin-top: 4px; color: var(--ink-2); }
+
+/* 2. the four verbs; a card is active only after the reader picks it */
+.lc-loop { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.lc-loop__grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.lc-loop__card {
+  padding: 12px 14px; border-radius: 10px; border: 1px solid var(--rule); background: var(--page);
+  font: inherit; text-align: left; color: inherit; cursor: pointer;
+}
+.lc-loop__card:hover { border-color: var(--ink-3); }
+.lc-loop__card--active, .lc-loop__card--active:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--page)); }
+.lc-loop__step { font-size: 13px; color: var(--ink-3); margin-bottom: 4px; }
+.lc-loop__verb { font-family: var(--code); font-size: 15px; font-weight: 600; color: var(--ink); margin-bottom: 2px; }
+.lc-loop__prompt { color: var(--ink-3); font-weight: 400; }
+.lc-loop__desc { font-size: 13px; color: var(--ink-2); }
+.lc-loop__foot { font-size: 13px; color: var(--ink-3); }
+
+/* 3. scaffold wizard */
+.lc-wizard { padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+.lc-wizard__head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; font-size: 13px; }
+.lc-wizard__head strong { font-size: 15px; font-weight: 600; color: var(--ink); }
+.lc-wizard__step { display: grid; grid-template-columns: 26px 1fr; gap: 12px; align-items: start; }
+.lc-wizard__num {
+  width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--surface); color: var(--ink); font: 600 13px var(--sans);
+}
+.lc-wizard__q { font-size: 15px; font-weight: 500; color: var(--ink); }
+.lc-wizard__help { font-size: 13px; color: var(--ink-3); margin: 2px 0 8px !important; }
+.lc-toggle { display: flex; flex-wrap: wrap; gap: 6px; }
+.lc-toggle__btn {
+  height: 32px; padding: 0 12px; border-radius: 999px;
+  border: 1px solid var(--rule); background: var(--page); color: var(--ink-2);
+  font: 500 13px var(--sans); cursor: pointer;
+}
+.lc-toggle__btn:hover { color: var(--ink); border-color: var(--ink-3); }
+.lc-toggle__btn--on, .lc-toggle__btn--on:hover { background: var(--ink); border-color: var(--ink); color: var(--page); }
+.lc-wizard__cmd, .lc-deploy__cmd, .lc-publish__cmd {
+  margin: 0; padding: 14px 16px; border-radius: 10px;
+  background: var(--code-background); color: var(--code-foreground);
+  font-family: var(--code); font-size: 13px; line-height: 1.6; overflow-x: auto;
+}
+.lc-wizard__cmd { white-space: pre; }
+.lc-wizard__cmd code, .lc-deploy__cmd code, .lc-publish__cmd code { background: none; padding: 0; font-size: inherit; color: inherit; }
+.lc-wizard__summary { font-size: 14px; color: var(--ink-2); }
+.lc-wizard__summary strong { color: var(--ink); font-weight: 600; }
+
+/* 4. team diagram */
+.lc-team { padding: 16px; }
+.lc-team__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; flex-wrap: wrap; font-size: 13px; }
+
+/* 5. eval-fix loop */
+.lc-eval { display: flex; flex-direction: column; }
+.lc-eval__list { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.lc-eval__card { display: flex; gap: 10px; padding: 12px; border: 1px solid var(--rule); border-radius: 10px; background: var(--page); }
+.lc-eval__dot { width: 8px; height: 8px; border-radius: 2px; margin-top: 7px; flex-shrink: 0; }
+.lc-eval__dot--pass { background: var(--pass); }
+.lc-eval__dot--fail { background: var(--red); }
+.lc-eval__main { flex: 1; min-width: 0; }
+.lc-eval__meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; overflow-wrap: anywhere; }
+.lc-eval__pill { font-size: 13px; font-weight: 500; }
+.lc-eval__pill--pass { color: var(--pass); }
+.lc-eval__pill--fail { color: color-mix(in srgb, var(--red) 85%, var(--ink)); }
+.lc-eval__prompt { margin: 4px 0 0 !important; font-size: 14px; color: var(--ink); }
+.lc-eval__judge {
+  margin-top: 8px; padding: 8px 12px; border-radius: 2px;
+  border-left: 2px solid var(--red); background: var(--surface-2);
+  font-size: 13px; color: var(--ink);
+}
+.lc-eval__judge--ok { border-left-color: var(--pass); }
+.lc-eval__judgeLabel { color: var(--ink-3); margin-right: 6px; }
+.lc-eval__chartwrap { padding: 16px; border-top: 1px solid var(--rule); }
+
+/* 6. trace */
+.lc-trace__legend { display: inline-flex; gap: 14px; font-size: 13px; color: var(--ink-3); }
+.lc-trace__row { cursor: pointer; }
+.lc-trace__detail {
+  padding: 10px 16px; min-height: 40px; font-size: 13px;
+  border-top: 1px solid var(--rule); background: var(--surface-2); color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.lc-trace__detail strong { color: var(--ink); font-weight: 600; }
+
+/* 5b. failure museum */
+.lc-failures { padding: 16px; }
+.lc-failures__head { margin-bottom: 12px; font-size: 13px; color: var(--ink-3); }
+.lc-failures__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 8px; }
+.lc-failures__card { min-width: 0; padding: 12px 14px; border-radius: 10px; background: var(--page); border: 1px solid var(--rule); }
+.lc-failures__eyebrow { font-size: 13px; color: var(--ink-3); margin-bottom: 2px !important; }
+.lc-failures__eyebrow::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; background: var(--red); }
+.prose .lc-failures__name { font-size: 15px; font-weight: 600; margin: 0 0 4px; color: var(--ink); }
+.lc-failures__what { font-size: 13px; color: var(--ink-2); margin-bottom: 8px !important; }
+.lc-failures__caught { font-size: 13px; padding-top: 8px; border-top: 1px solid var(--rule); color: var(--ink); }
+.lc-failures__caughtLabel { color: var(--ink-3); }
+
+/* 7. model compare */
+.lc-models { padding: 16px; }
+.lc-models__head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.lc-models__head strong { font-size: 15px; font-weight: 600; }
+.lc-models__pill { font-size: 13px; color: var(--ink-3); }
+.lc-models__prompt {
+  margin: 0 0 12px; padding: 10px 14px; border-radius: 10px;
+  background: var(--code-background); color: var(--code-foreground);
+  font-family: var(--code); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.lc-models__prompt code { background: transparent; padding: 0; white-space: inherit; font-size: inherit; color: inherit; }
+.lc-models__grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; align-items: stretch; }
+.lc-models__card {
+  display: flex; flex-direction: column; gap: 8px; min-width: 0; max-width: 100%; overflow: hidden;
+  padding: 12px; border-radius: 10px; background: var(--page); border: 1px solid var(--rule);
+}
+.lc-models__card > * { min-width: 0; max-width: 100%; }
+.lc-models__provider { font-size: 13px; color: var(--ink-3); }
+.lc-models__badge { font-size: 15px; font-weight: 600; color: var(--ink); }
+.lc-models__response { font-size: 13px; line-height: 1.55; flex: 1; color: var(--ink); overflow-wrap: break-word; }
+.lc-models__swap {
+  display: block; width: 100%; padding: 6px 8px; border-radius: 2px;
+  background: var(--surface); color: var(--ink-2); font-family: var(--code); font-size: 12px;
+  white-space: nowrap; overflow-x: auto; scrollbar-width: thin;
+}
+.lc-models__pass { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-2); }
+.lc-models__pass .lc-mono { font-size: 12px; }
+.lc-models__dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; background: var(--pass); flex: none; }
+.lc-models__foot { margin-top: 12px !important; font-size: 13px; }
+
+/* 9. deploy target picker */
+.lc-deploy { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.lc-deploy__grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; align-items: stretch; }
+.lc-deploy__card {
+  display: flex; flex-direction: column; gap: 4px; align-items: flex-start; min-width: 0;
+  padding: 12px 14px; border-radius: 10px; border: 1px solid var(--rule); background: var(--page);
+  color: var(--ink); text-align: left; font: inherit; cursor: pointer;
+}
+.lc-deploy__card:hover { border-color: var(--ink-3); }
+.lc-deploy__card--on, .lc-deploy__card--on:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--page)); }
+.lc-deploy__flag { font-size: 12px; color: var(--ink-3); overflow-wrap: anywhere; }
+.lc-deploy__label { font-size: 15px; font-weight: 600; }
+.lc-deploy__blurb { font-size: 13px; color: var(--ink-2); }
+.lc-deploy__cmd { white-space: pre-wrap; overflow-wrap: anywhere; }
+.lc-deploy__pipeline { padding: 12px 14px; border-radius: 10px; border: 1px solid var(--rule); }
+.lc-deploy__pipeline > p { margin: 0 0 8px !important; font-size: 13px; color: var(--ink-3); }
+.prose .lc-deploy__steps { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.prose .lc-deploy__steps > li { display: flex; align-items: flex-start; gap: 8px; margin: 0; font-size: 14px; }
+.lc-deploy__num {
+  display: inline-grid; place-items: center; flex-shrink: 0; width: 20px; height: 20px; border-radius: 50%;
+  background: var(--surface); color: var(--ink); font: 600 12px var(--sans);
+}
+.prose .lc-deploy__tool { font-size: 13px; background: var(--surface); color: var(--ink); padding: 1px 6px; border-radius: 2px; }
+.lc-deploy__what { color: var(--ink-2); }
+
+/* 10. publish card */
+.lc-publish { padding: 20px; }
+.lc-publish__eyebrow { font-size: 13px; color: var(--ink-3); margin-bottom: 4px !important; }
+.prose .lc-publish__name { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
+.lc-publish__sub { font-size: 14px; margin: 4px 0 0 !important; color: var(--ink-2); }
+.prose .lc-publish__facts {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px;
+  list-style: none; padding: 0; margin: 12px 0 0; font-size: 13px; color: var(--ink-2);
+}
+.prose .lc-publish__facts > li { margin: 0; color: var(--ink-2); }
+.lc-publish__status { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+.lc-publish__pulse { display: inline-block; width: 8px; height: 8px; border-radius: 2px; background: var(--pass); }
+.lc-publish__statusLabel { font-size: 13px; color: var(--ink); }
+.lc-publish__cmd { margin-top: 14px; white-space: pre-wrap; }
+
+/* 11. rolling eval */
+.lc-rolling { padding: 16px; }
+.lc-rolling__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; font-size: 13px; }
+.lc-rolling__live { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-2); }
+/* "live" is not "passed", so it takes the accent */
+.lc-rolling__livepulse { display: inline-block; width: 8px; height: 8px; border-radius: 2px; background: var(--accent); }
+.lc-rolling__foot { margin-top: 6px; font-size: 13px; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+
+/* SVG charts keep a readable minimum width and scroll inside the widget on narrow screens */
+.lc-trace, .lc-team, .lc-rolling { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.lc-trace > svg   { min-width: 560px; display: block; }
+.lc-team > svg    { min-width: 520px; display: block; }
+.lc-rolling > svg { min-width: 480px; display: block; }
+.lc-trace__head, .lc-team__head, .lc-rolling__head, .lc-trace__detail, .lc-rolling__foot { position: sticky; left: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .lifecycle-anim *, .lifecycle-anim *::before, .lifecycle-anim *::after { animation: none !important; transition: none !important; }
+}
+
+@media (max-width: 960px) {
+  .lc-models__grid, .lc-deploy__grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 720px) {
+  .lc-loop__grid { grid-template-columns: 1fr 1fr; }
+  .lc-wizard { padding: 14px; }
+  .prose .lc-publish__facts { grid-template-columns: 1fr; }
+  .prose .lc-publish__name { font-size: 19px; }
+  .lc-bubble { max-width: 92%; }
+}
+@media (max-width: 480px) {
+  .lc-loop__grid { grid-template-columns: 1fr; }
+}
+
+/* Six columns share the measure: commands break at spaces and skill names at their hyphens, never mid-word. */
+.prose table td code { white-space: normal; overflow-wrap: normal; }
+/* Phases table: keep columns readable on phones and scroll inside the table (display: block in docs.css), not the page. */
+@media (max-width: 760px) {
+  .prose table th, .prose table td { min-width: 9.5em; }
+  .prose table :is(th, td):first-child { min-width: 2em; }
+  .prose table :not(pre) > code { overflow-wrap: normal; }
+}

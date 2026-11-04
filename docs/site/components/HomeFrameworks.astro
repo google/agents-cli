@@ -1,0 +1,74 @@
+---
+// Copyright 2026 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+
+// "Build agents with any framework": four framework cards over one Agents CLI slab. Each card is one link (on the
+// name, stretched over the card). A pulse runs card by card down into the slab, which never changes.
+import { fwCards, fwCommands, fwTargets } from '../data/home';
+import { withBase } from '../lib/docs';
+---
+<figure class="fw" data-fw aria-label="Pick ADK, LangGraph, Claude Agent SDK or your own template; Agents CLI keeps the same create, run, eval, infra and deploy commands and deploys to Agent Runtime, Cloud Run or GKE">
+  <ul class="fw-cards">
+    {fwCards.map((c) => (
+      <li class:list={['fw-c', { 'fw-c-own': c.own }]}>
+        <span class="fw-mark" aria-hidden="true">
+          {c.logo && <img src={withBase(`/assets/logos/${c.logo}`)} alt="" width="28" height="28" loading="lazy" />}
+          {c.own && <svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M13 5v16M5 13h16" /></svg>}
+        </span>
+        <div class="fw-tx">
+          <h3 class="fw-n"><a href={withBase(c.href)}>{c.name}</a></h3>
+          <p class="fw-d">{c.line}</p>
+        </div>
+        <span class="fw-wire" aria-hidden="true"><i></i></span>
+      </li>
+    ))}
+  </ul>
+  <span class="fw-trunk" aria-hidden="true"><i></i></span>
+  <div class="fw-slab">
+    <span class="fw-sl">Agents CLI</span>
+    <ul class="fw-cmds">
+      {fwCommands.map((t, k) => <li class="fw-pill" style={`--p:${k}`}><code>{t}</code></li>)}
+    </ul>
+    <svg class="fw-arrow" viewBox="0 0 24 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 6h21M17 1.5 22 6l-5 4.5" /></svg>
+    <ul class="fw-cmds fw-dsts">
+      {fwTargets.map((t, k) => <li class="fw-pill fw-run" style={`--t:${k}`}><span class="fw-dot"></span>{t}</li>)}
+    </ul>
+  </div>
+</figure>
+<script>
+  // Once 40% is on screen, a pulse visits each card in turn (~3.2s each), looping; it pauses off-screen.
+  // Reduced motion or no JS: no .fw-anim class, so the CSS shows everything lit.
+  const root = document.querySelector<HTMLElement>('[data-fw]');
+  if (root && 'IntersectionObserver' in window && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    const cards = [...root.querySelectorAll<HTMLElement>('.fw-c')];
+    let i = 0;
+    let timer = 0;
+    const step = () => {
+      root.classList.remove('go');
+      cards.forEach((c, k) => c.classList.toggle('on', k === i));
+      void root.offsetWidth;
+      root.classList.add('go');
+      i = (i + 1) % cards.length;
+    };
+    const stop = () => { clearInterval(timer); timer = 0; root.classList.remove('go'); cards.forEach((c) => c.classList.remove('on')); };
+    root.classList.add('fw-anim');
+    new IntersectionObserver(([e]) => {
+      const r = e.intersectionRect.height;
+      const seen = r >= Math.min(e.boundingClientRect.height, innerHeight) * 0.4;
+      if (seen && !timer) { i = 0; step(); timer = window.setInterval(step, 3200); }
+      else if (!e.isIntersecting && timer) stop();
+    }, { threshold: [0, 0.2, 0.4, 0.6, 0.8, 1] }).observe(root);
+  }
+</script>

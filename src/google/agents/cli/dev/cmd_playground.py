@@ -24,7 +24,6 @@ from rich.panel import Panel
 
 from google.agents.cli._output import Console
 from google.agents.cli._project import (
-    agent_package_name,
     agents_root,
     chdir_project_root,
     read_project_config,
@@ -87,10 +86,7 @@ def _build_python_playground(
     """Build the (banner URL, command) for a Python (adk web) playground."""
     # adk web doesn't auto-select the agent — pre-fill it via ?app= so the
     # URL we print drops the user straight into their agent.
-    url = (
-        f"http://{browser_host}:{port}/dev-ui/"
-        f"?app={agent_package_name(cfg.agent_directory)}"
-    )
+    url = f"http://{browser_host}:{port}/dev-ui/?app={cfg.app_name}"
 
     args = [
         "uv",
@@ -168,6 +164,7 @@ LANGUAGE_HANDLERS = {
     "go": _build_go_playground,
     "java": None,
     "typescript": None,
+    "kotlin": None,
 }
 
 

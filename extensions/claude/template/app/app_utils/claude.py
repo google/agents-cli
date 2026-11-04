@@ -42,7 +42,7 @@ from typing import Protocol
 
 import anyio
 import claude_agent_sdk
-from claude_agent_sdk import ClaudeAgentOptions, Message
+from claude_agent_sdk import ClaudeAgentOptions, Message, MirrorErrorMessage
 from dotenv import load_dotenv
 
 from app.app_utils import bq_analytics, completions, project_settings
@@ -129,6 +129,7 @@ async def stream_turn(
             ]
             consumers = [c for c in observers if c is not None]
             error: BaseException | None = None
+            store_error: MirrorErrorMessage | None = None
             try:
                 # Call claude_agent_sdk.query via the module so the OpenTelemetry
                 # wrapper applies. aclosing stops the CLI subprocess when a turn
@@ -137,10 +138,22 @@ async def stream_turn(
                     claude_agent_sdk.query(prompt=prompt, options=options)
                 ) as stream:
                     async for message in stream:
+                        if isinstance(message, MirrorErrorMessage):
+                            store_error = store_error or message
+                            continue
                         events = parser.feed(message)
                         subagent_spans.observe(message)
                         _dispatch(events, consumers)
                         yield message
+                if store_error is not None:
+                    # The SDK carries on after a failed session store write, but
+                    # the store is now missing part of this turn, and every
+                    # later turn resumes from the store. Raised only once the
+                    # turn ends, so its result still reaches the observers.
+                    raise AgentError(
+                        "Claude agent turn failed: couldn't save its "
+                        f"transcript to the session store: {store_error.error}"
+                    )
             except BaseException as e:
                 error = e
                 raise

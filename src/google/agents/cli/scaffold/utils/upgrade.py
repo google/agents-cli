@@ -760,6 +760,7 @@ MERGE_DEPENDENCY_HANDLERS: dict[str, Callable | None] = {
     "go": merge_go_dependencies,
     "java": None,
     "typescript": None,
+    "kotlin": None,
 }
 
 # Used by --force.
@@ -768,6 +769,7 @@ UNION_DEPENDENCY_HANDLERS: dict[str, Callable | None] = {
     "go": union_go_dependencies,
     "java": None,
     "typescript": None,
+    "kotlin": None,
 }
 
 WRITE_DEPENDENCY_HANDLERS: dict[str, Callable | None] = {
@@ -775,6 +777,7 @@ WRITE_DEPENDENCY_HANDLERS: dict[str, Callable | None] = {
     "go": write_go_dependencies,
     "java": None,
     "typescript": None,
+    "kotlin": None,
 }
 
 
@@ -785,6 +788,7 @@ def update_acli_metadata(
     acli_version: str | None = None,
     remove_keys: list[str] | None = None,
     base_template: str | None = None,
+    region: str | None = None,
 ) -> bool:
     """Update specific keys in the unified agents-cli-manifest.yaml metadata file.
 
@@ -798,6 +802,7 @@ def update_acli_metadata(
         acli_version: If provided, update acli_version
         remove_keys: List of keys to remove from create_params section
         base_template: If provided, record it at the manifest top level
+        region: If provided, record it at the manifest top level
 
     Returns:
         True if the manifest was written.
@@ -817,6 +822,9 @@ def update_acli_metadata(
         if base_template is not None:
             data["base_template"] = base_template
 
+        if region is not None:
+            data["region"] = region
+
         if "create_params" not in data or not isinstance(data["create_params"], dict):
             data["create_params"] = {}
 
@@ -824,22 +832,22 @@ def update_acli_metadata(
 
         for key, val in create_params.items():
             if key in NESTED_CREATE_PARAMS:
-                section, nested_key = NESTED_CREATE_PARAMS[key]
-                if not isinstance(params.get(section), dict):
-                    params[section] = {}
-                params[section][nested_key] = val
+                param = NESTED_CREATE_PARAMS[key]
+                if not isinstance(params.get(param.section), dict):
+                    params[param.section] = {}
+                params[param.section][param.key] = val
             else:
                 params[key] = val
 
         if remove_keys:
             for key in remove_keys:
                 if key in NESTED_CREATE_PARAMS:
-                    section, nested_key = NESTED_CREATE_PARAMS[key]
-                    values = params.get(section)
+                    param = NESTED_CREATE_PARAMS[key]
+                    values = params.get(param.section)
                     if isinstance(values, dict):
-                        values.pop(nested_key, None)
+                        values.pop(param.key, None)
                         if not values:
-                            del params[section]
+                            del params[param.section]
                 else:
                     params.pop(key, None)
 

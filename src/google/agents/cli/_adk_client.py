@@ -139,9 +139,10 @@ def run_sse(
         if "charset" not in resp.headers.get("Content-Type", "").lower():
             resp.encoding = "utf-8"
         for line in resp.iter_lines(decode_unicode=True):
-            if not isinstance(line, str) or not line.startswith("data: "):
+            # The space after "data:" is optional; ADK Java's server omits it.
+            if not isinstance(line, str) or not line.startswith("data:"):
                 continue
-            data_str = line[len("data: ") :]
+            data_str = line[len("data:") :]
             try:
                 yield json.loads(data_str)
             except json.JSONDecodeError:

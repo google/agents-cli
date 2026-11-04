@@ -1,0 +1,80 @@
+---
+// Copyright 2026 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+import Base from '../layouts/Base.astro';
+import NavTree from '../components/NavTree.astro';
+import { nav, pages, loadPage, order, tabs, withBase, SITE_URL, lastUpdated } from '../lib/docs';
+import '../styles/docs.css';
+import lifecycleJs from '../scripts/lifecycle.js?url';
+import lifecycleCss from '../styles/lifecycle.css?url';
+
+export function getStaticPaths() {
+  return pages.map((p) => ({ params: { slug: p.slug.replace(/\/$/, '') } }));
+}
+const slug = Astro.params.slug + '/';
+const page = loadPage(slug);
+const i = order.findIndex((o) => o.url === page.url);
+const prev = i > 0 ? order[i - 1] : null;
+const next = i >= 0 && i < order.length - 1 ? order[i + 1] : null;
+const active = tabs.find((t) => t.urls.includes(page.url))?.label ?? '';
+const hasToc = page.toc.length > 1;
+// The lifecycle widgets are page-specific, so they load by URL instead of joining the shared bundle.
+const isLifecycle = slug === 'guide/lifecycle/';
+// The two generated reference pages get command-style headings.
+const ref = slug === 'cli/' ? 'ref ref-cli' : slug === 'reference/skills/' ? 'ref ref-skills' : '';
+// Inline code stays whole in running text (docs.css). Long spans may wrap so they never overflow the column:
+// over 36 characters at every width, over 26 on phones.
+const html = page.html.replace(/<code>([^<]{27,})<\/code>/g, (_, t) => `<code class="${t.length > 36 ? 'code-long' : 'code-mid'}">${t}</code>`);
+const updated = lastUpdated(page.source);
+const updatedText = updated && new Date(updated).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' });
+const prompt = `Use agents-cli to help me with "${page.title}". Read ${SITE_URL}${page.slug}index.md first.`;
+---
+<Base title={`${page.title} · agents-cli`} description={page.description} active={active} bodyClass={page.hideNav ? 'docs' : 'docs has-sidebar'}>
+  <Fragment slot="head">{updated && <meta property="article:modified_time" content={updated} />}</Fragment>
+  {isLifecycle && <Fragment slot="head"><link rel="stylesheet" href={lifecycleCss} /><script is:inline defer src={lifecycleJs}></script></Fragment>}
+  <div class:list={['docs-shell', { 'no-toc': !hasToc, 'no-nav': page.hideNav }]}>
+    {!page.hideNav && <aside class="sidebar" aria-label="Docs navigation">
+      <NavTree items={nav} current={page.url} />
+    </aside>}
+    <article class="doc">
+      <div class="doc-top">
+        <nav class="crumbs" aria-label="Breadcrumb">{page.trail.map((t) => <span>{t}</span>)}</nav>
+        <div class="doc-actions">
+          <button class="icon-btn doc-copy" data-copy={`url:${withBase(page.url)}index.md`} title="Copy page as Markdown" aria-label="Copy page as Markdown"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg><span data-copy-label>Copy as Markdown</span></button>
+          <details class="doc-more">
+            <summary class="icon-btn" aria-label="More page actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg></summary>
+            <div class="doc-menu">
+              <button data-copy={prompt}><span data-copy-label>Copy prompt for your coding agent</span></button>
+              <a href={withBase(page.url) + 'index.md'}>View as Markdown</a>
+              <a href={page.source}>Edit on GitHub</a>
+            </div>
+          </details>
+        </div>
+      </div>
+      <div class:list={['prose', ref]} data-pagefind-body>
+        <Fragment set:html={html} />
+      </div>
+      {updated && <p class="updated">Last updated <time datetime={updated}>{updatedText}</time></p>}
+      <nav class="pager" aria-label="Pages">
+        {prev ? <a href={withBase(prev.url)} class="prev"><small>Previous</small>{prev.title}</a> : <span />}
+        {next ? <a href={withBase(next.url)} class="next"><small>Next</small>{next.title}</a> : <span />}
+      </nav>
+    </article>
+    {hasToc && <aside class="toc" aria-label="On this page">
+      <p>On this page</p>
+      <ul>{page.toc.map((t) => <li class={`t${t.depth}`}><a href={`#${t.id}`}>{t.text}</a></li>)}</ul>
+    </aside>}
+  </div>
+</Base>

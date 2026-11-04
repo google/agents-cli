@@ -15,6 +15,9 @@
 
 resource "google_cloud_run_v2_service" "app" {
   provider = google-beta
+{%- if cookiecutter.agent_identity_enabled %}
+  functional_type = "FUNCTIONAL_TYPE_AGENT"
+{%- endif %}
   name                = var.project_name
   location            = var.region
   project             = var.project_id
@@ -54,6 +57,12 @@ resource "google_cloud_run_v2_service" "app" {
         value = google_storage_bucket.logs_data_bucket.name
       }
     }
+{%- if cookiecutter.agent_identity_enabled %}
+
+    workload_identity_config {
+      identity_type = "IDENTITY_TYPE_AGENT_IDENTITY"
+    }
+{%- endif %}
 
     service_account                  = google_service_account.app_sa.email
     max_instance_request_concurrency = 8
@@ -71,11 +80,13 @@ resource "google_cloud_run_v2_service" "app" {
     percent = 100
   }
 
-  # This lifecycle block prevents Terraform from overwriting the container image when it's
-  # updated by Cloud Run deployments outside of Terraform (e.g., via CI/CD pipelines)
+  # Deploys replace the image outside Terraform (e.g., CI/CD pipelines), and
+  # `agents-cli deploy --agent-identity` sets the workload identity. Prevent
+  # both from being overwritten by Terraform.
   lifecycle {
     ignore_changes = [
       template[0].containers[0].image,
+      template[0].workload_identity_config,
     ]
   }
 

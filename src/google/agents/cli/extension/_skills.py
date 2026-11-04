@@ -29,14 +29,19 @@ import click
 
 from google.agents.cli._fs import delete_path, make_folders_writable
 from google.agents.cli._project import find_project_root
+from google.agents.cli._symlinks import (
+    ScaffoldSymlinkSecurityError,
+    follow_symlink,
+    vet_symlinks,
+)
 from google.agents.cli.extension._manifest import (
     EXTENSIONS_FILE,
     ExtensionList,
     read_extension_list,
 )
 from google.agents.cli.extension._paths import user_config_root
-from google.agents.cli.extension._resolver import skip_symlinks
 from google.agents.cli.extension._spec import ExtensionSkill, ExtensionSpec
+from google.agents.cli.scaffold.utils.fs import source_ignore_patterns
 
 SKILL_FILE = "SKILL.md"
 # Written into each installed skill folder; holds the extension name, then the
@@ -100,10 +105,14 @@ class SkillUndoError(SkillError):
 
 @dataclass(frozen=True)
 class ValidatedSkill:
-    """A skill `check_skills` accepted; `source_dir` is its folder in the vendored copy."""
+    """A skill `check_skills` accepted; `source_dir` is its folder in the vendored copy.
+
+    `extension_root` is the vendored copy, which links in the skill must stay inside.
+    """
 
     name: str
     source_dir: Path
+    extension_root: Path
 
 
 @dataclass(frozen=True)
@@ -238,9 +247,7 @@ def install_skills(
     staged: list[StagedSkill] = []
     try:
         for skill in skills:
-            staged.append(
-                _stage(skill.source_dir, skills_dir / skill.name, extension_name)
-            )
+            staged.append(_stage(skill, skills_dir / skill.name, extension_name))
         _replace_with_staged(staged)
     finally:
         for skill in staged:
@@ -337,28 +344,37 @@ def link_skills_for_antigravity_if_global(skills_dir: Path) -> None:
 
 def _check_skill(extension_root: Path, declared: ExtensionSkill) -> ValidatedSkill:
     source_dir = extension_root / declared.path
+    skill_file = source_dir / SKILL_FILE
     try:
         # A committed vendored copy can hold links, and copytree follows a link
-        # at the top of the tree.
-        if source_dir.is_symlink() or not source_dir.resolve().is_relative_to(
-            extension_root.resolve()
-        ):
+        # at the top of the tree. Like templates, a link is fine while it stays
+        # inside the extension. The resolved folder is checked whether or not a
+        # link leads there, so a link above the skill folder cannot skip a check.
+        real_dir = source_dir.resolve()
+        root = extension_root.resolve()
+        if not real_dir.is_relative_to(root):
+            raise SkillError(f"skill path {declared.path!r} leads outside the extension.")
+        if source_ignore_patterns(str(root), list(real_dir.relative_to(root).parts)):
             raise SkillError(
-                f"skill path {declared.path!r} is a link or leads outside the extension."
+                f"skill path {declared.path!r} leads into a folder that is never "
+                "copied (version-control metadata, caches, build output, "
+                "dependencies, or credentials)."
             )
-        skill_mode = os.lstat(source_dir / SKILL_FILE).st_mode
+        skill_mode = os.lstat(skill_file).st_mode
+        if stat.S_ISLNK(skill_mode):
+            skill_mode = os.stat(follow_symlink(skill_file, extension_root)).st_mode
     except (FileNotFoundError, NotADirectoryError):
         skill_mode = 0
+    # Python reports a symlink loop as RuntimeError rather than OSError.
+    except (ScaffoldSymlinkSecurityError, RuntimeError) as e:
+        raise SkillError(f"skill path {declared.path!r} is refused: {e}") from e
     except (OSError, ValueError) as e:
         raise SkillError(f"cannot read skill path {declared.path!r}: {e}.") from e
-    if stat.S_ISLNK(skill_mode):
-        raise SkillError(
-            f"skill path {declared.path!r} has a {SKILL_FILE} that is a link; "
-            "links are not copied."
-        )
     if not stat.S_ISREG(skill_mode):
         raise SkillError(f"skill path {declared.path!r} has no {SKILL_FILE}.")
-    return ValidatedSkill(name=declared.name, source_dir=source_dir)
+    return ValidatedSkill(
+        name=declared.name, source_dir=source_dir, extension_root=extension_root
+    )
 
 
 def _display(skills_dir: Path) -> str:
@@ -448,21 +464,25 @@ def _names_folder(skill_name: str, skill_dir: Path) -> bool:
         return False
 
 
-def _stage(source: Path, target: Path, extension_name: str) -> StagedSkill:
-    """Copy `source` beside `target`, so a failed copy leaves the old skill in place."""
+def _stage(skill: ValidatedSkill, target: Path, extension_name: str) -> StagedSkill:
+    """Copy `skill` beside `target`, so a failed copy leaves the old skill in place."""
     staged = target.parent / f".{target.name}{FOLDER_STAGED_ON_SAVE_SUFFIX}"
     try:
         delete_path(staged)
-        # Links are dropped, as vendoring does: following one could turn a link to
-        # a private file into a real copy inside the project.
-        shutil.copytree(source, staged, ignore=skip_symlinks)
+        # Links are checked as vendoring does: following one out of the
+        # extension could turn a private file into a real copy in the project.
+        shutil.copytree(
+            skill.source_dir, staged, ignore=vet_symlinks(skill.extension_root)
+        )
         (staged / MARKER_FILE).write_text(
             f"{extension_name}\n{target.name}\n", encoding="utf-8"
         )
     except (OSError, ValueError) as e:
         with contextlib.suppress(OSError):
             delete_path(staged)
-        raise SkillError(f"could not copy skill into {target}: {e}.") from e
+        # A symlink refusal is already a full sentence.
+        reason = str(e).rstrip(".")
+        raise SkillError(f"could not copy skill into {target}: {reason}.") from e
     return StagedSkill(staged_dir=staged, target=target)
 
 

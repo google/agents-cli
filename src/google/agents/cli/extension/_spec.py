@@ -271,6 +271,9 @@ class ExtensionSpec:
     # Copied only from an installed extension's vendored copy; a project-root
     # manifest's skills are ignored.
     skills: tuple[ExtensionSkill, ...] = ()
+    # The `source:` recorded for this extension's install in
+    # agents-cli-extensions.yaml, as an `extension add` reference.
+    source: str | None = None
 
 
 def _to_command(name: str, entry: CommandEntry, kind: str) -> ExtensionCommand:

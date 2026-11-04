@@ -40,8 +40,11 @@ from google.agents.cli._project import (
     AGENT_IDENTITY,
     DEFAULT_BASE_TEMPLATE,
     find_project_config,
+    read_project_config,
 )
 from google.agents.cli._skills_check import find_parent_workspace_skills
+from google.agents.cli._symlinks import find_repo_boundary
+from google.agents.cli.dev.cmd_playground import LANGUAGE_HANDLERS as PLAYGROUND_HANDLERS
 
 from ..utils import adk_shortcut, cli_options, go_overlay, remote_template, template
 from ..utils.cli_options import InteractionMode
@@ -50,7 +53,6 @@ from ..utils.copy_files import CopyOptions, copy_dir_contents
 from ..utils.gcp import verify_credentials_and_vertex
 from ..utils.language import LANGUAGE_CONFIGS
 from ..utils.logging import display_welcome_banner
-from ..utils.symlinks import find_repo_boundary
 
 # Export the shared decorator for use by other commands
 __all__ = ["create"]
@@ -108,6 +110,7 @@ class CreationInputs:
     agent_garden: bool
     agent_gateway: bool | None
     agent_runtime_identity_default: str | None
+    cloud_run_identity_default: str | None
     agent_directory: str | None
     root_agent_name: str | None
     agent_guidance_filename: str
@@ -147,6 +150,7 @@ class RenderPlan:
     region: str
     google_cloud_project: str | None
     agent_runtime_identity_default: str
+    cloud_run_identity_default: str
 
 
 def _handle_create_errors(f: Callable) -> Callable:
@@ -243,6 +247,7 @@ def create(
     bq_analytics: bool = False,
     agent_gateway: bool | None = None,
     agent_runtime_identity_default: str | None = None,
+    cloud_run_identity_default: str | None = None,
     agent_guidance_filename: str = "GEMINI.md",
 ) -> None:
     """Create GCP-based AI agent projects from templates."""
@@ -265,6 +270,7 @@ def create(
         agent_garden=agent_garden,
         agent_gateway=agent_gateway,
         agent_runtime_identity_default=agent_runtime_identity_default,
+        cloud_run_identity_default=cloud_run_identity_default,
         agent_directory=agent_directory,
         root_agent_name=root_agent_name,
         agent_guidance_filename=agent_guidance_filename,
@@ -1219,6 +1225,7 @@ def _resolve_project(
     final_agent_runtime_identity_default = (
         inputs.agent_runtime_identity_default or AGENT_IDENTITY
     )
+    final_cloud_run_identity_default = inputs.cloud_run_identity_default or AGENT_IDENTITY
 
     final_session_type = _resolve_session_type(
         session_type=inputs.session_type,
@@ -1268,6 +1275,7 @@ def _resolve_project(
         region=region,
         google_cloud_project=creds_info.get("project"),
         agent_runtime_identity_default=final_agent_runtime_identity_default,
+        cloud_run_identity_default=final_cloud_run_identity_default,
     )
 
 
@@ -1737,6 +1745,8 @@ def _render_project(
     # it from the project name would silently undo a rename the user made.
     existing_config = find_project_config(destination_dir) if location.in_folder else None
     recorded_root_agent_name = existing_config.root_agent_name if existing_config else ""
+    # Same for the app name: it is baked into the server, and the routes follow it.
+    recorded_app_name = existing_config.raw_app_name if existing_config else ""
 
     # Enhancing a project agents-cli did not create (no manifest) with another
     # template: the files already there are the user's, so the ones the render
@@ -1749,8 +1759,12 @@ def _render_project(
     try:
         # The project records the spec it was fetched from, so enhance and
         # upgrade can fetch it again. `local@.` names the project itself, not a
-        # template that can be fetched.
-        recorded_base_template = None if overlay_is_project else selection.recorded_spec
+        # template that can be fetched, so it records the base template it
+        # rendered. A project with a manifest keeps its own: the overlay copies
+        # it back.
+        recorded_base_template = (
+            loaded.base_template_name if overlay_is_project else selection.recorded_spec
+        )
         # Process template (handles both local and remote templates)
         rendered_files = template.process_template(
             agent_name=selection.final_agent,
@@ -1774,8 +1788,10 @@ def _render_project(
             bq_analytics=selection.bq_analytics,
             agent_gateway=bool(inputs.agent_gateway),
             agent_runtime_identity_default=plan.agent_runtime_identity_default,
+            cloud_run_identity_default=plan.cloud_run_identity_default,
             agent_guidance_filename=inputs.agent_guidance_filename,
             root_agent_name=inputs.root_agent_name or recorded_root_agent_name,
+            app_name=recorded_app_name,
         )
 
         # Replace the region if a different one was specified, only in the
@@ -1925,9 +1941,12 @@ def _print_next_steps(location: ProjectLocation, plan: RenderPlan) -> None:
             "before running the agent."
         )
 
+    # Languages agents-cli can't run yet still ship Makefile targets for both.
+    language = read_project_config(str(location.project_path)).language
+    tool = "agents-cli" if PLAYGROUND_HANDLERS.get(language) else "make"
     console.print("\n[bold cyan]🚀 Get Started[/]")
     console.print(
-        f"   [bold bright_green]cd {cd_path} && agents-cli install && agents-cli playground[/]"
+        f"   [bold bright_green]cd {cd_path} && {tool} install && {tool} playground[/]"
     )
 
     parent_skills_dir = find_parent_workspace_skills(location.project_path)

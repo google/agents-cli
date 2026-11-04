@@ -489,3 +489,9 @@ def cmd_setup(*, workspace, skip_auth, dry_run, dev, interactive, skills_source,
     click.echo()
     click.secho("  Done.", fg="green", bold=True)
     click.echo()
+    # Coding agents load skills at session start, so one running setup won't see them yet.
+    workflow_skill = (
+        _skills_store_dir(workspace=workspace) / "google-agents-cli-workflow" / "SKILL.md"
+    )
+    click.echo(f"  Coding agent? Read {workflow_skill} now.")
+    click.echo()

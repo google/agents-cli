@@ -14,10 +14,12 @@ stop and tell the user, before moving on.
   tools): read `migrate-from-aws.md` now. Its rows join the Assess table, and its edits
   come after the table is shown, before step 4.
 - ADC is set up: `gcloud auth application-default login`.
-- The deploy service account needs `roles/aiplatform.user`. A bare `agents-cli deploy`
-  runs as the project's default compute account, which may lack it and fails every
-  turn with `403 Permission 'aiplatform.endpoints.predict' denied`. Plan step 7 with
-  `agents-cli infra single-project --apply` and `--service-account`.
+- The deployed agent needs `roles/aiplatform.user`; without it every turn fails with
+  `403 Permission 'aiplatform.endpoints.predict' denied`. With Agent Identity,
+  `agents-cli deploy` grants it to the agent's principal and prints that principal.
+  Otherwise a bare `agents-cli deploy` runs as the project's default compute account,
+  which may lack it: plan step 7 with `agents-cli infra single-project --apply` and
+  `--service-account`.
 
 Check: `gcloud projects get-iam-policy <project> --flatten="bindings[].members"
 --filter="bindings.role:roles/aiplatform.user" --format="value(bindings.members)"`.
@@ -53,7 +55,7 @@ not support `gke`) and whether
 they want CI/CD, then run from the project root:
 
 ```bash
-agents-cli scaffold enhance google/agents-cli/extensions/claude/template@v1.12.0 \
+agents-cli scaffold enhance google/agents-cli/extensions/claude/template@v1.13.0 \
   --deployment-target cloud_run
 ```
 
@@ -277,11 +279,10 @@ agents-cli deploy --project <gcp-project> --region <region> \
 agents-cli run --url <service-url> --mode a2a --app-name app "<the same prompt>"
 ```
 
-On `agent_runtime`, skip the service account: `agents-cli deploy` runs the agent with
-Agent Identity and grants it `roles/aiplatform.user`. Still run
-`infra single-project --apply` first when the project has `--bq-analytics`: it creates
-the Agent Runtime agent (named after the project), the dataset and the agent's BigQuery
-roles, and `deploy` then updates that same agent. Query it with
+On projects deploying to `agent_runtime` with Agent Identity, skip the service account.
+Still run `infra single-project --apply` first when the project has `--bq-analytics`: it
+creates the Agent Runtime agent (named after the project), the dataset and the agent's
+BigQuery roles, and `deploy` then updates that same agent. Query it with
 `--url https://<region>-aiplatform.googleapis.com/v1/<Agent Runtime ID>`, the resource
 name `deploy` prints.
 

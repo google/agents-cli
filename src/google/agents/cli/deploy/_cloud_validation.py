@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Read-only checks that the Google Cloud requests a deploy will make would succeed."""
+"""Shared parts of the read-only Google Cloud checks of a deploy dry run."""
 
 from __future__ import annotations
 
+import json
 import logging
-import re
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -25,39 +25,24 @@ from enum import Enum
 
 import click
 import requests
-from google.genai.errors import APIError
 
-from google.agents.cli._agent_platform import AgentPlatformClient
-from google.agents.cli._gcp_project import get_gcp_project_number
-from google.agents.cli.auth import get_access_token
-from google.agents.cli.deploy._utils import cloud_run_service_url, parse_secret_refs
-from google.agents.cli.deploy.agent_runtime import (
-    _resolve_target_agent,
-    should_use_agent_identity,
-)
+from google.agents.cli import _gcloud_auth
+from google.agents.cli.auth import get_access_token, get_gcloud_access_token
+from google.agents.cli.deploy._utils import parse_secret_refs, secret_resource_name
+from google.agents.cli.scaffold.utils.command import run_gcloud_command
 
 # (connect, read) seconds, so an unreachable host fails fast.
 _REQUEST_TIMEOUT = (5, 30)
 _RETRY_STATUS_CODES = (429, 503)
 _RETRY_DELAY_SECONDS = 1
-
-_SECRET_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,255}")
-
 _VALIDATION_HEADER = "\n🔎 Validating the deployment (no resources are changed)..."
-
 # Continues a multi-line detail under its check in the report.
 _DETAIL_INDENT = "\n      "
-
 _AGENT_RUNTIME_API = "aiplatform.googleapis.com"
-_CLOUD_RUN_API = "run.googleapis.com"
 _CLOUD_BUILD_API = "cloudbuild.googleapis.com"
 _ARTIFACT_REGISTRY_API = "artifactregistry.googleapis.com"
 _SECRET_MANAGER_API = "secretmanager.googleapis.com"
-_CREATE_SERVICE_PERMISSION = "run.services.create"
-_UPDATE_SERVICE_PERMISSION = "run.services.update"
 _CLOUD_BUILD_PERMISSION = "cloudbuild.builds.create"
-_CREATE_ENGINE_PERMISSION = "aiplatform.reasoningEngines.create"
-_UPDATE_ENGINE_PERMISSION = "aiplatform.reasoningEngines.update"
 _GET_PROJECT_IAM_POLICY_PERMISSION = "resourcemanager.projects.getIamPolicy"
 _SET_PROJECT_IAM_POLICY_PERMISSION = "resourcemanager.projects.setIamPolicy"
 _ACT_AS_PERMISSION = "iam.serviceAccounts.actAs"
@@ -99,185 +84,6 @@ class ValidationReport:
             logging.warning("Some checks only warned, so the deploy may still fail.")
 
 
-def validate_agent_runtime_deployment(
-    *,
-    project: str,
-    region: str,
-    display_name: str,
-    service_account: str | None,
-    secrets: Mapping[str, str],
-    update_only: bool,
-    agent_identity: bool | None,
-    identity_type_default: str,
-) -> ValidationReport:
-    """Check what an Agent Runtime deploy needs, and print the results."""
-    click.echo(_VALIDATION_HEADER)
-    secret_ids_result = (
-        _check_agent_runtime_secret_ids(project=project, secrets=secrets)
-        if secrets
-        else None
-    )
-    token = _get_token()
-    if token is None:
-        return _report_results(
-            [*filter(None, [secret_ids_result]), _no_credentials_result()]
-        )
-
-    apis = (_AGENT_RUNTIME_API,)
-    if secrets:
-        apis += (_SECRET_MANAGER_API,)
-    apis_result, disabled_apis = _check_apis(project=project, apis=apis, token=token)
-    results = [apis_result]
-
-    engine, engine_known = None, False
-    if _AGENT_RUNTIME_API not in disabled_apis:
-        engine_result, engine, engine_known = _check_target_engine(
-            project=project,
-            region=region,
-            display_name=display_name,
-            update_only=update_only,
-        )
-        results.append(engine_result)
-    # None when the engine lookup could not run.
-    will_create = (engine is None) if engine_known else None
-
-    uses_agent_identity = should_use_agent_identity(
-        agent_identity_flag=agent_identity,
-        identity_default=identity_type_default,
-        is_update=not will_create,
-    )
-
-    results.append(
-        _iam_permissions_result(
-            project=project,
-            token=token,
-            permissions=_agent_runtime_permissions(
-                creates=will_create,
-                update_only=update_only,
-                agent_identity=uses_agent_identity,
-            ),
-            resource=_engine_iam_resource(region=region, engine=engine)
-            if engine
-            else None,
-        )
-    )
-
-    # With Agent Identity the agent is its own principal and the deploy drops
-    # --service-account. Checking that account would fail on one the deploy
-    # never uses.
-    if service_account and not uses_agent_identity:
-        results.append(
-            _run_check(
-                "Service account",
-                lambda: _check_service_account(
-                    service_account=service_account, token=token
-                ),
-            )
-        )
-
-    if secret_ids_result:
-        results.append(secret_ids_result)
-    elif secrets:
-        results.extend(
-            _secret_version_checks(
-                project=project,
-                secrets=secrets,
-                token=token,
-                disabled_apis=disabled_apis,
-                runtime_identity="the runtime principal",
-            )
-        )
-    return _report_results(results)
-
-
-def validate_cloud_run_deployment(
-    *,
-    project: str,
-    region: str | None,
-    service_name: str,
-    service_account: str | None,
-    secrets: Mapping[str, str],
-    image: str | None,
-) -> tuple[ValidationReport, bool | None]:
-    """Check what a Cloud Run deploy needs, and print the results.
-
-    ``image`` is a prebuilt container, so the deploy skips the build. With no
-    ``region``, gcloud picks one. Also returns whether the service exists, or
-    None when that is unknown.
-    """
-    click.echo(_VALIDATION_HEADER)
-    token = _get_token()
-    if token is None:
-        return _report_results([_no_credentials_result()]), None
-
-    builds_image = not image
-    enabled_by_deploy = (_ARTIFACT_REGISTRY_API, _CLOUD_BUILD_API) if builds_image else ()
-    apis = (_CLOUD_RUN_API, *enabled_by_deploy)
-    if secrets and _has_secret_in_deploy_project(secrets):
-        apis += (_SECRET_MANAGER_API,)
-    apis_result, disabled_apis = _check_apis(
-        project=project, apis=apis, token=token, enabled_by_deploy=enabled_by_deploy
-    )
-    results = [apis_result]
-
-    service_exists, current_account = None, None
-    if not region:
-        results.append(
-            _warn_result(
-                "Target service",
-                "not looked up, because no region is set, so gcloud uses its "
-                "run/region setting, or asks for a region when that is not set — "
-                "set region in agents-cli-manifest.yaml, or pass --region",
-            )
-        )
-    elif _CLOUD_RUN_API not in disabled_apis:
-        service_result, service_exists, current_account = _check_cloud_run_service(
-            project=project, region=region, service_name=service_name, token=token
-        )
-        results.append(service_result)
-
-    results.append(
-        _iam_permissions_result(
-            project=project,
-            token=token,
-            permissions=_cloud_run_permissions(
-                service_exists=service_exists,
-                builds_image=builds_image,
-            ),
-            resource=_IamResource(
-                kind="service",
-                url=cloud_run_service_url(
-                    project=project, region=region, service=service_name
-                )
-                + ":testIamPermissions",
-                permission=_UPDATE_SERVICE_PERMISSION,
-            )
-            if service_exists and region
-            else None,
-        )
-    )
-    results.extend(
-        _cloud_run_service_account_checks(
-            service_account=service_account,
-            current_account=current_account,
-            service_exists=service_exists,
-            project=project,
-            token=token,
-        )
-    )
-    if secrets:
-        results.extend(
-            _secret_version_checks(
-                project=project,
-                secrets=secrets,
-                token=token,
-                disabled_apis=disabled_apis,
-                runtime_identity="the service account of the service",
-            )
-        )
-    return _report_results(results), service_exists
-
-
 _STATUS_ICONS = {
     CheckStatus.PASSED: "✅",
     CheckStatus.WARNED: "⚠️ ",
@@ -287,11 +93,31 @@ _STATUS_ICONS = {
 
 @dataclass(frozen=True)
 class _Permissions:
-    """Permissions to test. A missing ``required`` one fails, a missing
-    ``maybe_required`` one only warns."""
+    """Permissions to test. A missing ``required`` one fails; the others only
+    warn. ``maybe_required`` ones may not be needed, ``kubernetes`` ones an RBAC
+    role can grant instead of IAM (``kubernetes_hint`` says how), and
+    ``other_account`` ones are needed by steps that run as
+    ``other_account_name``, which the checks cannot run as.
+    ``other_account_kubernetes`` ones are both.
+    """
 
     required: tuple[str, ...] = ()
     maybe_required: tuple[str, ...] = ()
+    other_account: tuple[str, ...] = ()
+    kubernetes: tuple[str, ...] = ()
+    other_account_kubernetes: tuple[str, ...] = ()
+    other_account_name: str = ""
+    kubernetes_hint: str = ""
+
+    @property
+    def requested(self) -> tuple[str, ...]:
+        return (
+            self.required
+            + self.maybe_required
+            + self.other_account
+            + self.kubernetes
+            + self.other_account_kubernetes
+        )
 
 
 @dataclass(frozen=True)
@@ -418,6 +244,11 @@ def _api_error_field(resp: requests.Response, key: str) -> str | None:
         return None
 
 
+def _with_api_message(detail: str, resp: requests.Response) -> str:
+    message = _api_error_field(resp, "message")
+    return f"{detail}{_DETAIL_INDENT}{message}" if message else detail
+
+
 def _get_token() -> str | None:
     """Return the access token, or None when there are no credentials."""
     try:
@@ -427,17 +258,119 @@ def _get_token() -> str | None:
         return None
 
 
+@dataclass(frozen=True)
+class _GcloudStepsIdentity:
+    """Who the checks of the gcloud steps run as.
+
+    ``other_account`` is the account gcloud deploys as, when the checks fall
+    back to an ADC that may be another account; None otherwise.
+    """
+
+    token: str
+    checked_as: str
+    other_account: str | None
+
+
+def _gcloud_steps_identity(
+    token: str, *, failed_checks: str = "failed checks"
+) -> _GcloudStepsIdentity:
+    """Check the gcloud steps as gcloud's account, or as the ADC when gcloud's
+    token does not work for direct API calls."""
+    gcloud_token, account = _get_gcloud_identity()
+    if account and gcloud_token:
+        return _GcloudStepsIdentity(gcloud_token, f"{account} (gcloud account)", None)
+    if token == gcloud_token:
+        return _GcloudStepsIdentity(
+            token,
+            "your gcloud account, but its token does not work for direct API "
+            "calls, and Application Default Credentials are not set up — run "
+            "`agents-cli login`",
+            None,
+        )
+    adc_email = _token_email(token)
+    checked_as = (
+        f"{adc_email} (Application Default Credentials)"
+        if adc_email
+        else "your Application Default Credentials"
+    )
+    # Without credentials of its own, gcloud deploys with the ADC token too.
+    if _gcloud_auth.adc_token_for_gcloud() is not None:
+        return _GcloudStepsIdentity(token, checked_as, None)
+    deploy_account = _gcloud_deploy_account()
+    if not adc_email or adc_email.lower() != (deploy_account or "").lower():
+        other = deploy_account or "an unknown account"
+        return _GcloudStepsIdentity(
+            token,
+            f"{checked_as}, but gcloud deploys as {other}, so {failed_checks} only warn",
+            other,
+        )
+    return _GcloudStepsIdentity(token, checked_as, None)
+
+
+def _get_gcloud_identity() -> tuple[str | None, str | None]:
+    """Return the gcloud token and its email.
+
+    The email is None when gcloud has no token or tokeninfo rejects it.
+    """
+    try:
+        token = get_gcloud_access_token()
+    except Exception as exc:
+        logging.debug("gcloud has no access token", exc_info=exc)
+        return None, None
+    if not token:
+        return None, None
+    # A gcloud token bound to an mTLS client certificate fails plain REST calls.
+    email = _token_email(token)
+    return token, None if email is None else email or "an unknown account"
+
+
+def _token_email(token: str) -> str | None:
+    """Return the email of ``token``, "" when tokeninfo names none, or None
+    when tokeninfo rejects it."""
+    try:
+        tokeninfo = requests.post(
+            "https://oauth2.googleapis.com/tokeninfo",
+            data={"access_token": token},
+            timeout=_REQUEST_TIMEOUT,
+        )
+        if tokeninfo.ok:
+            return tokeninfo.json().get("email", "")
+        logging.debug("tokeninfo rejected the token (HTTP %s)", tokeninfo.status_code)
+    except Exception as exc:
+        logging.debug("Could not check the token", exc_info=exc)
+    return None
+
+
+def _gcloud_deploy_account() -> str | None:
+    """Return the account gcloud deploys as, or None when it is unknown."""
+    try:
+        config = json.loads(
+            run_gcloud_command(
+                ["config", "list", "--format=json"], capture_output=True, timeout=5
+            ).stdout
+        )
+        return (config.get("auth") or {}).get("impersonate_service_account") or (
+            config.get("core") or {}
+        ).get("account")
+    except Exception as exc:
+        logging.debug("Could not read the gcloud account", exc_info=exc)
+        return None
+
+
 def _check_apis(
     *,
     project: str,
     apis: tuple[str, ...],
     token: str,
     enabled_by_deploy: tuple[str, ...] = (),
+    enabled_by_deploy_hint: str = "gcloud asks to enable them during the deploy",
+    passed: str | None = None,
 ) -> tuple[CheckResult, list[str]]:
     """Return the check result and the APIs found disabled.
 
-    An API in ``enabled_by_deploy`` only warns, because gcloud asks to enable it
-    during the deploy.
+    An API in ``enabled_by_deploy`` only warns, because the deploy turns it on,
+    as ``enabled_by_deploy_hint`` says. ``passed`` replaces the list of APIs on
+    success.
     """
     disabled: list[str] = []
 
@@ -464,7 +397,7 @@ def _check_apis(
                 *_describe_problem(
                     prefix="not enabled",
                     items=offered,
-                    hint="gcloud asks to enable them during the deploy",
+                    hint=enabled_by_deploy_hint,
                 ),
                 *_describe_problem(
                     prefix="could not verify",
@@ -481,176 +414,15 @@ def _check_apis(
                     ],
                 ),
             ],
-            passed=", ".join(apis),
+            passed=passed or ", ".join(apis),
         )
 
     return _run_check("APIs enabled", check), disabled
 
 
-def _check_target_engine(
-    *, project: str, region: str, display_name: str, update_only: bool
-) -> tuple[CheckResult, str | None, bool]:
-    """Find the engine the deploy will update, with the deploy's own lookup.
-
-    Returns the result, the engine to update (None to create one), and whether
-    the lookup gave an answer.
-    """
-    found: list[str] = []
-
-    def check() -> CheckResult:
-        client = AgentPlatformClient(project=project, location=region)
-        try:
-            agents = _resolve_target_agent(client, display_name)
-        except click.ClickException as exc:
-            code = _transient_api_error_code(exc)
-            if code is None:
-                raise
-            logging.debug("Target engine lookup returned HTTP %s", code, exc_info=exc)
-            return _warn_result("Target engine", f"could not verify — HTTP {code}")
-        found.extend(agent.api_resource.name for agent in agents)
-        if found:
-            return _pass_result("Target engine", f"updates {found[0]}")
-        if update_only:
-            return _fail_result(
-                "Target engine",
-                f"no engine named '{display_name}' in {project}/{region}, and "
-                "--update-only forbids creating one",
-            )
-        return _pass_result(
-            "Target engine", f"creates a new engine named '{display_name}'"
-        )
-
-    result = _run_check("Target engine", check)
-    engine = found[0] if found else None
-    return result, engine, result.status is CheckStatus.PASSED
-
-
-def _transient_api_error_code(exc: click.ClickException) -> int | None:
-    """The HTTP code when ``exc`` wraps a transient API error.
-
-    ``APIError.code`` is None when the error response has no code.
-    """
-    cause = exc.__cause__
-    if (
-        isinstance(cause, APIError)
-        and cause.code is not None
-        and _is_transient_status(cause.code)
-    ):
-        return cause.code
-    return None
-
-
 def _is_transient_status(code: int) -> bool:
     """Throttled (429) or server-side (5xx), which says nothing about the request."""
     return code == 429 or code >= 500
-
-
-def _agent_runtime_permissions(
-    *, creates: bool | None, update_only: bool, agent_identity: bool | None
-) -> _Permissions:
-    """The permissions the deploy needs. ``creates`` is None when it is unknown.
-
-    When it is unknown, create and update only warn: the engine check has
-    already warned that the lookup could not run. Agent Identity creates a new engine bare, updates it, and then edits the
-    project IAM policy to grant the agent its roles. An existing engine edits
-    the policy only when it moves to Agent Identity, so that only warns.
-    """
-    iam_policy = (_GET_PROJECT_IAM_POLICY_PERMISSION, _SET_PROJECT_IAM_POLICY_PERMISSION)
-    if creates is None and not update_only:
-        if agent_identity:
-            return _Permissions(
-                required=(_UPDATE_ENGINE_PERMISSION,),
-                maybe_required=(_CREATE_ENGINE_PERMISSION, *iam_policy),
-            )
-        return _Permissions(
-            maybe_required=(_CREATE_ENGINE_PERMISSION, _UPDATE_ENGINE_PERMISSION)
-        )
-    if creates and agent_identity:
-        return _Permissions(
-            required=(_CREATE_ENGINE_PERMISSION, _UPDATE_ENGINE_PERMISSION, *iam_policy)
-        )
-    if creates:
-        return _Permissions(required=(_CREATE_ENGINE_PERMISSION,))
-    return _Permissions(
-        required=(_UPDATE_ENGINE_PERMISSION,),
-        maybe_required=iam_policy if agent_identity else (),
-    )
-
-
-def _engine_iam_resource(*, region: str, engine: str) -> _IamResource:
-    return _IamResource(
-        kind="engine",
-        url=f"https://{region}-aiplatform.googleapis.com/v1/{engine}:testIamPermissions",
-        permission=_UPDATE_ENGINE_PERMISSION,
-    )
-
-
-def _check_cloud_run_service(
-    *, project: str, region: str, service_name: str, token: str
-) -> tuple[CheckResult, bool | None, str | None]:
-    """Look up the service the deploy writes to.
-
-    Returns the result, whether the service exists (None when unknown), and the
-    service account it runs as.
-    """
-    exists: bool | None = None
-    account: str | None = None
-
-    def check() -> CheckResult:
-        nonlocal exists, account
-        resp = _call_api(
-            url=cloud_run_service_url(
-                project=project, region=region, service=service_name
-            ),
-            token=token,
-        )
-        if resp.status_code == 404:
-            # A host for a region that does not exist answers with an HTML 404.
-            if _api_error_field(resp, "status") != "NOT_FOUND":
-                return _fail_result(
-                    "Target service",
-                    f"Cloud Run has no region '{region}' — check --region",
-                )
-            exists = False
-            return _pass_result(
-                "Target service", f"creates a new service named '{service_name}'"
-            )
-        if _is_transient_status(resp.status_code):
-            return _warn_result(
-                "Target service", f"could not verify — HTTP {resp.status_code}"
-            )
-        if not resp.ok:
-            detail = (
-                f"Cloud Run rejected the service lookup (HTTP {resp.status_code}). "
-                "The deploy does the same lookup first, so it would stop here too "
-                "— check --project and --region, and that you have run.services.get"
-            )
-            if message := _api_error_field(resp, "message"):
-                detail += f"{_DETAIL_INDENT}{message}"
-            return _fail_result("Target service", detail)
-        account = (resp.json().get("template") or {}).get("serviceAccount")
-        exists = True
-        return _pass_result("Target service", f"updates service '{service_name}'")
-
-    result = _run_check("Target service", check)
-    return result, exists, account
-
-
-def _cloud_run_permissions(
-    *, service_exists: bool | None, builds_image: bool
-) -> _Permissions:
-    """Create for a new service, update for an existing one, either when unknown.
-
-    A source deploy also builds the image.
-    """
-    build = (_CLOUD_BUILD_PERMISSION,) if builds_image else ()
-    if service_exists is None:
-        return _Permissions(
-            required=build,
-            maybe_required=(_CREATE_SERVICE_PERMISSION, _UPDATE_SERVICE_PERMISSION),
-        )
-    write = _UPDATE_SERVICE_PERMISSION if service_exists else _CREATE_SERVICE_PERMISSION
-    return _Permissions(required=(write, *build))
 
 
 def _iam_permissions_result(
@@ -683,7 +455,7 @@ def _check_permissions(
     ``resource.permission`` granted on the resource itself also counts: a user
     can hold it on a single resource and not on the project.
     """
-    requested = permissions.required + permissions.maybe_required
+    requested = permissions.requested
     resp = _call_api(
         url=f"https://cloudresourcemanager.googleapis.com/v1/projects/{project}:testIamPermissions",
         token=token,
@@ -712,24 +484,42 @@ def _check_permissions(
     missing = [
         p for p in permissions.required if p not in granted and p not in unverified
     ]
+    missing_on = f"missing on '{project}'"
     return _combined_result(
         "IAM permissions",
-        failures=_describe_problem(
-            prefix=f"missing on '{project}'", items=missing, hint=ask_admin
-        ),
+        failures=_describe_problem(prefix=missing_on, items=missing, hint=ask_admin),
         warnings=[
             *_describe_problem(
-                prefix=f"missing on '{project}'",
+                prefix=missing_on,
                 items=[p for p in permissions.maybe_required if p not in granted],
                 hint="the deploy may fail if it needs these permissions",
             ),
             *_describe_problem(
-                prefix=f"missing on '{project}'",
-                items=unverified,
-                hint=unverified_hint,
+                prefix=missing_on,
+                items=[p for p in permissions.other_account if p not in granted],
+                hint="the gcloud steps need these, but they run as "
+                f"{permissions.other_account_name}, which the dry run cannot check; "
+                "if that account lacks them, ask a project admin for a role that "
+                "grants them",
             ),
+            *_describe_problem(
+                prefix=missing_on,
+                items=[p for p in permissions.kubernetes if p not in granted],
+                hint=permissions.kubernetes_hint,
+            ),
+            *_describe_problem(
+                prefix=missing_on,
+                items=[
+                    p for p in permissions.other_account_kubernetes if p not in granted
+                ],
+                hint=f"kubectl runs as {permissions.other_account_name}, which the "
+                f"dry run cannot check; {permissions.kubernetes_hint}",
+            ),
+            *_describe_problem(prefix=missing_on, items=unverified, hint=unverified_hint),
         ],
-        passed=f"{', '.join(requested)} granted",
+        passed=f"all {len(requested)} permissions granted"
+        if len(requested) > 1
+        else f"{requested[0]} granted",
     )
 
 
@@ -785,130 +575,6 @@ def _check_service_account(
     )
 
 
-def _cloud_run_service_account_checks(
-    *,
-    service_account: str | None,
-    current_account: str | None,
-    service_exists: bool | None,
-    project: str,
-    token: str,
-) -> list[CheckResult]:
-    """Check the account the service will run as, when it is known."""
-    if service_account:
-        return [
-            _run_check(
-                "Service account",
-                lambda: _check_cloud_run_service_account(
-                    account=service_account, project=project, token=token
-                ),
-            )
-        ]
-    # Cloud Run checks actAs on the runtime account for every new revision, even
-    # when the deploy keeps the service's current account.
-    if current_account:
-        return [
-            _run_check(
-                "Service account",
-                lambda: _check_service_account(
-                    service_account=current_account,
-                    token=token,
-                    not_found_hint="the service runs as this account; pass "
-                    "--service-account to replace it",
-                ),
-            )
-        ]
-    if service_exists is not False:
-        return []
-    return [
-        _run_check(
-            "Service account",
-            lambda: _check_default_service_account(project=project, token=token),
-        )
-    ]
-
-
-def _check_cloud_run_service_account(
-    *, account: str, project: str, token: str
-) -> CheckResult:
-    """Check the account the service runs as. An ID without ``@`` is an account
-    in the deploy project.
-
-    The email holds the project ID, so it cannot be built from a project number
-    or a domain-scoped project ID.
-    """
-    if "@" in account:
-        return _check_service_account(service_account=account, token=token)
-    if project.isdigit() or ":" in project:
-        return _warn_result(
-            "Service account",
-            f"'{account}' was not checked, because its email cannot be built from "
-            f"project '{project}' — pass the full email to check it",
-        )
-    return _check_service_account(
-        service_account=f"{account}@{project}.iam.gserviceaccount.com",
-        token=token,
-        not_found_hint="check the account ID",
-    )
-
-
-def _check_default_service_account(*, project: str, token: str) -> CheckResult:
-    """Check the default compute account, which a new service runs as when no
-    ``--service-account`` is set."""
-    project_number = get_gcp_project_number(project)
-    if not project_number:
-        return _warn_result(
-            "Service account",
-            "could not read the project number, so the default compute service "
-            "account was not checked",
-        )
-    return _check_service_account(
-        service_account=f"{project_number}-compute@developer.gserviceaccount.com",
-        token=token,
-        not_found_hint="a new service runs as this default account; pass "
-        "--service-account",
-    )
-
-
-def _has_secret_in_deploy_project(secrets: Mapping[str, str]) -> bool:
-    """True when any secret is a bare ID, which Cloud Run reads from the deploy
-    project.
-
-    A full ``projects/<p>/secrets/<s>`` path points at its own project, so it
-    does not need Secret Manager enabled in the deploy project.
-    """
-    return any(
-        not spec["secret"].startswith("projects/")
-        for spec in parse_secret_refs(secrets).values()
-    )
-
-
-def _check_agent_runtime_secret_ids(
-    *, project: str, secrets: Mapping[str, str]
-) -> CheckResult | None:
-    """Fail on a ``--secrets`` value the deploy would reject, or return None.
-
-    It needs no network call, so it runs even without credentials. Agent Runtime
-    accepts only the bare ID of a secret in the deploy project, and its API
-    rejects anything else, a path such as ``projects/p/secrets/s`` included.
-    """
-    invalid = [
-        spec["secret"]
-        for spec in parse_secret_refs(secrets).values()
-        if not _SECRET_ID_RE.fullmatch(spec["secret"])
-    ]
-    if not invalid:
-        return None
-    return _fail_result(
-        "Secrets",
-        _describe_problem(
-            prefix="not a bare secret ID",
-            items=invalid,
-            hint="Agent Runtime only reads secrets from the deploy project; pass the "
-            f"ID of a secret in '{project}' (letters, digits, - and _)",
-        )[0],
-    )
-
-
 def _secret_version_checks(
     *,
     project: str,
@@ -956,7 +622,8 @@ def _check_secret_versions(
     states = _read_states(
         urls={
             f"{spec['secret']}:{spec['version']}": "https://secretmanager.googleapis.com"
-            f"/v1/{_secret_path(project=project, secret=spec['secret'])}/versions/{spec['version']}"
+            f"/v1/{secret_resource_name(project=project, secret=spec['secret'])}"
+            f"/versions/{spec['version']}"
             for spec in parse_secret_refs(secrets).values()
         },
         token=token,
@@ -993,14 +660,6 @@ def _check_secret_versions(
             "roles/secretmanager.secretAccessor",
         ),
         passed="all referenced secret versions exist and are enabled",
-    )
-
-
-def _secret_path(*, project: str, secret: str) -> str:
-    return (
-        secret
-        if secret.startswith("projects/")
-        else f"projects/{project}/secrets/{secret}"
     )
 
 

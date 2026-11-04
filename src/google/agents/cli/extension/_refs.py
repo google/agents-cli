@@ -19,9 +19,25 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
+from typing import Literal, TypeAlias
 from urllib.parse import urlsplit
 
-FIRST_PARTY_REPO = "google/agents-cli"
+_FIRST_PARTY_ORG = "google"
+# The repo a bare extension name resolves to.
+_SHORTHAND_REPO = f"{_FIRST_PARTY_ORG}/agents-cli"
+# Installed without a trust prompt.
+_VERIFIED_REPOS = frozenset(
+    {"google/adk-recipes", _SHORTHAND_REPO, "google/agents-cli-extensions"}
+)
+
+# "verified" is a repo in `_VERIFIED_REPOS`, "first_party" any other repo in
+# the `google` GitHub org.
+Tier: TypeAlias = Literal["verified", "first_party", "third_party"]
+
+# Never recorded as a pin; git rejects it as a ref name, so it can't shadow a ref.
+LATEST = ":latest"
+# Recorded as the ref of an extension added without one.
+UNPINNED_REF = "HEAD"
 
 # Schemes an extension may be cloned from: the set `--agent` already accepts for
 # a template repo (scaffold/utils/remote_template.py), plus ssh://, which is how
@@ -33,7 +49,7 @@ GIT_URL_SCHEMES = ("https", "http", "ssh", "file")
 
 _SCHEME_RE = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*)://")
 # scp-style, as offered by most hosts' "clone with SSH" button: git@host:org/repo.
-_SCP_RE = re.compile(r"^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:(?P<path>.+)$")
+_SCP_RE = re.compile(r"^[A-Za-z0-9._-]+@(?P<host>[A-Za-z0-9._-]+):(?P<path>.+)$")
 
 
 class RefParseError(Exception):
@@ -44,9 +60,10 @@ class RefParseError(Exception):
 class ExtensionRef:
     raw: str
     kind: str  # "first_party" | "github" | "git" | "local"
+    tier: Tier
     repo: str | None
-    # Clone URL, set only for kind == "git". A github/first_party ref names a
-    # repo on github.com and lets the resolver build the URL from it.
+    # Clone URL, set when the ref was given as one. Otherwise the ref names a
+    # repo on github.com and the resolver builds the URL from it.
     url: str | None
     local_path: Path | None
     selector: str | None
@@ -68,7 +85,7 @@ def _check_selector(selector: str) -> None:
     The resolver joins the selector onto the checkout with pathlib, where an
     absolute selector replaces the checkout entirely and `..` climbs out of it.
     Either would vendor a directory the ref's kind, pin and trust decision do not
-    describe: `langchain#/tmp/x` would install /tmp/x as first-party, unprompted.
+    describe: `langchain#/tmp/x` would install /tmp/x as verified, unprompted.
     """
     if (
         not PurePosixPath(selector).parts
@@ -126,7 +143,7 @@ def parse_ref(raw: str, *, ref_override: str | None = None) -> ExtensionRef:
     """Parse an extension reference string into a structured ExtensionRef.
 
     Supported forms:
-      - ``soc2``                            first-party shorthand
+      - ``soc2``                            shorthand for google/agents-cli
       - ``acme/acli-extensions``            any org/repo on github.com
       - ``acme/acli-extensions#soc2``       org/repo with extension selector
       - ``https://git.example.com/acme/acli-extensions``   any git host
@@ -145,6 +162,7 @@ def parse_ref(raw: str, *, ref_override: str | None = None) -> ExtensionRef:
         return ExtensionRef(
             raw=raw,
             kind="local",
+            tier="third_party",
             repo=None,
             url=None,
             local_path=Path(path_part),
@@ -161,6 +179,7 @@ def parse_ref(raw: str, *, ref_override: str | None = None) -> ExtensionRef:
         return ExtensionRef(
             raw=raw,
             kind="git",
+            tier=_tier(_github_repo(url)),
             repo=_repo_identity(url),
             url=url,
             local_path=None,
@@ -172,6 +191,7 @@ def parse_ref(raw: str, *, ref_override: str | None = None) -> ExtensionRef:
         return ExtensionRef(
             raw=raw,
             kind="github",
+            tier=_tier(base),
             repo=base,
             url=None,
             local_path=None,
@@ -179,19 +199,47 @@ def parse_ref(raw: str, *, ref_override: str | None = None) -> ExtensionRef:
             ref=ref_override,
         )
 
-    # First-party shorthand: a bare name selects that extension from the
-    # first-party repo (google/agents-cli). The name becomes the selector, so it
+    # Shorthand: a bare name selects that extension from `_SHORTHAND_REPO`
+    # (google/agents-cli). The name becomes the selector, so it
     # needs the same check: `..` or `C:\tmp\evil` has no `/` to make it a repo.
     # Checked even when a `#selector` replaces it, so a junk name is not
-    # silently recorded as a trusted first-party source.
+    # silently recorded as a verified source.
     _check_selector(base)
-    selector = selector or base
     return ExtensionRef(
         raw=raw,
         kind="first_party",
-        repo=FIRST_PARTY_REPO,
+        tier="verified",
+        repo=_SHORTHAND_REPO,
         url=None,
         local_path=None,
-        selector=selector,
+        selector=selector or base,
         ref=ref_override,
     )
+
+
+def _github_repo(url: str) -> str | None:
+    """Return ``org/repo`` if ``url`` clones a github.com repo over https or ssh."""
+    scp = _SCP_RE.match(url)
+    if scp is not None:
+        host, path = scp.group("host"), scp.group("path")
+    else:
+        parts = urlsplit(url)
+        # Plain http could be tampered with, so it never names a trusted repo.
+        if parts.scheme.lower() not in ("https", "ssh"):
+            return None
+        host, path = parts.hostname or "", parts.path
+    if host.lower().removeprefix("www.") != "github.com":
+        return None
+    return path.strip("/").removesuffix(".git")
+
+
+def _tier(repo: str | None) -> Tier:
+    """Classify a github.com ``org/repo`` (None for any other source)."""
+    if repo is None:
+        return "third_party"
+    repo = repo.lower()
+    if repo in _VERIFIED_REPOS:
+        return "verified"
+    if repo.partition("/")[0] == _FIRST_PARTY_ORG:
+        return "first_party"
+    return "third_party"

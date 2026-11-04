@@ -3,6 +3,41 @@
 All notable changes to this project will be documented in this file.
 
 
+## [1.13.0] - 2026-11-04
+
+- **Cloud Run deployments support Agent Identity.**
+  - `agents-cli deploy --agent-identity` deploys a Cloud Run service with Agent Identity.
+  - New projects default using Agent Identity for Cloud Run deployments. To migrate an old project so that it uses Agent Identity, run `agents-cli scaffold enhance` with `--cloud-run-identity-type agent_identity`.
+  - To create a new project that uses a service account instead, run `agents-cli scaffold create` with `--cloud-run-identity-type service_account`.
+- `agents-cli eval run` and `agents-cli eval grade` end with a `RESULT: PASS` or `RESULT: FAIL (...)` line, preceded on failure by the metrics and cases that failed and a next step.
+  - Set a minimum mean score per metric with a `thresholds:` map in the eval config, or for one run with `--fail-under METRIC=SCORE` (repeatable, one metric each). A missed threshold exits 1. `pass_rate` in the results is filled from the threshold when the eval service doesn't report one.
+  - Breaking: a run where any case errored now exits 1, even without thresholds. If the errors are rate limits, lower `--qps`.
+- `agents-cli login` signs in both the gcloud CLI and Application Default Credentials (`gcloud auth login --update-adc`), so commands that run `gcloud` work right after login.
+  - When only Application Default Credentials are available and gcloud has no credentials of its own, agents-cli passes an ADC access token to the `gcloud` commands it runs. GKE deploys in that setup are not covered yet.
+  - Note: the account you sign in with also becomes gcloud's active account.
+- New projects record `create_params.app_name` in `agents-cli-manifest.yaml`: the name the server serves the agent under (`/apps/{app_name}/...`). `run`, `eval`, `playground`, `deploy` and `publish` use it; projects without it keep using the basename of `agent_directory`.
+  - `eval generate --app-name` and `eval run --app-name` default to the project's app name instead of `app`.
+- `agents-cli deploy --image <artifact-registry-uri>` works for Agent Runtime. The Agent Runtime service agent needs `roles/artifactregistry.reader` on the repository. `--build-args` can't be combined with `--image`, and an existing agent can't switch between a source build and `--image`.
+- Agent Runtime deploys of A2A agents register the agent card in Agent Registry, so the agent shows up as A2A-capable in Gemini Enterprise.
+  - https://github.com/google/agents-cli/issues/63
+- `agents-cli deploy --dry-run` also validates a GKE deployment against Google Cloud.
+- `agents-cli extension add <name>` pins a first-party extension to the latest release compatible with your agents-cli instead of `main`. Pass `--ref main` to track `main`.
+  - `agents-cli extension update --to <ref|:latest>` moves a pin. First-party extensions installed from `main` move to the latest release on their next `update`.
+- `agents-cli extension add langchain` and `agents-cli extension add claude` install instead of failing with "has no agents-cli-extension.yaml".
+- `agents-cli extension add` installs extensions from agents-cli pre-approved repositories without a trust prompt, whether given as a shorthand, an `org/repo` reference or a URL.
+- Usage telemetry names an extension when it serves a command if the extension comes from Google.
+- Extensions can share files through symlinks that stay inside their repository. These links are copied as regular files when the extension is vendored and when its skills are installed.
+- A project, template, or deployment metadata that declares a language this version of agents-cli doesn't support fails with an error listing the supported languages and suggesting `uv tool upgrade google-agents-cli`, instead of being treated as Python.
+- `agents-cli scaffold enhance .` in a project without a manifest records the base template it rendered (`adk_python`, `adk_go`), so later `enhance` and `upgrade` runs work. Before, they failed with "Base template 'local_<dir>' not found". In projects already affected, set `base_template` in `agents-cli-manifest.yaml` to `adk_python` (or `adk_go`) by hand.
+- `agents-cli scaffold enhance --region <region>` writes the region to `agents-cli-manifest.yaml` and to the files it renders, such as the Terraform variables. Enhancing a project without `--region` keeps the region recorded in its manifest.
+- `agents-cli publish gemini` rejects a response that isn't a valid A2A agent card.
+- Local A2A agent cards advertise the server's real port instead of `http://localhost:8000`.
+- Claude Agent SDK projects: a turn fails when its transcript can't be saved to the session store (Cloud SQL, or the agent's own `session_store`), instead of succeeding while the conversation can't be fully resumed on another instance.
+- `agents-cli setup` tells a coding agent running it mid-session to read the workflow skill directly, since newly installed skills only load in the next session.
+- The bundled ADK code skill no longer points coding agents straight at `scaffold create` for a new project. It has them load the workflow skill and agree the agent's spec with you before scaffolding.
+- The bundled deploy skill now points to `GoogleCloudPlatform/genai-factory` and its `agents-cli` extension for enterprise agent infrastructure.
+- The docs site has a new homepage and layout, a "Debug a failing agent" guide, a "Control cost" page, and guides updated to match the bundled skills.
+
 ## [1.12.0] - 2026-10-27
 
 - **ADK Go is now Generally Available.** The `adk_go` template is out of Preview: it is stable, production-ready and supported on the same terms as `adk_python`. This release also brings:

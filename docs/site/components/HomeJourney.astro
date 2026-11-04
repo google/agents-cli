@@ -1,0 +1,453 @@
+---
+// Copyright 2026 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// The session section: a stepper of the four stages on the left (name and outcome), one coding agent window on the
+// right where each stage plays as a chat: your prompt, the skill it loads, the commands it runs, its reply. Without JS the stepper is fully open and every window shows in turn;
+// with JS, each stage plays as a live session when shown. The markup is always the final state, so no JS and
+// reduced motion just show it.
+import { codeToHtml } from 'shiki';
+import { codeTheme } from '../../scripts/shiki-theme.mjs';
+import { withBase } from '../lib/docs';
+import { journey } from '../data/home';
+
+const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+// Shiki's class would pull in the docs copy button (site.ts wraps every pre.shiki).
+// Lines marked '+' in the data are the coding agent's edit: class ss-add, text wrapped so the script can type it.
+const code = async (marked: string) => {
+  const rows = marked.split('\n');
+  const added = new Set(rows.flatMap((l, i) => (l.startsWith('+') ? [i + 1] : [])));
+  const src = rows.map((l) => (l.startsWith('+') ? l.slice(1) : l)).join('\n');
+  const html = await codeToHtml(src, {
+    lang: 'python', theme: codeTheme,
+    transformers: [{
+      line(node, n) {
+        if (!added.has(n)) return;
+        this.addClassToHast(node, 'ss-add');
+        node.children = [{ type: 'element', tagName: 'span', properties: { class: 'ss-lt' }, children: node.children }];
+      },
+    }],
+  });
+  // The wrapper div is the focusable scroll region, so drop Shiki's tabindex to avoid a second tab stop.
+  return html.replace(/class="shiki [^"]*"/, 'class="jr-pre ss-pre"').replace(/ style="[^"]*"/, '').replace(/ tabindex="0"/, '');
+};
+
+// A command wraps only between words: a flag stays with its value, trailing flags stay together when
+// short, a quoted string stays whole, and a long URL may break only after '//' or before a run of digits.
+const nw = (s: string) => `<span class="ss-nw">${s}</span>`;
+const words = (c: string) => {
+  const t = c.match(/"[^"]*"|\S+/g) ?? [];
+  const g: string[] = [];
+  for (let i = 0; i < t.length; i++) {
+    const pair = t[i].startsWith('-') && t[i + 1] && !t[i + 1].startsWith('-') ? `${t[i]} ${t[i + 1]}` : '';
+    if (pair && pair.length <= 30) { g.push(pair); i++; } else g.push(t[i]);
+  }
+  for (let i = g.length - 1; i > 0; i--) {
+    if (g[i - 1].startsWith('-') && g[i].startsWith('-') && g[i - 1].length + g[i].length < 26) g.splice(i - 1, 2, `${g[i - 1]} ${g[i]}`);
+  }
+  return g.map((w) => (w.length <= 30 ? nw(esc(w)) : w.split(/(?<=\/\/)|(?<=-)(?=\d)/).map((p) => nw(esc(p))).join('<wbr>'))).join(' ');
+};
+// In output lines, keep each --flag whole and let a path break after a '/'.
+const flags = (s: string) => esc(s).replace(/(?<=\w)\/(?=\w)/g, '/<wbr>').replace(/(^|[\s(])(--?[\w-]+)/g, `$1${nw('$2')}`);
+// Terminal text: '$ ' a command, '! ' a line to point at, '─ ' a section rule, the rest plain output.
+// Each line but a rule is its own box, so a wrapped line hangs under its first word.
+const ln = (cls: string, s: string) => `<span class="ss-ln${cls ? ` ${cls}` : ''}">${s}</span>`;
+const line = (l: string) => {
+  if (l.startsWith('$ ')) return ln('ss-cmd', `<span class="jr-ps" aria-hidden="true">$ </span>${words(l.slice(2))}`);
+  if (l.startsWith('> ')) return ln('ss-out', esc(l.slice(2)));
+  if (l.startsWith('! ')) return ln('ss-key', esc(l.slice(2)));
+  if (l.startsWith('─ ')) return `<span class="ss-rule">${esc(l.slice(2))}</span>`;
+  if (l.startsWith('✅')) return ln('ss-ok', esc(l));
+  if (/^\s*▸/.test(l)) return ln('ss-dim', flags(l));
+  return l ? ln('', flags(l)) : '';
+};
+const term = (t: string) => t.split('\n').map(line).join('\n');
+
+const fmt = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms} ms`);
+// The first card is the person's ask, the second the coding agent's reply; a 'term' card is the command strip.
+const stages = await Promise.all(journey.map(async (s) => ({
+  ...s,
+  you: s.cards.find((c) => c.who === 'you')!,
+  agent: s.cards.find((c) => c.who === 'agent')!,
+  strip: s.code || s.trace ? term(s.cards.find((c) => c.who === 'term')!.text) : '',
+  html: s.code ? await code(s.code) : s.term ? term(s.term) : '',
+})));
+---
+<div class="ss" data-ss>
+  <div class="ss-side">
+  <div class="ss-head"><slot /></div>
+  <ol class="ss-steps" aria-label="The four steps">
+    {stages.map((s, i) => (
+      <li class={`ss-step${i === 0 ? ' is-cur' : ''}`}>
+        <button type="button" class="ss-hd" id={`ss-hd-${s.id}`} aria-controls={`ss-${s.id}`} aria-current={i === 0 ? 'step' : undefined}>
+          <span class="ss-node" aria-hidden="true">{i + 1}</span>
+          <span class="ss-nm">{s.name}</span>
+          <span class="ss-oc" set:html={s.outcome} />
+        </button>
+        <div class="ss-more"><div class="ss-more-in">
+          <span class="ss-oc ss-oc2" set:html={s.outcome} />
+          <a class="ss-guide" href={withBase(s.guide[0])}>{s.guide[1]}<span aria-hidden="true"> &rarr;</span></a>
+        </div></div>
+      </li>
+    ))}
+    <li class="ss-loop" aria-hidden="true">
+      <svg class="ss-ret" focusable="false">
+        <defs><linearGradient id="ss-grad" gradientUnits="userSpaceOnUse" x1="0" y1="1" x2="0" y2="0"><stop offset="0" class="ss-g-b" /><stop offset="1" class="ss-g-y" /></linearGradient></defs>
+        <path class="ss-ret-base" />
+        <path class="ss-ret-fill" pathLength="1" stroke="url(#ss-grad)" />
+        <path class="ss-ret-head" />
+      </svg>
+      <span class="ss-ret-lbl">Traces become eval cases, back to Evaluate</span>
+    </li>
+  </ol>
+  </div>
+  <div class="ss-wins">
+    {stages.map((s, i) => (
+      <section class={`ss-win${i === 0 ? ' is-cur' : ''}`} id={`ss-${s.id}`} role="region" aria-labelledby={`ss-hd-${s.id}`}>
+        <div class="ss-body ss-chat" tabindex="0">
+          <div class="ss-msg ss-you"><span class="sr-only">You: </span><p set:html={s.you.text} /></div>
+          {s.agent.skill && <p class="ss-skl"><span class="ss-skl-i" aria-hidden="true" />Using the {s.agent.skill} skill</p>}
+          {s.strip && <div class="ss-tool"><span class="ss-tl sr-only">Terminal</span><pre class="ss-sh ss-tb" set:html={s.strip} /></div>}
+          {s.code && <div class="ss-tool"><span class="ss-tl">{s.file}</span><div class="ss-code" set:html={s.html} /></div>}
+          {s.term && <div class="ss-tool"><span class="ss-tl sr-only">Terminal</span><pre class="jr-pre ss-pre ss-term ss-tb" set:html={s.html} /></div>}
+          {s.card?.kind === 'eval' && (
+            <div class="ss-tool ss-card"><span class="ss-tl">{s.card.label}</span>
+              <div class="ss-tb ss-ev" style={`--v:${Number(s.card.mean) / s.card.of};--b:${s.card.bar / s.card.of}`}>
+                <div class="ss-ev-l">
+                  <span class="ss-k">Mean score</span>
+                  <span class="ss-ev-n">{s.card.mean}<span class="ss-ev-of"> / {s.card.of}</span></span>
+                  <span class="ss-ok"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg>Above your {s.card.bar} bar</span>
+                </div>
+                <div class="ss-ev-r">
+                  <ol class="ss-ev-cs" aria-label={`Score of each of the ${s.card.cases.length} cases`}>
+                    {s.card.cases.map((c, k) => <li class={c < s.card.of ? 'is-low' : undefined} style={`--h:${c / s.card.of};--k:${k}`}><span class="ss-ev-c" aria-hidden="true" /><span class="ss-ev-cn">{c}</span></li>)}
+                  </ol>
+                  <span class="ss-k">{s.card.cases.length} cases, {s.card.errors} errors</span>
+                </div>
+              </div>
+            </div>
+          )}
+          {s.card?.kind === 'service' && (
+            <div class="ss-tool ss-card"><span class="ss-tl">{s.card.label}</span>
+              <div class="ss-tb ss-svc">
+                <ul class="ss-tg" aria-label="Deployment targets">
+                  {s.card.targets.map((t) => <li class={t === s.card.target ? 'is-sel' : undefined} aria-current={t === s.card.target ? 'true' : undefined}>{t === s.card.target && <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>}{t}</li>)}
+                </ul>
+                <div class="ss-svc-top"><span class="ss-svc-n">{s.card.service}</span><span class="ss-svc-st"><i aria-hidden="true" />Live</span></div>
+                <p class="ss-svc-kv"><span class="ss-k">Region</span> {s.card.region} <span class="ss-k">Revision</span> {s.card.revision}</p>
+                <div class="ss-svc-tr"><span class="ss-k">Traffic</span><span class="ss-svc-bar"><span class="ss-svc-f" style={`--t:${s.card.traffic / 100}`}>{s.card.traffic}%</span></span></div>
+                <span class="ss-svc-url">{s.card.url.replace('https://', '')}</span>
+              </div>
+            </div>
+          )}
+          {s.trace && (
+            <div class="ss-tool"><span class="ss-tl">{s.file}</span>
+            <div class="ss-trace ss-tb">
+              <div class="ss-axis" aria-hidden="true">{s.trace.ticks.map((t) => <span style={`--x:${t / s.trace!.total}`}>{t ? `${t / 1000} s` : '0'}</span>)}</div>
+              <ol class="ss-wf" aria-label="Spans, with duration">
+                {s.trace.spans.map((p) => (
+                  <li class={`ss-span k-${p.kind}`} style={`--d:${p.depth};--x:${p.start / s.trace!.total};--w:${p.dur / s.trace!.total}`}>
+                    <span class="ss-sn">{p.name}</span>
+                    <span class="ss-sd">{fmt(p.dur)}</span>
+                    <span class="ss-track" aria-hidden="true"><span class="ss-sb" /></span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+            </div>
+          )}
+          <div class="ss-msg ss-ag"><span class="sr-only">Coding agent: </span><p set:html={s.agent.text} /><span class="ss-dots" aria-hidden="true"><i /><i /><i /></span></div>
+        </div>
+        <div class="ss-ask" aria-hidden="true"><span class="ss-ask-t" /><span class="ss-ask-ph">Ask your coding agent</span><span class="ss-send" /></div>
+      </section>
+    ))}
+  </div>
+</div>
+<script is:inline>
+  // Before first paint: hold the first stage at its start so it can play, unless the reader asked for less motion.
+  // If the module script never runs, the final state shows after 3 s.
+  (function (r) {
+    if (!r || !window.IntersectionObserver || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    var a = [r.querySelector('.ss-step'), r.querySelector('.ss-win')];
+    a.forEach(function (e) { e.classList.add('ss-run'); });
+    setTimeout(function () { if (!r.classList.contains('ss-js')) a.forEach(function (e) { e.classList.remove('ss-run'); }); }, 3000);
+  })(document.currentScript.previousElementSibling);
+</script>
+
+<script>
+  // The live session. A stage plays when shown: the exchange arrives (a thinking beat before the coding agent's
+  // line), then the window fills (Build: the scaffold's file, then the coding agent types its edit; Evaluate and
+  // Deploy: terminal output; Observe: trace rows) and the result settles in. Elements only fade, clip or open in
+  // place, so the layout keeps its size and screen readers get the final text (no live regions). Auto-advance: loops
+  // while in view, each stage's animation plus a pause to read; a click or key on a step hands control to the reader
+  // for good.
+  // Clicked steps play fast. Reduced motion: final state, no playback.
+  const root = document.querySelector<HTMLElement>('[data-ss]');
+  if (root) {
+    const steps = [...root.querySelectorAll<HTMLElement>('.ss-step')];
+    const heads = steps.map((s) => s.querySelector<HTMLButtonElement>('.ss-hd')!);
+    const wins = [...root.querySelectorAll<HTMLElement>('.ss-win')];
+    const motion = 'IntersectionObserver' in window && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+    // AUTO: autoplay speed (1 is the plan's own timing); FAST: a clicked step
+    const READ = 1600, AUTO = 0.75, FAST = 0.4;
+    const $$ = (p: Element, s: string) => [...p.querySelectorAll<HTMLElement>(s)];
+    const on = (el: Element | null | undefined, c = 'is-in') => el?.classList.add(c);
+    const off = (el: Element | null | undefined, ...c: string[]) => el?.classList.remove(...c);
+    let cur = 0;
+
+    // The return path: Observe's node back up to Evaluate's, in the gutter left of the nodes. Measured, since the open
+    // step changes the rows' heights; the arrowhead points at Evaluate's node. Dotted from the start; it fills each time the lap wraps.
+    const ol = root.querySelector<HTMLElement>('.ss-steps')!;
+    const ret = root.querySelector<SVGSVGElement>('.ss-ret')!;
+    const lbl = root.querySelector<HTMLElement>('.ss-ret-lbl')!;
+    const [pBase, pFill, pHead] = [...ret.querySelectorAll<SVGPathElement>('path')];
+    const nodeY = (i: number) => { const n = steps[i].querySelector<HTMLElement>('.ss-node')!; return n.getBoundingClientRect().top - ol.getBoundingClientRect().top + n.offsetHeight / 2; };
+    const drawRet = () => {
+      const g = steps[0].querySelector<HTMLElement>('.ss-node')!.getBoundingClientRect().left - ol.getBoundingClientRect().left;
+      if (getComputedStyle(ret).display === 'none') return;
+      const y0 = nodeY(1), h = nodeY(3) - y0, w = g, r = 12, x = w - 16;
+      ret.style.top = `${y0}px`; ret.style.height = `${h}px`; ret.setAttribute('width', String(w)); ret.setAttribute('height', String(h));
+      ret.setAttribute('viewBox', `0 0 ${w} ${h}`);
+      const d = `M${w - 1} ${h} H${x + r} Q${x} ${h} ${x} ${h - r} V${r} Q${x} 0 ${x + r} 0 H${w - 7}`;
+      pBase.setAttribute('d', d); pFill.setAttribute('d', d);
+      pHead.setAttribute('d', `M${w - 11} -4.5 L${w - 4} 0 L${w - 11} 4.5`);
+      ret.querySelector('linearGradient')!.setAttribute('y1', String(h));
+      lbl.style.top = `${ol.clientHeight - 22}px`;
+    };
+    new ResizeObserver(drawRet).observe(ol);
+
+    // seeded, so the typing rhythm is the same every time
+    let seed = 1;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    // 3 to 8 characters at a time, cut at word and symbol edges, like a model streaming tokens
+    const chunks = (s: string) => {
+      const out: string[] = [];
+      let c = '';
+      for (const t of s.match(/\s*[\w.]+|\s*[^\w\s]+|\s+/g) ?? []) {
+        c += t;
+        if (c.length >= 3 + rnd() * 5) { out.push(c); c = ''; }
+      }
+      if (c) out.push(c);
+      return out;
+    };
+
+    // One stage as [ms, step] pairs at normal speed; the last pair marks the end.
+    let caret: HTMLElement | null = null;
+    const plan = (p: HTMLElement, s: HTMLElement) => {
+      const S: [number, () => void][] = [];
+      let t = 0;
+      const at = (fn: () => void, d = 0) => S.push([t + d, fn]);
+      const wait = (ms: number) => { t += ms; };
+      const strip = $$(p, '.ss-sh .ss-ln');
+      const body = p.querySelector<HTMLElement>('.ss-body')!;
+      const say = (c: HTMLElement | null, think: boolean) => {
+        if (!c) return;
+        if (think) { at(() => on(c, 'is-think')); wait(350); }
+        at(() => { off(c, 'is-think'); on(c); });
+        wait(think ? 200 : 250);
+      };
+      // keep the newest terminal line in view, scrolling the column only, never the page
+      const follow = (el: HTMLElement) => {
+        const b = body.getBoundingClientRect(), r = el.getBoundingClientRect();
+        if (r.bottom > b.bottom - 12) body.scrollTop += r.bottom - b.bottom + 14;
+      };
+
+      // you type the prompt into the box and send it
+      const ask = p.querySelector<HTMLElement>('.ss-ask-t')!;
+      const q = p.querySelector('.ss-you p')?.textContent ?? '';
+      at(() => on(p.querySelector('.ss-ask'), 'is-typing'));
+      let typed = '';
+      // one or two characters at a time, at a readable typing pace
+      for (const c of q.match(/[\s\S]{1,2}/g) ?? []) { typed += c; const v = typed; at(() => { ask.textContent = v; }); wait(55 + rnd() * 45); }
+      wait(500);
+      at(() => { ask.textContent = ''; off(p.querySelector('.ss-ask'), 'is-typing'); });
+      say(p.querySelector('.ss-you'), false);
+      // the coding agent loads its skill, then works in the tool blocks
+      at(() => { const k = p.querySelector('.ss-skl'); on(k); if (k) follow(k as HTMLElement); });
+      wait(320);
+      const tools = $$(p, '.ss-tool');
+      const tool = (i: number) => { at(() => { on(tools[i]); follow(tools[i].querySelector('.ss-tl')!); }); wait(160); };
+      if (p.querySelector('.ss-code')) {
+        const lines = $$(p, '.ss-code .line');
+        // agents-cli create succeeds and its file appears at once, as generated output
+        tool(0);
+        at(() => on(strip[0]));
+        wait(240);
+        at(() => on(strip[1]));
+        wait(200);
+        tool(1);
+        lines.filter((l) => !l.classList.contains('ss-add')).forEach((l, k) => at(() => on(l), k * 10));
+        wait(lines.length * 10 + 160);
+        at(() => on(p, 'is-live'));
+        // then the coding agent types its edit, line by line, in short chunks
+        lines.forEach((l, k) => {
+          if (!l.classList.contains('ss-add')) return;
+          if (!lines[k - 1]?.classList.contains('ss-add')) wait(130);
+          const txt = l.textContent ?? '';
+          let n = txt.length - txt.trimStart().length;
+          const set = (v: number) => () => l.style.setProperty('--n', String(v));
+          at(() => { off(caret, 'is-typing'); caret = l; set(n)(); on(l, 'is-typing'); on(l); follow(l); });
+          wait(60);
+          for (const c of chunks(txt.slice(n))) { n += c.length; at(set(n)); wait(30 + c.length * 6 + rnd() * 30); }
+          wait(30 + rnd() * 40);
+        });
+        // the caret rests, blinking, then the header settles
+        at(() => on(caret, 'is-rest'));
+        wait(300);
+        at(() => { off(caret, 'is-typing', 'is-rest'); off(p, 'is-live'); });
+        wait(150);
+      } else if (p.querySelector('.ss-term')) {
+        tool(0);
+        for (const el of $$(p, '.ss-term > .ss-ln, .ss-term > .ss-rule')) {
+          const cmd = el.classList.contains('ss-cmd');
+          at(() => { on(el); follow(el); });
+          const x = el.textContent ?? '';
+          wait(cmd ? 300 : /\.\.\.|…|Booting|Building/.test(x) ? 400 : el.classList.contains('ss-rule') ? 500 : 35 + rnd() * 40);
+        }
+        wait(150);
+        // the result card: it appears, then its bars fill
+        const card = p.querySelector('.ss-card');
+        if (card) { tool(1); at(() => on(card, 'is-on'), 120); wait(1100); }
+      } else {
+        tool(0);
+        at(() => on(strip[0]));
+        wait(400);
+        tool(1);
+        for (const r of $$(p, '.ss-span')) { at(() => { on(r); follow(r); }); wait(150); }
+        wait(200);
+      }
+      // the coding agent replies
+      const ag = p.querySelector<HTMLElement>('.ss-ag');
+      say(ag, true);
+      at(() => { if (ag) follow(ag); });
+      at(() => on(p, 'is-ok'));
+      wait(450);
+      at(() => {});
+      return S;
+    };
+
+    // Start state, no transitions; final state: every class off.
+    const reset = (p: HTMLElement, s: HTMLElement) => {
+      for (const e of [p, s]) { on(e, 'ss-snap'); on(e, 'ss-run'); }
+      $$(root, '.is-in, .is-on, .is-think, .is-typing').forEach((e) => {
+        if (p.contains(e) || s.contains(e)) off(e, 'is-in', 'is-on', 'is-think', 'is-typing', 'is-rest');
+      });
+      off(p, 'is-ok', 'is-live');
+      p.querySelector('.ss-ask-t')!.textContent = '';
+      off(p.querySelector('.ss-ask'), 'is-typing');
+      p.querySelectorAll('.ss-body').forEach((b) => { b.scrollTop = 0; });
+      void p.offsetWidth;
+      for (const e of [p, s]) off(e, 'ss-snap');
+    };
+    const finish = (p: HTMLElement, s: HTMLElement) => {
+      for (const e of [p, s]) off(e, 'ss-run');
+      $$(p, '.is-think, .is-typing').forEach((e) => off(e, 'is-think', 'is-typing', 'is-rest'));
+      $$(s, '.is-think').forEach((e) => off(e, 'is-think'));
+      off(p, 'is-live');
+      p.querySelector('.ss-ask-t')!.textContent = '';
+      off(p.querySelector('.ss-ask'), 'is-typing');
+      caret = null;
+    };
+
+    let timers: number[] = [];
+    let playing = -1;
+    // a step shows as done once it has played to its end or the reader has moved past it
+    let ended = false;
+    const mark = () => {
+      steps.forEach((s, j) => s.classList.toggle('is-done', j < cur || (j === cur && ended)));
+      // Observe has played: the loop closes, drawing back up to Evaluate, where the next lap starts
+      const looped = !motion || (ended && cur === steps.length - 1);
+      root.classList.toggle('ss-looped', looped);
+    };
+    // Plays stage i at speed k (1 normal, FAST for a click); returns its length in ms.
+    const play = (i: number, k: number, done: () => void) => {
+      timers.forEach(clearTimeout);
+      timers = [];
+      if (playing >= 0) finish(wins[playing], steps[playing]);
+      playing = i;
+      ended = false;
+      reset(wins[i], steps[i]);
+      seed = 1;
+      const steps_ = plan(wins[i], steps[i]);
+      for (const [t, fn] of steps_) timers.push(window.setTimeout(fn, t * k));
+      const end = steps_[steps_.length - 1][0] * k;
+      timers.push(window.setTimeout(() => { finish(wins[i], steps[i]); playing = -1; ended = true; mark(); done(); }, end + 40));
+      return end;
+    };
+
+    const select = (i: number, focus = false) => {
+      cur = i;
+      steps.forEach((s, j) => s.classList.toggle('is-cur', j === i));
+      heads.forEach((h, j) => { if (j === i) h.setAttribute('aria-current', 'step'); else h.removeAttribute('aria-current'); });
+      // not [hidden]: base.css forces it to display:none, and the stacked windows must keep their size
+      wins.forEach((p, j) => { p.classList.toggle('is-cur', j === i); p.inert = j !== i; });
+      mark();
+      if (focus) heads[i].focus();
+    };
+
+    let auto = motion, inView = false, started = false, pending = false, advance = 0;
+    const arm = () => {
+      clearTimeout(advance);
+      if (auto && pending && inView) advance = window.setTimeout(() => { pending = false; stage(cur === steps.length - 1 ? 1 : cur + 1, AUTO); }, READ);
+    };
+    // Show stage i; with motion, play it first (its start state is set before the window becomes visible).
+    const stage = (i: number, k: number, focus = false) => {
+      started = true;
+      if (motion) {
+        const ms = play(i, k, () => { if (auto) { pending = true; arm(); } });
+        // while auto-advancing, the connector fills over the stage and the pause
+        root.style.setProperty('--ss-t', `${Math.round(ms + READ)}ms`);
+        root.classList.toggle('ss-auto', auto);
+      }
+      select(i, focus);
+    };
+    const stop = () => {
+      if (!auto) return;
+      auto = false;
+      pending = false;
+      clearTimeout(advance);
+      root.classList.remove('ss-auto');
+    };
+
+    root.classList.add('ss-js');
+    select(0);
+    drawRet();
+    if (motion) reset(wins[0], steps[0]);
+
+    // A pointer press selects without focusing, so a focus ring only ever follows the keyboard.
+    heads.forEach((h, i) => {
+      h.addEventListener('mousedown', (e) => e.preventDefault());
+      h.addEventListener('click', () => { stop(); if (i !== cur || !started) stage(i, FAST); });
+      h.addEventListener('keydown', (e) => {
+        const n = heads.length;
+        const to = e.key === 'ArrowDown' || e.key === 'ArrowRight' ? (i + 1) % n : e.key === 'ArrowUp' || e.key === 'ArrowLeft' ? (i - 1 + n) % n : e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : -1;
+        if (to < 0) return;
+        e.preventDefault();
+        stage(to, FAST, true);
+      });
+    });
+    root.addEventListener('keydown', stop);
+
+    // Stage 1 starts when the section is in view; the pause before the next stage only counts while it is.
+    if (motion) {
+      new IntersectionObserver(([e]) => {
+        inView = e.isIntersecting && e.intersectionRatio >= 0.34;
+        root.classList.toggle('ss-paused', !inView);
+        if (inView && !started) stage(0, AUTO);
+        else if (inView) arm();
+        else clearTimeout(advance);
+      }, { threshold: [0, 0.35] }).observe(root);
+    }
+  }
+</script>

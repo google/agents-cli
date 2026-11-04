@@ -1,0 +1,325 @@
+/* Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/* Homepage, the lifecycle section (HomeJourney). Loaded after home.css. */
+/* ---------- session: a stepper of the four stages left, one artifact window right ---------- */
+/* first section under the hero: a shorter gap, so it shows above the fold */
+#session { padding-top: clamp(48px, 6.5vh, 64px); }
+/* the heading heads the left column, as in the other split sections; the window starts level with it */
+.ss-head { margin-bottom: clamp(32px, 3.4vw, 44px); }
+.ss {
+  --jr-mono: 12.5px; --ss-gut: 38px;
+  min-width: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: var(--col-gap); align-items: start;
+}
+.home .ss p code, .home .ss .ss-oc code { padding: 0; background: none; border-radius: 0; font: 0.93em var(--code); color: inherit; white-space: nowrap; }
+/* shared with the rules window: the code type and the '$ ' prompt */
+.jr-pre { margin: 0; padding: 0; background: none; font: var(--jr-mono)/1.5 var(--code); color: var(--code-foreground); }
+.jr-pre code { font: inherit; }
+.jr-ps { color: var(--ink-3); font-weight: 400; }
+
+/* the stepper: a node per stage on one connector line; the active stage opens to its exchange */
+.ss-steps { position: relative; list-style: none; margin: 0; padding: 0 0 0 var(--ss-gut); }
+.ss-step { position: relative; padding-bottom: 22px; }
+.ss-step:nth-child(4) { padding-bottom: 0; }
+.ss-step::before, .ss-step::after { content: ''; position: absolute; left: 13px; top: 34px; bottom: -4px; width: 2px; border-radius: 1px; background: var(--rule); }
+.ss-step::after { background: var(--accent); transform: scaleY(0); transform-origin: top; }
+.ss-step:nth-child(4)::before, .ss-step:nth-child(4)::after { display: none; }
+.ss-step.is-done::after { transform: scaleY(1); }
+/* while auto-advancing, the connector fills over the stage's animation and the pause after it (--ss-t, set by the script) */
+.ss-auto .ss-step.is-cur::after { animation: ss-fill var(--ss-t, 5s) linear both; }
+.ss-paused .ss-step::after { animation-play-state: paused; }
+@keyframes ss-fill { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+
+.ss-hd { position: relative; display: block; width: 100%; min-height: 44px; margin: 0; padding: 0 0 0 44px; border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.ss-hd:focus { outline: none; }
+.ss-hd:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 10px; }
+.ss-node {
+  position: absolute; left: 0; top: 0; z-index: 1; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%;
+  border: 1.5px solid var(--rule); background: var(--page); font: 500 13px/1 var(--code); color: var(--ink-3);
+}
+/* one accent: the current stage is a filled node, done stages a tinted node with a check */
+.ss-step.is-done .ss-node { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--page)); color: var(--accent); }
+.ss-step.is-cur .ss-node { border-color: var(--accent); background: var(--accent); color: var(--page); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent); }
+.ss-step.is-done .ss-node { font-size: 0; }
+.ss-step.is-done .ss-node::after { content: ''; width: 5px; height: 10px; margin-top: -2px; border: solid currentColor; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+/* the return path: Observe back up to Evaluate in the gutter; the script measures and draws it, the fill runs while the lap wraps */
+.ss-loop { position: absolute; inset: 0; margin: 0; list-style: none; pointer-events: none; }
+.ss-ret { display: none; position: absolute; left: 0; overflow: visible; }
+/* dotted from the start, so the loop back is no surprise; it fills solid each time the lap wraps */
+.ss-js .ss-ret { display: block; }
+/* the label shows only while the loop closes, from Observe's end until Evaluate starts again */
+.ss-looped .ss-ret-lbl { opacity: 1; }
+@media (min-width: 701px) { .ss-js .ss-steps { padding-bottom: 34px; } }
+/* wide: the window is as tall as the stepper beside it; its body scrolls, the footer stays */
+@media (min-width: 901px) {
+  .ss { align-items: stretch; }
+  .ss { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); }
+  /* 4:3, but never too short to hold a stage */
+  .ss-js .ss-wins { container-type: inline-size; align-self: stretch; }
+  /* the stepper is as tall as the window: the steps share the extra height, so the connectors stay whole */
+  .ss-js .ss-side { display: flex; flex-direction: column; }
+  .ss-js .ss-steps { flex: 1; display: flex; flex-direction: column; }
+  .ss-js .ss-step { flex: 1 0 auto; padding-bottom: 14px; }
+  .ss-js .ss-step:nth-child(4) { flex: none; }
+  .ss-js .ss-win { height: 100%; min-height: max(520px, 75cqw); }
+  .ss-js .ss-body { flex: 1 1 auto; min-height: 0; }
+}
+.ss-ret path { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ss-ret-base { stroke: var(--ink-3); stroke-dasharray: 0 6; opacity: .7; }
+.ss-ret-fill { stroke-dasharray: 1; stroke-dashoffset: 1; opacity: 0; }
+.ss-ret-head { stroke: var(--ink-3); opacity: .7; }
+.ss-g-b, .ss-g-y { stop-color: var(--accent); }
+.ss-ret-lbl {
+  display: none; position: absolute; left: 0; font-size: 13px; line-height: 18px; color: var(--ink-3); white-space: nowrap;
+  opacity: 0; transition: color .3s, opacity .4s;
+}
+.ss-js .ss-ret-lbl { display: block; }
+.ss-ret-lbl::before { content: '\21BA\00a0'; }
+.ss-looped .ss-ret-lbl { color: var(--ink); }
+.ss-looped .ss-ret-fill { stroke-dashoffset: 0; opacity: 1; }
+.ss-looped .ss-ret-head { stroke: var(--accent); opacity: 1; }
+.ss-nm { display: block; font-size: 22px; font-weight: 500; line-height: 28px; letter-spacing: -0.01em; color: var(--ink-2); }
+.ss-oc { display: block; margin-top: 2px; font-size: 16px; line-height: 1.4; color: var(--ink-2); text-wrap: pretty; }
+.ss-step.is-cur .ss-nm, .ss-hd:hover .ss-nm { color: var(--ink); }
+.ss-step.is-cur .ss-oc { color: var(--ink); font-weight: 500; }
+
+/* every step keeps room for its guide link and only the current one shows it, so changing steps never moves the
+   rows or the page; on phones the four sit in one cell, which is as tall as the tallest */
+.ss-more { display: grid; }
+.ss-more-in { min-width: 0; padding: 0 4px 4px 44px; visibility: hidden; opacity: 0; }
+.ss-step.is-cur .ss-more-in { visibility: visible; opacity: 1; }
+.ss-guide { display: inline-block; margin-top: 10px; font-size: 14px; font-weight: 500; line-height: 20px; color: var(--accent); text-decoration: none; }
+.ss-guide:hover { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.ss-guide:focus { outline: none; }
+.ss-guide:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+/* the artifact window: one card that follows the theme. Chrome, one flowing body, a result footer, all on one surface. */
+.ss-wins { display: grid; min-width: 0; }
+.ss-win {
+  --ss-px: 20px; --jr-mono: 14px; --ss-line: var(--rule);
+  --ss-fg: var(--ink); --ss-strong: var(--ink); --ss-soft: var(--ink-2); --ss-dim: var(--ink-3); --ss-ac: var(--accent); --ss-gn: var(--pass); --ss-yl: #f9ab00;
+  grid-area: 1 / 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden;
+  color: var(--ss-fg); border: 1px solid var(--rule); border-radius: 14px; background: var(--page); box-shadow: 0 24px 48px -28px rgb(32 33 36 / .28);
+}
+[data-theme='dark'] .ss-win { --ss-yl: #fdd663; background: var(--surface); box-shadow: none; }
+.ss-js .ss-win:not(.is-cur) { visibility: hidden; }
+/* the chat: your prompt on the right, the skill it loads, its tool blocks, its reply */
+.ss-chat { display: flex; flex-direction: column; gap: 10px; -webkit-mask-image: linear-gradient(transparent, #000 18px); mask-image: linear-gradient(transparent, #000 18px); }
+.ss-chat > * { flex: none; }
+.ss-msg p { margin: 0; font-size: 15px; line-height: 1.45; color: var(--ss-fg); text-wrap: pretty; }
+.ss-you { align-self: flex-end; max-width: 85%; padding: 9px 14px 10px; border-radius: 16px 16px 4px 16px; background: var(--surface); }
+[data-theme='dark'] .ss-you { background: var(--island-2); }
+.ss-ag { display: grid; }
+.ss-ag p, .ss-dots { grid-row: 1; grid-column: 1; }
+.ss-dots { display: none; align-self: start; align-items: center; gap: 4px; height: 22px; }
+.ss-dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--ink-3); animation: ss-dot 1s ease-in-out infinite; }
+.ss-dots i:nth-child(2) { animation-delay: .15s; }
+.ss-dots i:nth-child(3) { animation-delay: .3s; }
+.ss-ag.is-think .ss-dots { display: flex; }
+.ss-skl { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; line-height: 18px; color: var(--ss-dim); }
+.ss-skl-i { width: 14px; height: 14px; border-radius: 4px; border: 1.5px solid var(--ss-ac); background: color-mix(in srgb, var(--ss-ac) 14%, transparent); }
+.ss-tool { --jr-mono: 12.5px; position: relative; min-width: 0; border: 1px solid var(--ss-line); border-radius: 10px; overflow: hidden; }
+.ss-tl { display: block; padding: 8px 14px 0; font: 11px/16px var(--code); color: var(--ss-dim); }
+.ss-tl:not(.sr-only) + .ss-tb, .ss-tl + .ss-code { padding-top: 6px; }
+.ss-tb { padding: 10px 14px 12px; }
+/* result cards: the eval scores and the Cloud Run service, drawn rather than printed */
+.ss-k { font-size: 12.5px; line-height: 16px; color: var(--ss-dim); }
+.ss-ok { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 500; line-height: 18px; color: var(--ss-gn); }
+.ss-ev { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: end; gap: 12px 24px; padding-bottom: 12px; }
+.ss-ev-l { display: grid; gap: 2px; }
+.ss-ev-n { font-size: 36px; font-weight: 500; line-height: 1.05; letter-spacing: -0.02em; color: var(--ss-gn); font-variant-numeric: tabular-nums; }
+.ss-ev-of { font-size: 16px; font-weight: 400; letter-spacing: 0; color: var(--ss-dim); }
+.ss-ev-r { display: grid; justify-items: end; gap: 6px; }
+.ss-ev-cs { display: flex; align-items: flex-end; gap: 6px; height: 50px; margin: 0; padding: 0; list-style: none; }
+.ss-ev-cs li { display: grid; justify-items: center; gap: 3px; }
+.ss-ev-c { display: block; width: 16px; height: calc(var(--h) * 32px); border-radius: 3px; background: var(--ss-gn); transform-origin: bottom; }
+.ss-ev-cs .is-low .ss-ev-c { opacity: .55; }
+.ss-ev-cn { font: 11px/14px var(--code); color: var(--ss-dim); }
+.ss-svc { display: grid; gap: 10px; padding-bottom: 12px; }
+.ss-tg { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0 0 10px; list-style: none; border-bottom: 1px solid var(--ss-line); }
+.ss-tg li { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border: 1px solid var(--ss-line); border-radius: 999px; font-size: 12.5px; line-height: 18px; color: var(--ss-dim); }
+.ss-tg li.is-sel { border-color: var(--ss-ac); color: var(--ss-ac); font-weight: 500; background: color-mix(in srgb, var(--ss-ac) 10%, transparent); }
+.ss-svc-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ss-svc-n { font: 500 17px/1.2 var(--code); color: var(--ss-strong); }
+.ss-svc-st { display: inline-flex; align-items: center; gap: 7px; padding: 2px 10px; border-radius: 999px; font-size: 13px; font-weight: 500; line-height: 20px; color: var(--ss-gn); background: color-mix(in srgb, var(--ss-gn) 12%, transparent); }
+.ss-svc-st i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 3px color-mix(in srgb, var(--ss-gn) 25%, transparent); }
+.ss-svc-kv { margin: 0; font: 12.5px/18px var(--code); color: var(--ss-fg); }
+.ss-svc-kv .ss-k { margin-right: 4px; font-family: var(--sans); }
+.ss-svc-kv .ss-k:not(:first-child) { margin-left: 14px; }
+.ss-svc-tr { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 12px; }
+.ss-svc-bar { display: block; height: 22px; border-radius: 5px; background: var(--rule); overflow: hidden; }
+.ss-svc-f { display: flex; align-items: center; height: 100%; width: calc(var(--t) * 100%); padding-left: 8px; font: 500 11.5px/1 var(--code); color: #fff; background: var(--ss-gn); transform-origin: left; }
+[data-theme='dark'] .ss-svc-f { color: #0b2b16; }
+.ss-svc-url { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12.5px/18px var(--code); color: var(--ss-ac); }
+.ss-svc-url::before { content: '\2197\00a0'; }
+/* the box you type into: decorative, the prompt types in and is sent */
+.ss-ask { flex: none; display: flex; align-items: center; gap: 10px; margin: 0 12px 12px; padding: 0 8px 0 16px; height: 44px; border: 1px solid var(--rule); border-radius: 22px; font-size: 14.5px; color: var(--ss-dim); }
+.ss-ask-t { color: var(--ss-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ss-ask-t:not(:empty) + .ss-ask-ph { display: none; }
+.ss-ask-ph { flex: 1; }
+.ss-ask.is-typing .ss-ask-t::after { content: ''; display: inline-block; width: 2px; height: 1.1em; margin-left: 1px; vertical-align: -0.15em; background: var(--ss-ac); }
+.ss-ask.is-typing { border-color: var(--ss-ac); }
+.ss-send { flex: none; width: 28px; height: 28px; margin-left: auto; border-radius: 50%; background: var(--rule); position: relative; }
+.ss-send::after { content: ''; position: absolute; left: 50%; top: 50%; width: 7px; height: 7px; margin: -2px 0 0 -4px; border: solid var(--page); border-width: 2px 0 0 2px; transform: rotate(45deg); }
+.ss-ask-t:not(:empty) ~ .ss-send { background: var(--ss-ac); }
+.ss-sh { margin: 0; font: var(--jr-mono)/1.65 var(--code); color: var(--ss-fg); white-space: pre-wrap; }
+.ss-sh .ss-out { color: var(--ss-gn); }
+/* one box per terminal line: a wrapped line hangs 2ch in, under the command after '$ ' */
+.ss-ln { position: relative; display: inline-block; width: 100%; vertical-align: top; padding-left: 2ch; text-indent: -2ch; }
+.ss-nw { white-space: nowrap; }
+.ss-win .jr-ps { color: var(--ss-gn); }
+.ss-win .jr-pre { line-height: 1.65; }
+.ss-body { overflow: auto; padding: 14px var(--ss-px); }
+.ss-body:focus-visible { outline: 2px solid var(--ss-ac); outline-offset: -2px; }
+.ss-code { --ss-px: 20px; overflow-x: auto; padding: 10px 0; }
+.ss-code .jr-pre { white-space: pre; }
+/* one row per line, as wide as the longest, so an added line's tint spans the window; the '+' sits in the left padding */
+.ss-code code { display: grid; min-width: 100%; width: max-content; }
+.ss-code .line { position: relative; display: block; height: 1.65em; padding: 0 var(--ss-px); }
+.ss-add { overflow: hidden; background: color-mix(in srgb, var(--ss-gn) 10%, transparent); box-shadow: inset 2px 0 var(--ss-gn); }
+.ss-add::before { content: '+'; content: '+' / ''; position: absolute; left: 7px; color: var(--ss-gn); }
+.ss-lt { display: inline-block; vertical-align: top; }
+.ss-term { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ss-soft); }
+.ss-term .ss-cmd { color: var(--ss-strong); font-weight: 500; }
+.ss-term .ss-key { color: var(--ss-gn); font-weight: 600; }
+.ss-term .ss-key::before { content: ''; position: absolute; left: -10px; top: .25em; bottom: .25em; width: 2px; border-radius: 1px; background: var(--ss-gn); }
+.ss-term .ss-ok { color: var(--ss-gn); }
+.ss-term .ss-dim { color: var(--ss-dim); }
+.ss-rule { display: inline-block; width: 100%; vertical-align: top; margin-top: .55em; font-size: 11px; line-height: 1.8; letter-spacing: .08em; text-transform: uppercase; color: var(--ss-dim); }
+
+/* the trace: one row per span, name and duration over a bar on the shared timeline */
+.ss-trace { display: flex; flex-direction: column; }
+.ss-trace > * { flex: none; }
+.ss-th { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; padding-bottom: 12px; font-size: 12px; color: var(--ss-dim); font-variant-numeric: tabular-nums; }
+.ss-tt { font: 500 12.5px var(--code); color: var(--ss-strong); margin-right: auto; }
+.ss-axis { position: relative; height: 22px; border-bottom: 1px solid var(--ss-line); font-size: 11px; color: var(--ss-dim); font-variant-numeric: tabular-nums; }
+.ss-axis span { position: absolute; left: calc(var(--x) * 100%); bottom: 5px; transform: translateX(-50%); white-space: nowrap; }
+.ss-axis span:first-child { transform: none; }
+.ss-axis span:last-child { transform: translateX(-100%); }
+.ss-wf { list-style: none; margin: 0; padding: 0; }
+.ss-span { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; row-gap: 3px; padding: 3px 0 4px; border-bottom: 1px solid color-mix(in srgb, var(--rule) 60%, transparent); }
+.ss-span:last-child { border-bottom: 0; }
+.ss-sn { padding-left: calc(var(--d) * 14px); font: 12px/16px var(--code); color: var(--ss-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ss-sd { font-size: 12px; line-height: 16px; color: var(--ss-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ss-track { grid-column: 1 / -1; position: relative; height: 5px; }
+.ss-sb { position: absolute; top: 0; bottom: 0; left: calc(var(--x) * 100%); width: max(3px, calc(var(--w) * 100%)); border-radius: 3px; background: var(--ink-3); }
+.k-model .ss-sb { background: var(--ss-ac); }
+.k-tool .ss-sb { background: var(--ss-yl); }
+.k-tool .ss-sn { font-weight: 600; color: var(--ss-strong); }
+
+/* no JS: the stepper is open and every window shows, one under the other */
+.ss:not(.ss-js) .ss-more-in { visibility: visible; opacity: 1; }
+.ss:not(.ss-js) .ss-hd { cursor: default; pointer-events: none; }
+.ss:not(.ss-js) .ss-wins { gap: 20px; }
+.ss:not(.ss-js) .ss-win { grid-area: auto; }
+
+/* the live session. The markup is the final state; while a stage plays (.ss-run, set by the script) parts wait
+   hidden in place and arrive as .is-in, so nothing reflows. The coding agent's line first shows
+   three dots (.is-think); its added lines fade in and type in (.is-typing, --n characters shown,
+   a caret after them). */
+.ss-run .ss-msg:not(.is-in, .is-think), .ss-run .ss-skl:not(.is-in), .ss-run .ss-tool:not(.is-in) { opacity: 0; transform: translateY(6px); }
+.ss-run .ss-msg:not(.is-in) p { opacity: 0; }
+.ss-run .ss-sh .ss-ln:not(.is-in),
+.ss-run .ss-code .line:not(.is-in),
+.ss-run .ss-term > :not(.is-in),
+.ss-run .ss-th:not(.is-in),
+.ss-run .ss-span:not(.is-in) { opacity: 0; }
+.ss-run .ss-add:not(.is-in) { opacity: 0; }
+.ss-run .ss-card:not(.is-on) .ss-svc-f { transform: scaleX(0); }
+.ss-run .ss-card:not(.is-on) .ss-ev-c { transform: scaleY(0); }
+.ss-run .ss-card:not(.is-on) :is(.ss-ok, .ss-svc-st) { opacity: 0; }
+.ss-run .ss-card:not(.is-on) .ss-tg li.is-sel { border-color: var(--ss-line); color: var(--ss-dim); background: none; }
+.ss-run .ss-span:not(.is-in) .ss-sb { transform: scaleX(0); }
+.ss-add.is-typing .ss-lt { clip-path: inset(0 max(0px, calc(100% - var(--n) * 1ch)) 0 0); }
+.ss-add.is-typing::after { content: ''; position: absolute; top: .2em; bottom: .2em; left: calc(var(--ss-px) + var(--n) * 1ch); width: 2px; border-radius: 1px; background: var(--ss-ac); }
+@media (prefers-reduced-motion: no-preference) {
+  .ss-more-in { transition: opacity .25s, visibility 0s .25s; }
+  .ss-step.is-cur .ss-more-in { transition-delay: 0s; }
+  .ss-node, .ss-nm, .ss-oc { transition: color .2s, background-color .2s, border-color .2s; }
+  .ss-step::after, .ss-hd::after { transition: transform .35s ease-out; }
+  .ss-looped .ss-ret-fill { transition: stroke-dashoffset 1.3s .1s cubic-bezier(.4, 0, .2, 1); }
+  .ss-looped .ss-ret-head { transition: stroke .2s 1.3s, opacity .2s 1.3s; }
+  .ss-msg, .ss-skl, .ss-tool { transition: opacity .3s, transform .35s cubic-bezier(.2, .7, .3, 1); }
+  .ss-msg p { transition: opacity .2s; }
+  .ss-svc-f { transition: transform .8s cubic-bezier(.2, .7, .3, 1); }
+  .ss-ev-c { transition: transform .45s calc(var(--k) * 60ms) cubic-bezier(.2, .7, .3, 1); }
+  .ss-ok, .ss-svc-st { transition: opacity .3s .6s; }
+  .ss-tg li { transition: border-color .3s .2s, color .3s .2s, background-color .3s .2s; }
+  .ss-sh .ss-ln, .ss-code .line, .ss-term > *, .ss-th, .ss-span { transition: opacity .15s; }
+  .ss-code .ss-add { transition: opacity .14s; }
+  .ss-sb { transform-origin: left; transition: transform .5s cubic-bezier(.2, .7, .3, 1); }
+  .ss-add.is-rest::after { animation: ss-blink 1.1s step-end infinite; }
+  .ss-snap, .ss-snap * { transition: none !important; }
+}
+@keyframes ss-dot { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
+@keyframes ss-blink { 50% { opacity: 0; } }
+
+
+.ss-oc2 { display: none; }
+/* narrow: the stepper above the window; the window keeps its own scroll */
+@media (max-width: 900px) {
+  .ss { grid-template-columns: minmax(0, 1fr); row-gap: 28px; }
+  .ss-side { display: contents; }
+}
+/* phones: a 4-step bar (number over name), then the active outcome and exchange, then the window */
+@media (max-width: 700px) {
+  .ss { --jr-mono: 12px; --ss-gut: 0px; row-gap: 20px; }
+  .ss-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  /* the loop back, as a small note under the bar */
+  .ss-loop { position: static; grid-row: 2; grid-column: 1 / -1; display: flex; justify-content: flex-end; margin-top: 4px; }
+  .ss-ret { display: none !important; }
+  .ss-ret-lbl { display: block; position: static; transform: none; padding: 0; background: none; }
+
+  .ss-step { display: contents; }
+  .ss-step::before, .ss-step::after { display: none; }
+  .ss-hd { grid-row: 1; min-height: 56px; padding: 0 2px; text-align: center; }
+  .ss-node { position: relative; margin: 0 auto 6px; }
+  .ss-nm { font-size: 14px; line-height: 20px; }
+  .ss-oc { display: none; }
+  .ss-hd::before, .ss-hd::after { content: ''; position: absolute; left: calc(50% + 20px); right: calc(-50% + 20px); top: 13px; height: 2px; border-radius: 1px; background: var(--rule); }
+  .ss-hd::after { background: var(--accent); transform: scaleX(0); transform-origin: left; }
+  .ss-step:nth-child(4) .ss-hd::before, .ss-step:nth-child(4) .ss-hd::after { display: none; }
+  .ss-step.is-done .ss-hd::after { transform: scaleX(1); }
+  .ss-auto .ss-step.is-cur .ss-hd::after { animation: ss-fillx var(--ss-t, 5s) linear both; }
+  .ss-paused .ss-step .ss-hd::after { animation-play-state: paused; }
+  .ss-more { grid-row: 3; grid-column: 1 / -1; }
+  .ss-more-in { padding: 0; }
+  .ss-oc2 { display: block; margin-top: 18px; font-size: 18px; line-height: 1.35; font-weight: 500; color: var(--ink); }
+  .ss-guide { margin-top: 8px; }
+  .ss-win { --ss-px: 14px; }
+  .ss-tool { --jr-mono: 12px; }
+  .ss-tb { padding-inline: 12px; }
+  .ss-msg p { font-size: 14.5px; }
+  .ss-chat { max-height: 560px; }
+  /* no JS: back to the open list, every step with its outcome and exchange */
+  .ss:not(.ss-js) .ss-steps { display: block; }
+  .ss:not(.ss-js) .ss-step { display: block; }
+  .ss:not(.ss-js) .ss-step::before, .ss:not(.ss-js) .ss-step::after { display: block; }
+  .ss:not(.ss-js) .ss-step:nth-child(4)::before, .ss:not(.ss-js) .ss-step:nth-child(4)::after { display: none; }
+  .ss:not(.ss-js) .ss-loop { display: none; }
+  .ss:not(.ss-js) .ss-hd::before, .ss:not(.ss-js) .ss-hd::after { display: none; }
+  .ss:not(.ss-js) .ss-hd { text-align: left; padding-left: 44px; }
+  .ss:not(.ss-js) .ss-node { position: absolute; margin: 0; }
+  .ss:not(.ss-js) .ss-oc { display: block; }
+  .ss:not(.ss-js) .ss-oc2 { display: none; }
+  .ss:not(.ss-js) .ss-more-in { padding-left: 44px; }
+}
+@media (max-width: 420px) {
+  .ss-ev { grid-template-columns: minmax(0, 1fr); }
+  .ss-ev-r { justify-items: start; }
+}
+@keyframes ss-fillx { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+

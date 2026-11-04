@@ -104,7 +104,7 @@ async function runUser(
 
   // 1. Create a session per user
   try {
-    const sessionRes = await fetch(`${baseUrl}/apps/agent/users/${userId}/sessions/${sessionId}`, {
+    const sessionRes = await fetch(`${baseUrl}/apps/{{cookiecutter.app_name}}/users/${userId}/sessions/${sessionId}`, {
       method: 'POST',
       headers,
       body: '{}',
@@ -130,7 +130,7 @@ async function runUser(
         method: 'POST',
         headers,
         body: JSON.stringify({
-          appName: 'agent',
+          appName: '{{cookiecutter.app_name}}',
           userId,
           sessionId,
           newMessage: { role: 'user', parts: [{ text: 'Hello! Weather in New York?' }] },

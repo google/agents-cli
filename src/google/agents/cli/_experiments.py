@@ -32,6 +32,8 @@ _REGISTRY: dict[str, Experiment] = {
     "adk_java": Experiment("adk_java", bool, False),
     "adk_kotlin": Experiment("adk_kotlin", bool, False),
     "adk_typescript": Experiment("adk_typescript", bool, False),
+    # Hides Agent Command Center (`command-center`, `acc`, `cc`) while in progress.
+    "command_center": Experiment("command_center", bool, False),
 }
 
 

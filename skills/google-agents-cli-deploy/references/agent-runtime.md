@@ -4,7 +4,7 @@
 
 ## Deployment Architecture
 
-Agent Runtime in Gemini platform uses **container-based deployment**: `agents-cli deploy` packages your project and Agent Runtime builds a container image from your project's `Dockerfile` (required at the project root; scaffolded projects ship one).
+Agent Runtime in Gemini platform uses **container-based deployment**: `agents-cli deploy` packages your project and Agent Runtime builds a container image from your project's `Dockerfile` (required at the project root; scaffolded projects ship one). To deploy an image you already built instead, pass `agents-cli deploy --image <artifact-registry-uri>`; no `Dockerfile` or source upload is needed. An existing agent can't switch between the two (Terraform-provisioned agents are source builds), so pick one per agent. On the first deploy of a new Agent Identity agent, the image starts once before its env vars and secrets are applied, so it must start without them.
 
 File selection honors the project-root `.gcloudignore`, else the project-root `.gitignore` (nested `.gitignore` files are not consulted).
 
@@ -61,9 +61,10 @@ is reachable at:
 https://{location}-aiplatform.googleapis.com/reasoningEngines/v1/{resource}/api/a2a/{app_name}/.well-known/agent-card.json
 ```
 
-`{app_name}` is the basename of the project's `agent_directory`, e.g.
-`my_agent` for `src/my_agent` (`agent_directory` is recorded in
-`deployment_metadata.json`). This is
+`{app_name}` is `create_params.app_name` in `agents-cli-manifest.yaml`;
+projects created before that key existed use the basename of
+`agent_directory`, e.g. `my_agent` for `src/my_agent` (`app_name` is recorded
+in `deployment_metadata.json`). This is
 the exact URL `deploy` advertises on success and `run` constructs for
 `--mode a2a` against an Agent Runtime URL — both
 authenticate with your Google credentials. On Agent Runtime, `publish` defaults
@@ -79,12 +80,15 @@ Deploy with `agents-cli deploy` (run `agents-cli deploy --help` for the full fla
 1. `agents-cli deploy` packages the project files (honoring `.gcloudignore`/`.gitignore`)
 2. Agent Runtime builds the container image and creates/updates the Agent Runtime instance
 3. Writes `deployment_metadata.json` with the engine resource ID
+4. For A2A projects, copies the served agent card to the engine's `spec.agent_card`, where Agent Registry reads it
 
 ## Terraform Resource
 
 Agent Runtime uses `google_vertex_ai_reasoning_engine` in `deployment/terraform/single-project/service.tf` (and the `cicd/service.tf` variant for CI/CD-managed deployments). Check those files for current scaling, concurrency, and resource limit settings.
 
-Key difference from Cloud Run: the `lifecycle.ignore_changes` (covering `container_spec`, `source_code_spec`, and `deployment_spec`) is critical — the image and source are updated by `agents-cli deploy` / CI/CD, not Terraform.
+Key difference from Cloud Run: the `lifecycle.ignore_changes` (covering `container_spec`, `source_code_spec`, `deployment_spec`, and `agent_card`) is critical — the image, source, and A2A agent card are updated by `agents-cli deploy` / CI/CD, not Terraform. The resource uses the `google-beta` provider because only it has `spec.agent_card`.
+
+If your `service.tf` doesn't list `spec[0].agent_card` in `ignore_changes` (projects scaffolded with older agents-cli versions), a `terraform apply` that changes the engine's `spec` clears the agent card, and Agent Registry stops listing the agent as A2A. Run `agents-cli scaffold upgrade` to pick up the updated `service.tf`, or rerun `agents-cli deploy` after such an apply to write the card back.
 
 ## deployment_metadata.json
 

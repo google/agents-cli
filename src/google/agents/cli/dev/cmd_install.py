@@ -123,6 +123,7 @@ LANGUAGE_HANDLERS = {
     "go": _install_go,
     "java": None,
     "typescript": None,
+    "kotlin": None,
 }
 
 

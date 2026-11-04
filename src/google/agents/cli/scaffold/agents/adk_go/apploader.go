@@ -21,8 +21,8 @@ import (
 )
 
 // appName is the {app_name} in /apps/{app_name}/... and /list-apps. It must
-// match agents-cli, which uses the basename of the agent directory.
-const appName = "{{cookiecutter.agent_package}}"
+// match create_params.app_name in agents-cli-manifest.yaml.
+const appName = "{{cookiecutter.app_name}}"
 
 // appLoader serves the root agent under appName, whatever the agent is called.
 //

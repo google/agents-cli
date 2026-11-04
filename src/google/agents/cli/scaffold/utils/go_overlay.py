@@ -23,11 +23,11 @@ from dataclasses import dataclass
 import click
 
 from google.agents.cli._runner import run
+from google.agents.cli._symlinks import require_safe_symlink
 from google.agents.cli._tools import ToolNotExecutableError, ToolNotFoundError
 
 from .fs import is_ignored_name, walk_source_tree
 from .language import get_language_config
-from .symlinks import require_safe_symlink
 from .upgrade import (
     DependencyReadError,
     DependencyResolution,

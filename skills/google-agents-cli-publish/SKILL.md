@@ -15,7 +15,7 @@ description: >
 metadata:
   author: Google
   license: Apache-2.0
-  version: 1.12.0
+  version: 1.13.0
   requires:
     bins:
       - agents-cli
@@ -160,6 +160,8 @@ agents-cli publish gemini \
 Agent Registry (Preview) is the Google Cloud fleet-wide catalog of **agents and MCP servers**, separate from a Gemini app.
 Agents deployed to a managed runtime (Agent Runtime in Gemini
 platform) are **auto-registered** — no extra step after `agents-cli deploy`.
+For A2A projects, `agents-cli deploy` also stores the served agent card on the
+engine, so the entry is listed as an A2A agent with the card's skills.
 Manage them with `gcloud` (requires `roles/agentregistry.editor`):
 
 ```bash

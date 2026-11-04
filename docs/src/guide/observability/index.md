@@ -1,34 +1,36 @@
 # Observability
 
-Every `agents-cli` project ships with OpenTelemetry instrumentation that automatically exports traces to **Cloud Trace**. This gives you:
+Every project that Agents CLI scaffolds ships with OpenTelemetry instrumentation that automatically exports traces to Cloud Trace. The instrumentation gives you:
 
-- **Distributed tracing** — track requests as they flow through LLM calls and tool executions.
-- **Latency analysis** — identify performance bottlenecks by analyzing span durations.
-- **Error visibility** — traces capture errors, helping pinpoint where failures occur.
-- **No configuration required** — works out-of-the-box in all environments.
+- **Distributed tracing**: Track requests as they flow through LLM calls and tool executions.
+- **Latency analysis**: Find performance bottlenecks from span durations.
+- **Error visibility**: Traces capture errors, so you can see where failures occur.
+- **No configuration required**: Works out of the box in all environments.
 
-For ADK-based agents, **prompt-response logging** captures full model interactions (prompts, responses, tokens) and uploads them to **GCS** (JSONL) + a **BigQuery** `completions` table. It's enabled whenever a logs bucket is configured (`LOGS_BUCKET_NAME` + the `OTEL_INSTRUMENTATION_GENAI_*` upload vars), which Terraform-provisioned deployments do by default.
+For ADK Python and Claude Agent SDK agents, **prompt-response logging** captures full model interactions (prompts, responses, tokens) and uploads them to GCS as JSONL and to a BigQuery `completions` table. It's on whenever a logs bucket is configured (`LOGS_BUCKET_NAME` plus the `OTEL_INSTRUMENTATION_GENAI_*` upload vars). Terraform-provisioned deployments configure one by default. ADK Go projects get the same BigQuery telemetry dataset, but not the GCS completion upload.
 
-> **Two independent tiers.** Prompt-response logging (GCS/BigQuery completions) captures **full content**. Whether content *also* appears in **Cloud Trace spans / Cloud Logging events** is governed separately by `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` (default `NO_CONTENT` — content kept **out** of traces/events) and `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS=false`. So by default: **full content in GCS/BigQuery, no content in traces.**
+!!! note "Two independent tiers"
+    Prompt-response logging (GCS/BigQuery completions) captures full content. Two separate settings control whether content also appears in Cloud Trace spans and Cloud Logging events: `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` (default `NO_CONTENT`, which keeps content out of traces and events) and, for ADK Python only, `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS=false`. By default, GCS and BigQuery get full content and traces get none. ADK Go reads `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` as a boolean instead: `true` or `1` captures content, and any other value keeps it out.
 
-### Logging Behavior by Environment
+<a id="logging-behavior-by-environment"></a>
+## How does logging behave in each environment?
 
-| Environment | Cloud Trace spans | Prompt-Response Logging (GCS/BigQuery) |
+| Environment | Cloud Trace spans | Prompt-response logging (GCS/BigQuery) |
 |---|---|---|
 | **Local** (`agents-cli playground`) | Enabled, no content | Off (no `LOGS_BUCKET_NAME`) |
-| **Deployed** (Terraform-provisioned) | Enabled, no content | **On — full prompts/responses** |
+| **Deployed** (Terraform-provisioned) | Enabled, no content | **On, full prompts/responses** (ADK Python, Claude) |
 | **Deployed** (bare `agents-cli deploy`, no bucket) | Enabled, no content | Off (no `LOGS_BUCKET_NAME`) |
 
 ---
 
 ## Cloud Trace
 
-The default observability method. See [Cloud Trace](cloud-trace.md) for setup and usage.
+Cloud Trace is the default observability method. See [Cloud Trace](cloud-trace.md) for setup and usage.
 
 ---
 
 ## BigQuery Agent Analytics
 
-For advanced analytics — querying patterns across conversations, token usage dashboards, and LLM-as-judge scoring on production traffic. Opt-in via the `--bq-analytics` flag during project creation.
+Use BigQuery Agent Analytics to query patterns across conversations, build token usage dashboards, and run LLM-as-judge scoring on production traffic. The plugin is available for ADK Python agents and the Claude Agent SDK template. Turn it on with the `--bq-analytics` flag when you create the project.
 
 See [BigQuery Agent Analytics](bq-agent-analytics.md) for details.

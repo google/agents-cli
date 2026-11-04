@@ -11,16 +11,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-[project]
-name = "agents-cli-docs"
-version = "0.1.0"
-description = "Documentation site for agents-cli"
-requires-python = ">=3.11"
-dependencies = [
-    "mkdocs==1.6.1",
-    "mkdocs-material==9.7.7",
-    "mkdocs-click==0.9.0",
-    "google-agents-cli",
-]
-

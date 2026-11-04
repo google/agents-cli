@@ -3,7 +3,9 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "outDir": "./dist",
+    // Named after the app name, not the agent directory: adk-devtools serves each
+    // dist/ subfolder holding agent.js as an app named after that folder.
+    "outDir": "./dist/{{cookiecutter.app_name}}",
     "rootDir": "./{{cookiecutter.agent_directory}}",
     "strict": true,
     "esModuleInterop": true,

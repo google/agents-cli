@@ -1,37 +1,40 @@
-# BigQuery Agent Analytics Plugin
+# BigQuery Agent Analytics plugin
 
 *For teams who want SQL-based analytics on agent behavior, token usage, and conversation patterns.*
 
 ## Overview
 
-The BigQuery Agent Analytics Plugin offers enhanced observability by logging detailed agent events directly to BigQuery. This enables rich, SQL-based analysis of agent behavior, interactions, and performance over time.
+The BigQuery Agent Analytics plugin logs detailed agent events directly to BigQuery, so you can analyze agent behavior, interactions, and performance over time with SQL.
 
-This is an **opt-in** feature, available for **ADK-based agents** only.
+The plugin is opt-in and available for ADK Python agents and the Claude Agent SDK template. The rest of this page covers the ADK plugin. For Claude, see [First-party frameworks](../extensions/first-party.md#claude-agent-sdk).
 
 ---
 
-## When to Use
+<a id="when-to-use"></a>
+## When should I use the plugin?
 
 Enable this plugin when you need to:
 
-*   **Use BigQuery's advanced LLM capabilities** for semantic analysis of your agents — semantically group conversations, rank them, identify errors, or evaluate using LLM-as-judge via `AI.Search`, `AI.Score`, and `AI.Generate_text`.
-*   **Utilize BigQuery's conversational analytics** to analyze your agents using another conversational agent, eliminating the need to write complex SQL queries manually.
+*   **Use BigQuery's LLM capabilities** for semantic analysis of your agents. Group conversations by meaning, rank them, find errors, or run LLM-as-judge evaluation with `AI.SEARCH`, `AI.SCORE`, and `AI.GENERATE_TEXT`.
+*   **Analyze your agents with BigQuery's conversational analytics**, which lets another conversational agent do the analysis so you don't write complex SQL by hand.
 *   **Create custom dashboards and reports** on agent performance, tool usage, and token consumption.
 *   **Retain a structured, queryable history** of agent events for auditing, fine-tuning, or joining with other business data.
 
-Compared to the always-on [Cloud Trace telemetry](cloud-trace.md), this plugin provides more granular data in a structured table format, designed for offline analysis.
+Compared to the always-on [Cloud Trace telemetry](cloud-trace.md), this plugin records more granular data in structured tables for offline analysis.
 
 ---
 
 ## Prerequisites
 
-*   Agent project generated with an **ADK-based** template (e.g., `adk_python`).
-*   `google-adk` version `>=1.21.0` (added automatically when you enable the plugin).
+*   Agent project generated with the `adk_python` template.
+*   `google-adk` with the `bigquery-analytics` extra. The `adk_python` template already depends on `google-adk[gcp,otel-gcp,bigquery-analytics]>=2.12.0`.
 *   A Google Cloud project with BigQuery API and BigQuery Storage API enabled (typically handled by Terraform).
 
 ---
 
-## Enabling the Plugin
+<a id="enabling-the-plugin"></a>
+<a id="enable-the-plugin"></a>
+## How do I enable the plugin?
 
 Use the `--bq-analytics` flag during project creation:
 
@@ -42,13 +45,13 @@ agents-cli create my-agent \
   --bq-analytics
 ```
 
-This flag includes the plugin initialization code in `app/agent.py` and configures environment variables in Terraform.
+This flag adds the plugin initialization code to `app/agent.py` and sets the plugin's environment variables in Terraform. To add the plugin to an existing project, add it to `app/agent.py` by hand (see the [ADK BigQuery Agent Analytics docs](https://adk.dev/integrations/bigquery-agent-analytics/)).
 
 ---
 
 ## Configuration
 
-The plugin is configured in your `app/agent.py` file:
+You configure the plugin in your `app/agent.py` file. The generated code passes only `gcs_bucket_name` and `connection_id`. The following example sets more of the available options:
 
 ```python
 from google.adk.plugins.bigquery_agent_analytics_plugin import (
@@ -70,11 +73,11 @@ bq_analytics_plugin = BigQueryAgentAnalyticsPlugin(
     dataset_id=os.environ.get("BQ_ANALYTICS_DATASET_ID", "adk_agent_analytics"),
     table_id=bq_config.table_id,
     config=bq_config,
-    location=os.environ.get("GOOGLE_CLOUD_LOCATION", "US"),
+    location=os.environ.get("GOOGLE_CLOUD_LOCATION", "us-east1"),
 )
 
 app = App(
-    name="my-agent",
+    name="app",  # must match the agent directory
     root_agent=root_agent,
     plugins=[bq_analytics_plugin],
 )
@@ -83,7 +86,7 @@ app = App(
 **Key `BigQueryLoggerConfig` options:**
 
 *   **`enabled`**: Toggles the plugin.
-*   **`gcs_bucket_name`** (optional): GCS bucket for offloading large/binary content. Required only for multimodal data.
+*   **`gcs_bucket_name`** (optional): Cloud Storage bucket for offloading large/binary content. Required only for multimodal data.
 *   **`connection_id`** (optional): BigQuery Connection ID for GCS access. Required only for multimodal data.
 *   **`log_multi_modal_content`**: Whether to handle and offload content parts to GCS.
 *   **`max_content_length`**: Threshold for offloading text to GCS.
@@ -97,16 +100,17 @@ app = App(
 
 When deployed with Terraform (`agents-cli infra single-project`):
 
-*   **Dataset:** A BigQuery dataset named `{project_name}_telemetry` is created.
-*   **GCS Bucket** (optional): `{project_id}-{project_name}-logs` for content offloading.
-*   **BigQuery Connection** (optional): `{project_name}-genai-telemetry` for GCS access from BigQuery.
-*   **Table:** The `agent_events` table is **auto-created** by the plugin on the first event.
+*   **Dataset**: Terraform creates a BigQuery dataset named `{project_name}_telemetry`, with hyphens in the project name replaced by underscores.
+*   **Cloud Storage bucket** (optional): `{project_id}-{project_name}-logs` for content offloading.
+*   **BigQuery connection** (optional): `{project_name}-genai-telemetry` for GCS access from BigQuery.
+*   **Table**: The plugin creates the `agent_events` table on the first event.
 
 ---
 
-## Example Queries
+<a id="example-queries"></a>
+## What queries can I run on the analytics data?
 
-Replace `YOUR_PROJECT_ID` and `YOUR_AGENT_NAME` accordingly.
+Replace `YOUR_PROJECT_ID` with your Google Cloud project ID and `YOUR_AGENT_NAME` with your project name, using underscores in place of hyphens.
 
 **Recent events:**
 
@@ -131,16 +135,14 @@ WHERE event_type IN ('TOOL_COMPLETED', 'TOOL_ERROR')
 ORDER BY timestamp DESC;
 ```
 
-**LLM token usage:**
+**LLM token usage** (the auto-created `v_llm_response` view also exposes cached and thinking tokens):
 
 ```sql
 SELECT
   agent,
-  JSON_VALUE(attributes, '$.model') AS model,
-  SUM(CAST(JSON_VALUE(attributes, '$.usage_metadata.prompt') AS INT64)) AS total_prompt_tokens,
-  SUM(CAST(JSON_VALUE(attributes, '$.usage_metadata.completion') AS INT64)) AS total_completion_tokens
-FROM `YOUR_PROJECT_ID.YOUR_AGENT_NAME_telemetry.agent_events`
-WHERE event_type = 'LLM_RESPONSE'
-  AND JSON_VALUE(attributes, '$.usage_metadata.prompt') IS NOT NULL
+  model_version AS model,
+  SUM(usage_prompt_tokens) AS total_prompt_tokens,
+  SUM(usage_completion_tokens) AS total_completion_tokens
+FROM `YOUR_PROJECT_ID.YOUR_AGENT_NAME_telemetry.v_llm_response`
 GROUP BY agent, model;
 ```

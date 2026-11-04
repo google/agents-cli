@@ -13,7 +13,7 @@ description: >
 metadata:
   author: Google
   license: Apache-2.0
-  version: 1.12.0
+  version: 1.13.0
   requires:
     bins:
       - agents-cli
@@ -97,7 +97,7 @@ All three targets are container-based, so any language works.
 agents-cli infra single-project --apply
 ```
 
-> **Note:** `agents-cli deploy` doesn't automatically use the Terraform-created `app_sa`. Pass the service account explicitly: `agents-cli deploy --service-account SA_EMAIL`.
+> **Note:** `agents-cli deploy` doesn't automatically use the Terraform-created `app_sa`. Pass the service account explicitly: `agents-cli deploy --service-account SA_EMAIL`. With Agent Identity, `--service-account` is ignored.
 
 ### Deploy Flag Reference
 
@@ -109,8 +109,8 @@ agents-cli infra single-project --apply
 | `--service-name` | Override the deployed service name (Cloud Run service or Agent Runtime display name); defaults to the project name. If you override it, consider updating your Terraform and CI (if present) — they name resources from the project name. Not supported for GKE, whose names are fully owned by Terraform. | Agent Runtime, Cloud Run |
 | `--secrets` / `--update-secrets` | Comma-separated `ENV=SECRET` or `ENV=SECRET:VERSION` pairs. Cloud Run adds them to the service's existing secrets; Agent Runtime replaces the agent's existing secrets with the ones you pass. | Agent Runtime, Cloud Run |
 | `--env-vars` / `--update-env-vars` | Comma-separated `KEY=VALUE` environment variables | All |
-| `--agent-identity` | Enable [Agent Identity](https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/runtime/agent-identity) | Agent Runtime |
-| `--no-agent-identity` | Disable Agent Identity. Passing neither `--agent-identity` nor `--no-agent-identity` follows the project's identity default in `agents-cli-manifest.yaml` when the agent is created, or keeps the current identity type on later deploys. | Agent Runtime |
+| `--agent-identity` | Enable [Agent Identity](https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/runtime/agent-identity) | Agent Runtime, Cloud Run |
+| `--no-agent-identity` | Disable Agent Identity. Passing neither `--agent-identity` nor `--no-agent-identity` follows the project's identity default in `agents-cli-manifest.yaml` when the agent is created, or keeps the current identity type on later deploys. On Cloud Run, Agent Identity can't be turned off: for a service that already has it, the deploy stops and asks you to delete the service and redeploy. | Agent Runtime, Cloud Run |
 | `--network-attachment` | Network attachment resource name for [PSC interface](https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/runtime/private-service-connect-interface) (enables private VPC connectivity) | Agent Runtime |
 | `--dns-peering-domain` | DNS peering domain suffix, e.g. `my-internal.corp.` (requires `--network-attachment`) | Agent Runtime |
 | `--dns-peering-project` | Project ID hosting the Cloud DNS managed zone for DNS peering (requires `--network-attachment`) | Agent Runtime |
@@ -131,11 +131,11 @@ agents-cli infra single-project --apply
 | `--clear-labels` | Remove all resource labels (Cloud Run keeps its reserved `created-by` label). Combine with `--labels` to replace the label set; the clear is applied first. Cannot be combined with `--remove-labels`. | Agent Runtime, Cloud Run |
 | `--framework` | Framework the deployed container implements (defaults to `framework:` in `agents-cli-manifest.yaml`, which the template sets; `google-adk` when absent). Sets `agent_framework` on the deployment, which picks the Google Cloud console playground and the runtime contract the deployment declares. The API owns the accepted values ([reference](https://docs.cloud.google.com/gemini-enterprise-agent-platform/reference/rest/v1/projects.locations.reasoningEngines#ReasoningEngineSpec)) | Agent Runtime |
 | `--iap` | Enable Identity-Aware Proxy | Cloud Run |
-| `--image` | Container image URI (skips source build; not supported for Agent Runtime) | Cloud Run, GKE |
+| `--image` | Prebuilt container image URI (skips source build). On Agent Runtime the image must be in Artifact Registry and readable by the Agent Runtime service agent (`roles/artifactregistry.reader`); can't be combined with `--build-args` | All |
 | `--no-wait` | Start deployment and return immediately | Agent Runtime, Cloud Run |
 | `--status` | Check the status of a pending `--no-wait` deployment | Agent Runtime, Cloud Run |
 | `--list` | List existing deployments and exit | All |
-| `--dry-run` / `-n` | Print what would be executed without running it. For Agent Runtime and Cloud Run, it first runs read-only checks on Google Cloud. | All |
+| `--dry-run` / `-n` | Print what would be executed without running it. For Agent Runtime, Cloud Run and GKE, it first runs read-only checks on Google Cloud. | All |
 | `--no-confirm-project` | Skip project confirmation prompt | All |
 
 Run `agents-cli deploy --help` for the full flag reference.
@@ -185,7 +185,7 @@ For detailed infrastructure configuration (scaling defaults, Dockerfile, FastAPI
 
 ## Agent Runtime specifics
 
-Agent Runtime is a managed Gemini platform service for deploying agents as containers. Uses container-based deployment: `agents-cli deploy` packages your project and Agent Runtime builds the image from your project's `Dockerfile` (required) — the same image that serves Cloud Run and GKE.
+Agent Runtime is a managed Gemini platform service for deploying agents as containers. Uses container-based deployment: `agents-cli deploy` packages your project and Agent Runtime builds the image from your project's `Dockerfile` (required unless you pass a prebuilt `--image`) — the same image that serves Cloud Run and GKE.
 
 > **No `gcloud` CLI exists for Agent Runtime.** Deploy via `agents-cli deploy`. Query via the Python `agentplatform.Client` SDK.
 
@@ -199,7 +199,7 @@ agents-cli deploy --no-wait
 agents-cli deploy --status
 ```
 
-When `--status` detects the operation has completed, it writes `deployment_metadata.json` and prints the same success output as a normal deploy.
+When `--status` detects the operation has completed, it writes `deployment_metadata.json`, stores an A2A project's agent card on Agent Runtime (as a normal deploy does), and prints the same success output.
 
 For detailed infrastructure configuration (container deploy flow, the unified FastAPI app and `/api` passthrough, Terraform resource, deployment metadata, session/artifact services, CI/CD differences), see `references/agent-runtime.md`. **ADK:** for ADK docs on Agent Runtime deployment, fetch `https://adk.dev/deploy/agent-runtime/index.md`.
 
@@ -262,7 +262,7 @@ echo -n "YOUR_API_KEY" | gcloud secrets create MY_SECRET_NAME --data-file=-
 echo -n "NEW_API_KEY" | gcloud secrets versions add MY_SECRET_NAME --data-file=-
 ```
 
-**Grant access:** For Cloud Run, grant `secretmanager.secretAccessor` to `app_sa`. For Agent Runtime, grant it to the platform-managed SA (`service-PROJECT_NUMBER@gcp-sa-aiplatform-re.iam.gserviceaccount.com`). For GKE, grant `secretmanager.secretAccessor` to `app_sa`. Access secrets via Kubernetes Secrets or directly via the Secret Manager API with Workload Identity.
+**Grant access:** For Cloud Run, grant `secretmanager.secretAccessor` to the service account the service records (`app_sa` when Terraform created the service, the default compute SA when `agents-cli deploy` created it, or the account a later deploy passed with `--service-account`), even when deploying with Agent Identity -- Cloud Run checks that account when it deploys. For Agent Runtime, grant it to the platform-managed SA (`service-PROJECT_NUMBER@gcp-sa-aiplatform-re.iam.gserviceaccount.com`). For GKE, grant `secretmanager.secretAccessor` to `app_sa`. Access secrets via Kubernetes Secrets or directly via the Secret Manager API with Workload Identity.
 
 **Pass secrets at deploy time (Agent Runtime, Cloud Run):**
 ```bash
@@ -356,7 +356,7 @@ For custom infrastructure patterns, consult `references/terraform-patterns.md` f
 | Cloud Build authorization pending | Use `github_actions` runner instead |
 | Resource already exists | `terraform import` (see `references/terraform-patterns.md`) |
 | Agent Runtime deploy timeout / hangs | Deployments take 5-10 min; check if engine was created (see Agent Runtime specifics) |
-| Secret not available | Verify `secretAccessor` granted to `app_sa` (not the default compute SA) |
+| Secret not available | Verify `secretAccessor` granted to `app_sa` (not the default compute SA), and to the Agent Identity principal (if using Agent Identity) |
 | Cloud SQL connection failed / 403 | Grant `roles/cloudsql.client` to the runtime service account when using manual deployments |
 | 403 on deploy | Check `deployment/terraform/iam.tf` — `cicd_runner_sa` needs deployment + SA impersonation roles in the target project |
 | 403 when testing Cloud Run | Default is `--no-allow-unauthenticated`; include `Authorization: Bearer $(gcloud auth print-identity-token)` header |
@@ -387,7 +387,7 @@ For registering deployed agents with Gemini, see `/google-agents-cli-publish`.
 connectivity (ingress/egress). It is not a deployment target.
 
 To set up a gateway, follow [Set up an Agent Gateway](https://docs.cloud.google.com/gemini-enterprise-agent-platform/govern/gateways/set-up-agent-gateway)
-and [Route Agent Runtime traffic through Agent Gateway](https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/runtime/agent-gateway-runtime-deploy). You may also manage the gateway in Terraform with [`google_network_services_agent_gateway`](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/network_services_agent_gateway) (currently in the `google-beta` provider).
+and [Route Agent Runtime traffic through Agent Gateway](https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/runtime/agent-gateway-runtime-deploy). You may also manage the gateway in Terraform with [`google_network_services_agent_gateway`](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/network_services_agent_gateway) (currently in the `google-beta` provider). For the gateway with its surrounding enterprise infrastructure, use the [genai-factory](https://github.com/GoogleCloudPlatform/genai-factory) blueprints, installed as an extension with `agents-cli extension add GoogleCloudPlatform/genai-factory`.
 
 Once a gateway exists, `agents-cli deploy` binds an agent to it with `--agent-gateway-egress`
 and/or `--agent-gateway-ingress`, each taking a full resource name

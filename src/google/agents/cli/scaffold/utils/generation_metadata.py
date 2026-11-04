@@ -12,23 +12,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 
 from google.agents.cli._project import ProjectConfig, parse_version
 from google.agents.cli.scaffold.utils import remote_template
 
-# Last version where `scaffold create` doesn't recognize the
-# `--agent-runtime-identity-default` flag.
-_LAST_RELEASE_WITHOUT_AGENT_RUNTIME_IDENTITY_DEFAULT = parse_version("1.9.0")
+# Tracks when certain `scaffold create` flags were introduced, so that
+# they're not passed to older release that don't recognize them.
+_LAST_RELEASE_WITHOUT_FLAG = {
+    "agent_runtime_identity_default": parse_version("1.9.0"),
+    "cloud_run_identity_default": parse_version("1.12.0"),
+}
+
+_DEFAULT_REGION = ProjectConfig.region
 
 
-def _predates_agent_runtime_identity_default_flag(target_version: str) -> bool:
+def _flags_unknown_to(target_version: str) -> set[str]:
+    """The create_params keys whose flag ``target_version`` doesn't recognize.
+
+    Empty, and logged at debug level, when ``target_version`` isn't a dotted
+    numeric version.
+    """
     try:
-        return (
-            parse_version(target_version)
-            <= _LAST_RELEASE_WITHOUT_AGENT_RUNTIME_IDENTITY_DEFAULT
-        )
+        target = parse_version(target_version)
     except ValueError:
-        return False
+        logging.debug(
+            "acli_version '%s' is not a dotted numeric version. Assuming all "
+            "`scaffold create` flags are recognized.",
+            target_version,
+        )
+        return set()
+    return {key for key, last in _LAST_RELEASE_WITHOUT_FLAG.items() if target <= last}
 
 
 def metadata_to_cli_args(
@@ -65,6 +79,10 @@ def metadata_to_cli_args(
     if metadata.agent_directory and metadata.agent_directory != "app":
         args.extend(["--agent-directory", metadata.agent_directory])
 
+    # Without it a re-render writes the default region into the files it adds.
+    if metadata.region and metadata.region != _DEFAULT_REGION:
+        args.extend(["--region", str(metadata.region)])
+
     # Both are recorded by the template rather than chosen by the user: is_a2a
     # is derived from tags and framework comes from templateconfig, and `create`
     # has no flag for either. A re-render reads them from the template again.
@@ -75,10 +93,8 @@ def metadata_to_cli_args(
         # standing in. Passing it would abort with "No such option".
         skip_keys.add("root_agent_name")
 
-    if target_version is not None and _predates_agent_runtime_identity_default_flag(
-        target_version
-    ):
-        skip_keys.add("agent_runtime_identity_default")
+    if target_version is not None:
+        skip_keys |= _flags_unknown_to(target_version)
 
     for key, value in metadata.create_params.items():
         if key in skip_keys:

@@ -42,8 +42,8 @@ describe('Server E2E', () => {
   const baseUrl = 'http://localhost:8000';
 
   beforeAll(async () => {
-    // Pass agent.ts directly to avoid bundling test dependencies
-    serverProcess = spawn('npx', ['@google/adk-devtools', 'api_server', '{{cookiecutter.agent_directory}}/agent.ts', '--port', '8000'], {
+    // Serve the compiled dist/ as the container does (`npm test` builds it first).
+    serverProcess = spawn('npx', ['@google/adk-devtools', 'api_server', 'dist', '--port', '8000'], {
       cwd: rootDir,
       env: { ...process.env, ...dotenvVars },
       stdio: 'pipe',
@@ -73,9 +73,8 @@ describe('Server E2E', () => {
   });
 
   it('should create a session', async () => {
-    // App name is "agent" (filename without extension)
     const response = await fetch(
-      `${baseUrl}/apps/agent/users/u_123/sessions/s_123`,
+      `${baseUrl}/apps/{{cookiecutter.app_name}}/users/u_123/sessions/s_123`,
       { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }
     );
     expect(response.ok).toBe(true);
@@ -86,7 +85,7 @@ describe('Server E2E', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        appName: 'agent',
+        appName: '{{cookiecutter.app_name}}',
         userId: 'u_123',
         sessionId: 's_123',
         newMessage: {

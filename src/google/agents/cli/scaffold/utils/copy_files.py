@@ -20,9 +20,12 @@ import shutil
 import sys
 from dataclasses import dataclass, replace
 
+from google.agents.cli._symlinks import (
+    MAX_COPY_DEPTH,
+    ScaffoldSymlinkSecurityError,
+    require_safe_symlink,
+)
 from google.agents.cli.scaffold.utils.fs import is_ignored_name, is_secret_file
-
-from .symlinks import MAX_COPY_DEPTH, ScaffoldSymlinkSecurityError, require_safe_symlink
 
 DEFAULT_FRONTEND = "None"
 

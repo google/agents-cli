@@ -1,0 +1,303 @@
+/* Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+.docs-shell {
+  /* about 72 characters of Flex at 17px; code, tables and widgets share the column */
+  --measure: 680px;
+  display: grid;
+  grid-template-columns: 252px minmax(0, 1fr) 208px;
+  gap: 64px;
+  max-width: var(--wrap);
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+}
+body.docs .site-footer { margin-top: 64px; }
+.docs-shell.no-toc { grid-template-columns: 252px minmax(0, 1fr); }
+.docs-shell.no-toc .toc { display: none; }
+
+/* ---------- sidebar ---------- */
+.sidebar {
+  position: sticky; top: var(--header-h); align-self: start;
+  height: calc(100vh - var(--header-h)); overflow-y: auto;
+  padding: 32px 8px 48px 0; font-size: 14px; line-height: 1.4;
+  scrollbar-width: thin; scrollbar-color: var(--rule) transparent;
+}
+.nav-tree { list-style: none; margin: 0; padding: 0; }
+.nav-tree li { margin: 0; }
+.nav-tree.d0 > li + li { margin-top: 28px; }
+.nav-tree.d0 > li > details > summary { font-weight: 600; color: var(--ink); font-size: 14px; padding: 0 10px 8px; }
+.nav-tree .nav-tree { padding-left: 0; }
+.nav-tree.d1 > li + li { margin-top: 1px; }
+.nav-tree.d2, .nav-tree.d3 { padding: 2px 0 6px 10px; border-left: 1px solid var(--rule); margin-left: 12px; }
+.nav-tree summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 6px; border-radius: 6px; }
+.nav-tree summary::-webkit-details-marker { display: none; }
+.nav-tree.d1 summary::after, .nav-tree.d2 summary::after { content: ''; flex: none; margin-left: auto; width: 5px; height: 5px; border-right: 1.5px solid var(--ink-3); border-bottom: 1.5px solid var(--ink-3); transform: rotate(-45deg); transition: transform .15s; margin-right: 10px; }
+.nav-tree details[open] > summary::after { transform: rotate(45deg); }
+.nav-tree.d1 summary:hover { background: var(--surface); }
+.nav-tree a, .nav-tree summary > span { display: block; text-decoration: none; color: var(--ink-2); padding: 6px 10px; border-radius: 6px; flex: 1; }
+.nav-tree.d1 > li > details > summary > :is(a, span) { color: var(--ink); font-weight: 450; }
+.nav-tree.d0 > li > details > summary > span { padding: 0; }
+.nav-tree a:hover { color: var(--ink); background: var(--surface); }
+.nav-tree summary a:hover { background: none; }
+.nav-tree a.on, .nav-tree a[aria-current], .nav-tree a.on:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); font-weight: 550; }
+/* ---------- article ---------- */
+.doc { min-width: 0; padding: 28px 0 0; }
+.doc-top { display: flex; align-items: center; gap: 12px; min-height: 36px; margin-bottom: 20px; max-width: var(--measure); }
+.crumbs { display: flex; flex-wrap: wrap; gap: 8px; font-size: 13.5px; color: var(--ink-3); }
+.crumbs span + span::before { content: '/'; margin-right: 8px; color: var(--ink-3); opacity: .5; }
+.doc-actions { margin-left: auto; display: flex; gap: 4px; }
+.doc-actions .icon-btn { height: 32px; font-size: 13px; color: var(--ink-2); }
+
+/* ---------- prose: Flex for reading, Code only for what you type ---------- */
+.prose { max-width: var(--measure); font-size: 17px; line-height: 1.6; }
+.prose > :first-child { margin-top: 0; }
+.prose p { margin: 0 0 16px; }
+.prose h1, .prose h2, .prose h3, .prose h4, .prose h5, .prose h6 { color: var(--ink); text-wrap: balance; }
+.prose h1 { font-size: clamp(36px, 3.3vw, 46px); line-height: 1.04; letter-spacing: -0.012em; font-weight: 500; font-variation-settings: 'opsz' 144; margin: 0 0 18px; }
+.prose h1 + p { font-size: 19px; line-height: 1.5; color: var(--ink-2); max-width: 60ch; margin-bottom: 28px; }
+.prose h2 { font-size: 28px; line-height: 1.15; letter-spacing: -0.015em; font-weight: 500; font-variation-settings: 'opsz' 144; margin: 64px 0 14px; }
+.prose h3 { font-size: 21px; line-height: 1.25; letter-spacing: -0.01em; font-weight: 500; margin: 44px 0 10px; }
+.prose h4 { font-size: 17.5px; line-height: 1.35; font-weight: 550; margin: 32px 0 8px; }
+.prose h5, .prose h6 { font-size: 16px; line-height: 1.4; font-weight: 620; color: var(--ink-2); margin: 28px 0 6px; }
+.prose :is(h2, h3, h4) + :is(h3, h4, h5) { margin-top: 20px; }
+.prose .headerlink { margin-left: 0.3em; color: var(--ink-3); text-decoration: none; font-family: var(--sans); font-weight: 400; opacity: 0; }
+.prose :is(h2, h3):hover .headerlink, .prose .headerlink:focus-visible { opacity: 1; }
+.prose .headerlink:hover { color: var(--blue-ink); }
+.prose p, .prose li { color: var(--ink); }
+.prose strong { font-weight: 600; }
+.prose a { color: var(--blue-ink); text-decoration: underline; text-decoration-thickness: 1px; text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent); text-underline-offset: 3px; }
+.prose a:hover { text-decoration-color: currentColor; }
+.prose :not(pre) > code { font-size: 0.875em; color: var(--ink); background: var(--surface); padding: 0.1em 0.36em; border-radius: 4px; }
+.prose a code { color: inherit; }
+.prose ul, .prose ol { padding-left: 1.4em; margin: 0 0 16px; }
+.prose li + li { margin-top: 6px; }
+.prose li > p { margin-bottom: 8px; }
+.prose li::marker { color: var(--ink-3); }
+.prose img { border-radius: 10px; }
+.prose hr { border: 0; border-top: 1px solid var(--rule); margin: 48px 0; }
+.prose blockquote { margin: 24px 0; padding: 0 0 0 20px; border-left: 2px solid var(--rule); color: var(--ink-2); }
+
+/* tables: hairline rows, no zebra, no box */
+.prose table { width: 100%; border-collapse: collapse; font-size: 15px; line-height: 1.5; margin: 24px 0 28px; display: block; overflow-x: auto; }
+.prose th { text-align: left; font-weight: 600; font-size: 14px; color: var(--ink); border-bottom: 1px solid var(--ink-3); padding: 0 20px 10px 0; vertical-align: bottom; }
+.prose td { border-bottom: 1px solid var(--rule); padding: 11px 20px 11px 0; vertical-align: top; }
+.prose :is(th, td):last-child { padding-right: 0; }
+.prose td :not(pre) > code { font-size: 0.86em; }
+/* cells break at spaces and hyphens, never mid-word; a wide table scrolls inside itself */
+.prose td a, .prose td :not(pre) > code { overflow-wrap: normal; }
+
+/* a file name is the code block's own top strip */
+.prose .code-title { margin: 24px 0 0; padding: 9px 20px 8px; font: 12.5px/1.4 var(--code); color: var(--ink-2); background: var(--code-background); border-radius: 10px 10px 0 0; border-bottom: 1px solid color-mix(in srgb, var(--rule) 70%, var(--code-background)); }
+.prose .code-title + pre.shiki, .prose .code-title + .code-wrap > pre.shiki { margin-top: 0; border-radius: 0 0 10px 10px; }
+
+/* admonitions: quiet notes with a left rule. Green stays for "passed", so tips take the accent. */
+.callout { margin: 28px 0; padding: 2px 0 2px 20px; border-left: 2px solid var(--accent); font-size: 15.5px; line-height: 1.6; }
+.callout > :last-child { margin-bottom: 0; }
+.callout p { margin-bottom: 10px; }
+.callout-title, .callout > summary { font-weight: 600; color: var(--ink); margin: 0 0 4px; }
+.callout > summary { cursor: pointer; margin: 0; list-style: none; display: flex; align-items: center; gap: 10px; }
+.callout > summary::-webkit-details-marker { display: none; }
+.callout > summary::after { content: ''; width: 6px; height: 6px; border-right: 1.5px solid var(--ink-3); border-bottom: 1.5px solid var(--ink-3); transform: translateY(-2px) rotate(45deg); transition: transform .15s; }
+details.callout[open] > summary::after { transform: translateY(1px) rotate(-135deg); }
+details.callout[open] > summary { margin-bottom: 10px; }
+.callout pre.shiki { margin: 12px 0; }
+.callout-warning, .callout-caution, .callout-attention { border-left-color: var(--yellow); }
+.callout-danger, .callout-error, .callout-important { border-left-color: var(--red); }
+
+/* tabs: underline style */
+.tabs { margin: 28px 0; }
+.tab-bar { display: flex; gap: 24px; border-bottom: 1px solid var(--rule); margin-bottom: 4px; overflow-x: auto; scrollbar-width: none; }
+.tab-btn { display: inline-flex; align-items: center; font: inherit; font-size: 14.5px; font-weight: 450; background: none; border: 0; padding: 10px 0; color: var(--ink-3); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+.tab-btn:hover { color: var(--ink); }
+.tab-btn[aria-selected='true'] { color: var(--ink); border-bottom-color: var(--ink); font-weight: 550; }
+.tab-panel { padding-top: 8px; }
+.tab-panel > pre.shiki:first-child, .tab-panel > .code-wrap:first-child pre { margin-top: 12px; }
+
+/* grid cards from mkdocs */
+.grid-cards > ul { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.grid-cards > ul > li { border: 1px solid var(--rule); border-radius: 10px; padding: 16px 18px; margin: 0; }
+.grid-cards > ul > li:hover { border-color: var(--ink-3); }
+.grid-cards hr { margin: 10px 0; }
+
+/* last updated */
+.updated { max-width: var(--measure); margin: 56px 0 0; font-size: 13px; color: var(--ink-3); }
+.updated + .pager { margin-top: 20px; }
+
+/* pager: text on a hairline, no cards */
+.pager { max-width: var(--measure); display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 80px; padding-top: 20px; border-top: 1px solid var(--rule); }
+.pager a { display: flex; flex-direction: column; gap: 2px; text-decoration: none; font-size: 16px; font-weight: 550; color: var(--ink); }
+.pager a:hover { color: var(--accent); }
+.pager .next { text-align: right; }
+.pager small { font-weight: 400; color: var(--ink-3); font-size: 13px; }
+
+/* toc */
+.toc { position: sticky; top: var(--header-h); align-self: start; padding: 32px 0; font-size: 13px; max-height: calc(100vh - var(--header-h)); overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--rule) transparent; }
+.toc p { font-weight: 600; font-size: 13px; color: var(--ink); margin: 0 0 12px; }
+.toc ul { list-style: none; margin: 0; padding: 0; border-left: 1px solid var(--rule); }
+.toc a { display: block; text-decoration: none; color: var(--ink-3); padding: 4px 0 4px 14px; margin-left: -1px; border-left: 2px solid transparent; line-height: 1.4; }
+.toc .t3 a { padding-left: 26px; }
+.toc .t4 a, .toc .t5 a, .toc .t6 a { padding-left: 38px; }
+.toc a:hover { color: var(--ink); }
+.toc a.on { color: var(--ink); font-weight: 500; border-left-color: var(--accent); }
+
+@media (max-width: 1240px) { .docs-shell, .docs-shell.no-toc { grid-template-columns: 240px minmax(0, 1fr); gap: 56px; } .toc { display: none; } }
+@media (max-width: 860px) {
+  .docs-shell, .docs-shell.no-toc { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .sidebar { display: none; }
+  /* one menu: the header button opens the docs nav on pages that have one */
+  body.has-sidebar .menu-btn { display: inline-flex; }
+  body.has-sidebar.nav-open .sidebar { display: block; position: fixed; inset: var(--header-h) 0 0 0; z-index: 40; background: var(--page); padding: 20px var(--gutter); height: auto; align-self: stretch; }
+  .doc-actions .icon-btn span { display: none; }
+}
+
+@media (max-width: 860px) {
+  /* the header links sit in one row above the docs nav */
+  /* six tabs don't fit a phone, so the row scrolls sideways */
+  body.has-sidebar.nav-open .nav-main { flex-direction: row; align-items: stretch; gap: 20px; height: 52px; padding: 0 var(--gutter); z-index: 41; overflow-x: auto; scrollbar-width: none; }
+  body.has-sidebar.nav-open .nav-main a { font-size: 14px; }
+  /* flex rows drop end padding when they scroll; the spacer keeps the last tab off the edge */
+  body.has-sidebar.nav-open .nav-main { scroll-padding-inline: var(--gutter); }
+  body.has-sidebar.nav-open .nav-main::after { content: ''; flex: none; width: 1px; }
+  body.has-sidebar.nav-open .nav-main a { padding: 0; }
+  body.has-sidebar.nav-open .nav-main a[aria-current]::after { display: block; }
+  body.has-sidebar.nav-open .sidebar { top: calc(var(--header-h) + 52px); }
+}
+
+/* inline code stays whole in running text; break-word still splits a token that would overflow the column on a phone */
+.prose { overflow-wrap: break-word; }
+.prose a { overflow-wrap: anywhere; }
+.prose :not(pre) > code { white-space: nowrap; }
+.prose :is(td, th, h1, h2, h3, h4, h5, h6) code, .prose code.code-long { white-space: normal; }
+@media (max-width: 560px) { .prose code:is(.code-mid, .code-long) { white-space: normal; overflow-wrap: anywhere; } }
+.prose details, .prose .callout, .prose .tabs { max-width: 100%; overflow-x: auto; }
+.prose iframe, .prose video { max-width: 100%; }
+/* one-line plain-text blocks (prompts) wrap; shiki leaves their spans unstyled, while trees and help output span several lines */
+.prose pre.shiki:not(:has(span[style])):not(:has(.line + .line)) { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (hover: none) { .prose pre.shiki:not(:has(span[style])):not(:has(.line + .line)) { padding-right: 72px; } }
+
+/* mkdocs grid cards render as a two-column list */
+.grid-cards hr { display: none; }
+.grid-cards > ul { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 0 32px; border-top: 1px solid var(--rule); }
+.grid-cards > ul > li { border: 0; border-bottom: 1px solid var(--rule); border-radius: 0; padding: 14px 0; }
+.grid-cards > ul > li:hover { border-color: var(--rule); }
+.grid-cards strong { font-weight: 500; }
+
+/* page actions: Copy as Markdown visible, the rest behind a menu */
+.doc-more { position: relative; }
+.doc-more summary { list-style: none; height: 32px; }
+.doc-more summary::-webkit-details-marker { display: none; }
+.doc-more[open] summary { border-color: var(--ink-3); }
+.doc-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; display: flex; flex-direction: column; min-width: 240px; padding: 6px; border: 1px solid var(--rule); border-radius: 10px; background: var(--page); }
+.doc-menu button, .doc-menu a { display: block; width: 100%; padding: 8px 10px; border: 0; border-radius: 6px; background: none; color: var(--ink); font: inherit; font-size: 14px; text-align: left; text-decoration: none; cursor: pointer; }
+.doc-menu button:hover, .doc-menu a:hover { background: var(--surface); }
+.doc-actions .doc-menu span { display: inline; }
+.doc-menu { min-width: 0; }
+.doc-menu button, .doc-menu a { white-space: nowrap; }
+.doc-copied:empty { display: none; }
+
+/* narrow screens: one-line breadcrumb showing the nearest parent; Menu has the full tree */
+@media (max-width: 860px) {
+  .crumbs { flex: 1; min-width: 0; flex-wrap: nowrap; overflow: hidden; }
+  .crumbs span:not(:last-child) { display: none; }
+  .crumbs span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .crumbs span::before { display: none; }
+}
+
+/* quickstart: a two-way choice above the steps */
+.qs-choose > .tabs > .tab-bar { display: grid; grid-template-columns: 1fr 1fr; gap: 0; padding: 4px; margin: 24px 0 20px; border: 1px solid var(--rule); border-radius: 12px; background: var(--surface-2); }
+.qs-choose > .tabs > .tab-bar > .tab-btn { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 0; padding: 10px 14px; border: 0; border-radius: 8px; font-size: 15px; color: var(--ink-2); }
+.qs-choose > .tabs > .tab-bar > .tab-btn[aria-selected='true'] { background: var(--page); color: var(--ink); box-shadow: 0 0 0 1px var(--rule); }
+.qs-choose > .tabs > .tab-bar > .tab-btn:first-child::after { content: 'Recommended'; font-size: 11.5px; font-weight: 500; color: var(--accent); }
+.qs-choose .tabs .tabs { margin-top: 16px; }
+.qs-needs { font-size: 14px; color: var(--ink-3); margin: 0 0 20px; }
+.qs-needs a { color: inherit; }
+
+/* numbered steps: a ringed number on a hairline, the content is a real sequence */
+.prose .steps { margin: 24px 0 8px; }
+.prose .steps > ol { list-style: none; counter-reset: step; padding: 0; margin: 0; }
+.prose .steps > ol > li { counter-increment: step; position: relative; padding: 0 0 28px 44px; margin: 0; }
+.prose .steps > ol > li::before { content: counter(step); position: absolute; left: 0; top: 0; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--page); box-shadow: inset 0 0 0 1px var(--rule); color: var(--ink); font: 600 13px/1 var(--sans); font-variant-numeric: tabular-nums; }
+.prose .steps > ol > li:not(:last-child)::after { content: ''; position: absolute; left: 12.5px; top: 32px; bottom: 6px; width: 1px; background: var(--rule); }
+.prose .steps > ol > li > p:first-child { margin: 0 0 6px; font-weight: 600; line-height: 26px; }
+.prose .steps > ol > li > p:first-child strong { font-weight: inherit; }
+.prose .steps > ol > li > p { margin: 6px 0; color: var(--ink-2); }
+.prose .steps > ol > li > pre, .prose .steps > ol > li > .shiki, .prose .steps > ol > li > .code-wrap > pre { margin: 10px 0; }
+@media (max-width: 560px) { .qs-choose > .tabs > .tab-bar > .tab-btn { flex-direction: column; gap: 2px; font-size: 14px; white-space: normal; } }
+.prose .steps pre { padding: 12px 16px; }
+.prose .steps > ol > li:last-child { padding-bottom: 0; }
+@media (max-width: 560px) { .prose .steps > ol > li { padding-left: 38px; } .prose .steps > ol > li::before { width: 24px; height: 24px; font-size: 12px; } .prose .steps > ol > li > p:first-child { line-height: 24px; } .prose .steps > ol > li:not(:last-child)::after { left: 11.5px; } }
+
+/* quickstart: one prompt to paste, the same outlined box and button as the homepage start box */
+.prose .paste { display: flex; align-items: center; gap: 16px; margin: 28px 0 12px; padding: 12px 12px 12px 20px; border: 1px solid var(--rule); border-radius: 10px; }
+.prose .paste-text { flex: 1; min-width: 0; margin: 0; font: 500 17px/1.45 var(--sans); color: var(--ink); text-wrap: pretty; }
+.prose .paste-text a { color: inherit; text-decoration: underline; text-decoration-color: var(--ink-3); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.prose .paste-text a:hover { text-decoration-color: var(--accent); }
+.prose .paste-text a span { white-space: nowrap; }
+.prose .paste-copy { flex: none; display: inline-flex; align-items: center; gap: 7px; height: 44px; padding: 0 20px; border: 1px solid var(--ink); border-radius: 999px; background: var(--ink); color: var(--page); font: 500 15px var(--sans); cursor: pointer; white-space: nowrap; }
+.prose .paste-copy:hover { background: color-mix(in srgb, var(--ink) 85%, var(--page)); }
+.prose .paste + .qs-needs { margin-bottom: 28px; }
+@media (min-width: 1101px) { .prose .paste-text { font-size: 16px; } }
+@media (max-width: 640px) { .prose .paste { flex-wrap: wrap; padding: 16px; gap: 14px; } .prose .paste-text { flex-basis: 100%; } .prose .paste-copy { flex: 1 1 100%; justify-content: center; height: 48px; font-size: 15px; } }
+.prose .qs-needs { font-size: 14px; color: var(--ink-3); }
+.prose .qs-needs a { color: inherit; }
+
+/* pages whose front matter hides the nav */
+.docs-shell.no-nav { grid-template-columns: minmax(0, 1fr) 220px; }
+.docs-shell.no-nav.no-toc { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 1240px) { .docs-shell.no-nav { grid-template-columns: minmax(0, 1fr); } }
+
+/* embedded video keeps 16:9 at any width */
+.prose iframe { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; border: 0; border-radius: 10px; background: var(--surface); }
+
+/* MkDocs pages put "---" before many h2s; the h2's space already separates the section */
+.prose hr:has(+ h2) { display: none; }
+
+/* the old saturated diagram on the deployment and CI/CD pages: a light frame in light, dimmed on a dark frame in dark */
+.prose p:has(> img[src$='prototype_to_prod.png']) { max-width: 760px; margin: 8px 0 32px; padding: clamp(12px, 2.4vw, 24px); background: #f8fafd; border: 1px solid var(--rule); border-radius: 10px; }
+.prose img[src$='prototype_to_prod.png'] { display: block; width: 100%; border-radius: 0; }
+[data-theme='dark'] .prose p:has(> img[src$='prototype_to_prod.png']) { background: var(--surface-2); }
+[data-theme='dark'] .prose img[src$='prototype_to_prod.png'] { filter: brightness(.7) contrast(1.08); border-radius: 6px; }
+
+/* coding-agent logos on content tabs, keyed on the tab label */
+.tab-btn[data-label^='Antigravity']::before, .tab-btn[data-label^='Claude']::before, .tab-btn[data-label^='Codex']::before { content: ''; display: inline-block; width: 16px; height: 16px; margin-right: 8px; vertical-align: -3px; background: center / contain no-repeat; }
+.tab-btn[data-label^='Antigravity']::before { background-image: url('/assets/logos/antigravity.png'); }
+.tab-btn[data-label^='Claude']::before { background-image: url('/assets/logos/claude.png'); }
+.tab-btn[data-label^='Codex']::before { background-image: url('/assets/logos/openai.svg'); }
+[data-theme='dark'] .tab-btn[data-label^='Codex']::before { filter: invert(1); }
+
+/* inline code in a heading (CLI commands, skill names) takes the heading's size and color; after the generic code rules */
+.prose :is(h1, h2, h3, h4, h5, h6) code { font-size: 0.84em; font-weight: 450; letter-spacing: -0.03em; color: inherit; background: none; padding: 0; border-radius: 0; overflow-wrap: break-word; }
+.prose :is(h4, h5, h6) code { font-size: 0.92em; }
+
+/* ---------- reference pages: each command or skill opens on a hairline ---------- */
+.ref :is(h2, h3, h4, h5, h6):has(> code:only-of-type) { font-family: var(--code); font-weight: 500; letter-spacing: -0.02em; color: var(--ink); font-variation-settings: normal; }
+.ref :is(h2, h3, h4, h5, h6) > code:only-of-type { font-size: 1em; letter-spacing: inherit; }
+.ref-cli h2 { font-size: 24px; line-height: 1.25; margin: 48px 0 12px; }
+.ref-cli h3 { font-size: 21px; line-height: 1.35; margin: 72px 0 12px; padding-top: 28px; border-top: 1px solid var(--rule); }
+.ref-cli h4 { font-size: 18px; line-height: 1.4; margin: 52px 0 10px; padding-top: 22px; border-top: 1px solid var(--rule); }
+.ref-cli h5 { font-size: 16.5px; color: var(--ink); margin: 40px 0 8px; }
+.ref-cli :is(h3, h4, h5) + p { color: var(--ink); }
+.ref-cli .code-title { font-family: var(--sans); font-size: 13px; font-weight: 500; color: var(--ink-3); }
+.ref-cli table { font-size: 14.5px; }
+@media (min-width: 761px) { .ref-cli table { display: table; table-layout: auto; } .ref-cli :is(th, td):first-child { width: 1%; } .ref-cli td:not(:first-child), .ref-cli td:not(:first-child) :not(pre) > code { overflow-wrap: anywhere; } }
+.prose :is(th, td):first-child code { background: none; padding: 0; font-weight: 500; }
+.ref-cli td:first-child code { font-size: 0.94em; color: var(--ink); }
+.ref-cli td:nth-child(2) { color: var(--ink-3); font-size: 14px; min-width: 6.5em; }
+.ref-cli td:nth-child(4) { color: var(--ink-3); }
+.ref-skills h2 { font-size: 22px; margin: 48px 0 10px; padding-top: 28px; border-top: 1px solid var(--rule); }
+.ref-skills h2 + p { color: var(--ink-2); }
+/* option names in reference tables break only at hyphens, and stay on one line where there is room */
+.prose td:first-child code { overflow-wrap: normal; }
+@media (min-width: 761px) { .prose td:first-child code { white-space: nowrap; } }

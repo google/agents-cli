@@ -27,6 +27,7 @@ export and persist the environment variable themselves.
 import enum
 import logging
 import os
+import shlex
 import subprocess
 import warnings
 import webbrowser
@@ -80,6 +81,9 @@ def _api_key_instructions(var_name):
 
 _adc_credentials = None
 
+# Signs in gcloud and ADC with one browser login.
+_GCLOUD_LOGIN_CMD = ("gcloud", "auth", "login", "--update-adc")
+
 _QUOTA_PROJECT_WARNING_PREFIX = (
     "Your application has authenticated using end user credentials"
 )
@@ -108,6 +112,12 @@ def get_adc_credentials() -> tuple[Any, str | None]:
     return _adc_credentials
 
 
+def reset_adc_credentials() -> None:
+    """Forget the cached ADC, e.g. after a `gcloud auth` command changed them."""
+    global _adc_credentials
+    _adc_credentials = None
+
+
 def default_credentials(**kwargs: Any) -> tuple[Any, str | None]:
     """``google.auth.default()`` without its missing-quota-project warning.
 
@@ -128,7 +138,8 @@ def _setup_google_cloud_adc():
     """Guide the user through Google Cloud ADC setup.
 
     Checks for existing ADC. If not found, checks for gcloud CLI
-    and offers to run ``gcloud auth application-default login``.
+    and offers to run ``gcloud auth login --update-adc``, which signs in
+    both gcloud itself and ADC: agents-cli calls Google Cloud through both.
 
     Returns:
         Dict with project and account info on success, or None
@@ -156,7 +167,7 @@ def _setup_google_cloud_adc():
         click.echo("  After installing, run:")
         click.echo()
         click.secho(
-            "    gcloud auth application-default login",
+            f"    {shlex.join(_GCLOUD_LOGIN_CMD)}",
             bold=True,
         )
         click.echo()
@@ -170,14 +181,14 @@ def _setup_google_cloud_adc():
     click.echo()
 
     if not click.confirm(
-        "  Run 'gcloud auth application-default login' now",
+        f"  Run '{shlex.join(_GCLOUD_LOGIN_CMD)}' now",
         default=True,
     ):
         click.echo()
         click.echo("  Run this command manually when ready:")
         click.echo()
         click.secho(
-            "    gcloud auth application-default login",
+            f"    {shlex.join(_GCLOUD_LOGIN_CMD)}",
             bold=True,
         )
         return None
@@ -188,7 +199,7 @@ def _setup_google_cloud_adc():
 
     try:
         result = run_resolved(
-            ["gcloud", "auth", "application-default", "login"],
+            list(_GCLOUD_LOGIN_CMD),
             timeout=120,
         )
         if result.returncode != 0:
@@ -472,8 +483,6 @@ def get_access_token() -> str:
     """
     from google.auth.transport.requests import Request as GoogleAuthRequest
 
-    from google.agents.cli.scaffold.utils.command import run_gcloud_command
-
     try:
         credentials, _ = get_adc_credentials()
         credentials.refresh(GoogleAuthRequest())
@@ -483,14 +492,22 @@ def get_access_token() -> str:
         pass
 
     try:
-        result = run_gcloud_command(
-            ["auth", "print-access-token"],
-            capture_output=True,
-            check=True,
-        )
-        return result.stdout.strip()
+        return get_gcloud_access_token()
     except Exception as exc:
         raise RuntimeError("Failed to get access token") from exc
+
+
+def get_gcloud_access_token() -> str:
+    """Get the access token of the gcloud account (``gcloud auth print-access-token``)."""
+    from google.agents.cli.scaffold.utils.command import run_gcloud_command
+
+    result = run_gcloud_command(
+        ["auth", "print-access-token"],
+        capture_output=True,
+        check=True,
+        timeout=5,
+    )
+    return result.stdout.strip()
 
 
 def get_id_token(audience: str) -> str:

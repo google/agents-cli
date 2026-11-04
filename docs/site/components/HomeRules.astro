@@ -1,0 +1,136 @@
+---
+// Copyright 2026 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// "Your rules, as extensions": every deploy from Team A, Team B and CI passes through the acme-policy checkpoint, then the
+// built-in deploy runs. The pulses are drawn by the script at the end; without JS or with reduced motion the diagram
+// is the final state (all three checked). Labels are sourced in .redesign/rules-evidence.md.
+import { codeToHtml } from 'shiki';
+import { codeTheme } from '../../scripts/shiki-theme.mjs';
+import { rulesManifest, rulesSources } from '../data/home';
+
+// Shiki's class would pull in the docs copy button (site.ts wraps every pre.shiki).
+const yaml = (await codeToHtml(rulesManifest.text, { lang: 'yaml', theme: codeTheme }))
+  .replace(/class="shiki [^"]*"/, 'class="jr-pre rl-pre"').replace(/ style="[^"]*"/, '').replace(/ tabindex="0"/, '');
+---
+<figure class="rl" data-rl aria-label="Every agents-cli deploy from Team A, Team B and CI runs the acme-policy checks first, then the built-in deploy to Cloud Run">
+  <div class="rl-stage">
+    <ul class="rl-src">
+      {rulesSources.map((n) => (
+        <li><span class="rl-chip"><b>{n}</b><code><span class="rl-nw">agents-cli</span> <span class="rl-nw">deploy</span></code></span></li>
+      ))}
+    </ul>
+    <div class="rl-zone rl-zin" aria-hidden="true">
+      <svg class="rl-h" viewBox="0 0 100 100" preserveAspectRatio="none"><path d="M0 16.667 C50 16.667 50 50 100 50" /><path d="M0 50 C50 50 50 50 100 50" /><path d="M0 83.333 C50 83.333 50 50 100 50" /></svg>
+      <svg class="rl-v" viewBox="0 0 100 100" preserveAspectRatio="none"><path d="M16.667 0 C16.667 60 50 40 50 100" /><path d="M50 0 V100" /><path d="M83.333 0 C83.333 60 50 40 50 100" /></svg>
+      <i class="rl-dot"></i>
+    </div>
+    <div class="rl-cpw">
+      <button type="button" class="rl-cp" aria-describedby="rl-pop" aria-expanded="false">
+        <span class="rl-shield" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 4.5 6v5.5c0 4.6 3.1 8.2 7.5 9.5 4.4-1.3 7.5-4.9 7.5-9.5V6z" /><path d="m8.8 12.2 2.4 2.4 4.2-4.6" /></svg></span>
+        <span class="rl-cp-k">Extension</span>
+        <span class="rl-cp-n">acme-policy</span>
+        <code class="rl-cp-s">policy.sh</code>
+        <span class="rl-st"><span class="rl-wait">Runs before deploy</span><span class="rl-ok">checks passed ✓</span></span>
+        <span class="rl-info" aria-hidden="true">i</span>
+      </button>
+      <div class="rl-pop" id="rl-pop" role="tooltip">
+        <span class="rl-pop-f">{rulesManifest.file}</span>
+        <div set:html={yaml} />
+      </div>
+    </div>
+    <div class="rl-zone rl-zout" aria-hidden="true">
+      <svg class="rl-h" viewBox="0 0 100 100" preserveAspectRatio="none"><path d="M0 50 H100" /></svg>
+      <svg class="rl-v" viewBox="0 0 100 100" preserveAspectRatio="none"><path d="M50 0 V100" /></svg>
+      <i class="rl-dot"></i>
+    </div>
+    <div class="rl-dest">
+      <span class="rl-dest-t">built-in deploy</span>
+      <span class="rl-dest-n"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18.5a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 18 9.8a4.4 4.4 0 0 1-.5 8.7" /><path d="M12 20v-7m-2.6 2.6L12 13l2.6 2.6" /></svg>Cloud Run</span>
+    </div>
+  </div>
+  <noscript>
+    <div class="rl-snip"><span class="rl-pop-f">{rulesManifest.file}</span><div set:html={yaml} /></div>
+  </noscript>
+</figure>
+<script>
+  // Start when 40% of the diagram is on screen, loop while it is, stop when it leaves. One deploy is about 2.2s.
+  const el = document.querySelector<HTMLElement>('[data-rl]');
+  if (el) {
+    el.classList.add('rl-js');
+    const cp = el.querySelector<HTMLButtonElement>('.rl-cp')!;
+    const set = (open: boolean) => { el.classList.toggle('is-open', open); cp.setAttribute('aria-expanded', String(open)); };
+    cp.addEventListener('click', () => set(!el.classList.contains('is-open')));
+    document.addEventListener('click', (e) => { if (!(e.target as Element).closest('.rl-cpw')) set(false); });
+    el.addEventListener('keydown', (e) => { if (e.key === 'Escape') set(false); });
+    if ('IntersectionObserver' in window && !matchMedia('(prefers-reduced-motion: reduce)').matches) play(el);
+  }
+  function play(el: HTMLElement) {
+    el.classList.add('rl-anim');
+    const $ = <T extends Element>(s: string) => el.querySelector<T>(s)!;
+    const chips = [...el.querySelectorAll<HTMLElement>('.rl-chip')];
+    const zin = $<HTMLElement>('.rl-zin'), zout = $<HTMLElement>('.rl-zout');
+    const cpEl = $<HTMLElement>('.rl-cp'), dest = $<HTMLElement>('.rl-dest');
+    const dotIn = zin.querySelector<HTMLElement>('.rl-dot')!, dotOut = zout.querySelector<HTMLElement>('.rl-dot')!;
+    let token = 0;
+    const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+    // Move a dot along path i of a zone; the visible svg (horizontal or vertical layout) decides the shape.
+    const travel = (zone: HTMLElement, dot: HTMLElement, i: number, ms: number, tk: number) => new Promise<void>((done) => {
+      const svg = [...zone.querySelectorAll<SVGSVGElement>('svg')].find((s) => s.getClientRects().length)!;
+      const path = svg.querySelectorAll<SVGPathElement>('path')[i];
+      path.classList.add('on');
+      const len = path.getTotalLength(), t0 = performance.now();
+      const step = (now: number) => {
+        if (tk !== token) return done();
+        const t = Math.min(1, (now - t0) / ms), e = t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        const p = path.getPointAtLength(len * e);
+        dot.style.left = p.x + '%'; dot.style.top = p.y + '%';
+        dot.style.opacity = String(Math.min(1, t * 6, (1 - t) * 6));
+        if (t < 1) requestAnimationFrame(step); else { path.classList.remove('on'); done(); }
+      };
+      requestAnimationFrame(step);
+    });
+    const flash = (node: HTMLElement) => { node.classList.remove('hit'); void node.offsetWidth; node.classList.add('hit'); };
+    const reset = () => {
+      el.dataset.st = 'idle';
+      chips.forEach((c) => c.classList.remove('is-on'));
+      el.querySelectorAll('path.on').forEach((p) => p.classList.remove('on'));
+      dotIn.style.opacity = dotOut.style.opacity = '0';
+      cpEl.classList.remove('lit'); dest.classList.remove('hit', 'lit');
+    };
+    async function loop(tk: number) {
+      reset();
+      while (tk === token) {
+        for (let i = 0; i < chips.length && tk === token; i++) {
+          el.dataset.st = 'idle'; cpEl.classList.remove('lit'); chips.forEach((c, j) => c.classList.toggle('is-on', j === i));
+          await travel(zin, dotIn, i, 750, tk); if (tk !== token) return;
+          el.dataset.st = 'pass'; cpEl.classList.add('lit'); flash(cpEl);
+          await sleep(450); if (tk !== token) return;
+          await travel(zout, dotOut, 0, 550, tk); if (tk !== token) return;
+          flash(dest); chips[i].classList.remove('is-on');
+          await sleep(550);
+        }
+        await sleep(1800); if (tk !== token) return;
+        reset(); await sleep(500);
+      }
+    }
+    new IntersectionObserver(([e]) => {
+      if (e.isIntersecting && e.intersectionRatio >= .4 && !el.classList.contains('is-run')) {
+        el.classList.add('is-run', 'is-in'); loop(++token);
+      } else if (!e.isIntersecting && el.classList.contains('is-run')) {
+        el.classList.remove('is-run'); token++;
+      }
+    }, { threshold: [0, .4] }).observe(el);
+  }
+</script>

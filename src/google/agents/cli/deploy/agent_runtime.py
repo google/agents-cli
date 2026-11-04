@@ -30,9 +30,10 @@ from pathlib import Path
 from typing import Any
 
 import agentplatform
+import backoff
 import click
 import pathspec
-from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
+import requests
 from google.genai.errors import APIError
 from google.genai.types import EncryptionSpec
 
@@ -40,17 +41,24 @@ from google.agents.cli import _sdk_compat
 from google.agents.cli._agent_platform import AgentPlatformClient
 from google.agents.cli._agent_platform_types import types
 from google.agents.cli._project import (
-    AGENT_IDENTITY,
     DEFAULT_FRAMEWORK,
     ProjectConfig,
     find_project_root,
     scaffold_older_than,
 )
-from google.agents.cli._remote import build_agent_runtime_passthrough_url
+from google.agents.cli._remote import (
+    FetchedAgentCard,
+    build_agent_runtime_card_url,
+    build_agent_runtime_passthrough_url,
+    build_remote_headers,
+    fetch_agent_card,
+    is_transient_request_error,
+)
 from google.agents.cli.deploy import _build_logs
 from google.agents.cli.deploy._agent_identity import (
     AGENT_IDENTITY_ROLES,
     grant_roles_to_principal,
+    should_use_agent_identity,
 )
 from google.agents.cli.deploy._operation import (
     METADATA_FILE,
@@ -80,6 +88,7 @@ from google.agents.cli.deploy._utils import (
     validate_deployment_region,
 )
 from google.agents.cli.scaffold.utils.language import (
+    a2a_base_path,
     dispatch_language,
     get_language_config,
     get_project_version,
@@ -96,6 +105,8 @@ warnings.filterwarnings(
 # GOOGLE_CLOUD_LOCATION is NOT reserved (verified) — the LLM location can differ
 # from the deploy region, so we keep it. Filtered from the propagated .env.
 _AGENT_RUNTIME_RESERVED_ENV = frozenset({"GOOGLE_CLOUD_PROJECT"})
+# A prebuilt image gets PORT from container_spec.port; the API rejects it in env.
+_PREBUILT_IMAGE_RESERVED_ENV = _AGENT_RUNTIME_RESERVED_ENV | {"PORT"}
 
 # Default for deploy_agent_runtime's env_var_changes, secret_changes and
 # label_changes.
@@ -162,6 +173,13 @@ _KMS_KEY_RE = re.compile(
     r"^projects/[^/]+/locations/([^/]+)/keyRings/[^/]+/cryptoKeys/[^/]+$"
 )
 
+_AGENT_CARD_UPDATE_MASK = "spec.agent_card"
+
+# CLI-created engines default to min_instances=0, so allow for a cold start.
+_AGENT_CARD_WAIT_SECONDS = 300
+_AGENT_CARD_REQUEST_TIMEOUT_SECONDS = 60
+_AGENT_CARD_MAX_RETRY_DELAY_SECONDS = 10
+
 
 def build_psc_interface_config(
     *,
@@ -225,6 +243,8 @@ def print_agent_runtime_dry_run(
     agent_gateway_ingress: str | None,
     kms_key: str | None,
     label_changes: KeyValueChanges,
+    agent_card_sync: bool,
+    image: str | None,
 ) -> None:
     """Print what an Agent Runtime deploy would create or update."""
     # Fill defaults FOR DISPLAY ONLY — the real call passes raw (possibly-None)
@@ -241,6 +261,8 @@ def print_agent_runtime_dry_run(
     for key, value in runtime_shape.items():
         msg += f"\n  {key}: {value}"
     msg += "\n  (defaults apply on create; existing values preserved on update)"
+    if image:
+        msg += f"\n  Image: {image} (prebuilt; skips the source build)"
     if update_only:
         msg += (
             "\n  --update-only: an absent engine fails the deploy "
@@ -275,6 +297,8 @@ def print_agent_runtime_dry_run(
     if label_changes.removals:
         removals = ", ".join(label_changes.removals)
         msg += f"\n  Labels to remove: {removals} (no effect on create)"
+    if agent_card_sync:
+        msg += "\n  A2A agent card: written to Agent Registry after the deploy"
     click.echo(msg)
 
 
@@ -302,6 +326,7 @@ def deploy_agent_runtime(
     agent_gateway_egress: str | None = None,
     agent_gateway_ingress: str | None = None,
     build_args: str | None = None,
+    image: str | None = None,
     port: int | None = None,
     framework: str = DEFAULT_FRAMEWORK,
     kms_key: str | None = None,
@@ -345,6 +370,8 @@ def deploy_agent_runtime(
         agent_gateway_ingress: Agent Gateway to route inbound traffic through,
             with the same three states as ``agent_gateway_egress``.
         build_args: Comma-separated KEY=VALUE build args.
+        image: Prebuilt Artifact Registry image URI. Deploys it as-is instead
+            of uploading the source and building from the Dockerfile.
         port: Container port.
         framework: Framework label recorded on the deployment. The Console
             reads it to pick a playground, and it selects which runtime
@@ -362,19 +389,20 @@ def deploy_agent_runtime(
 
     display_name = display_name or resolve_service_name(cfg, None)
 
-    # Agent Runtime builds from the project's Dockerfile, so upload the tree.
-    auto_packaged = not source_packages
-    source_packages = source_packages or _packaged_files(Path.cwd())
+    if not image:
+        # Agent Runtime builds from the project's Dockerfile, so upload the tree.
+        auto_packaged = not source_packages
+        source_packages = source_packages or _packaged_files(Path.cwd())
 
-    if not os.path.exists("Dockerfile"):
-        raise click.ClickException(_missing_dockerfile_error(cfg))
-    # A present-but-ignored Dockerfile passes the check above yet breaks the
-    # build, so surface it clearly instead of failing opaquely in Agent Runtime.
-    if auto_packaged and "./Dockerfile" not in source_packages:
-        raise click.ClickException(
-            "Dockerfile is present but excluded by .gcloudignore/.gitignore.\n"
-            "  Remove the matching ignore pattern so the deploy can package it."
-        )
+        if not os.path.exists("Dockerfile"):
+            raise click.ClickException(_missing_dockerfile_error(cfg))
+        # A present-but-ignored Dockerfile passes the check above yet breaks the
+        # build, so surface it clearly instead of failing opaquely in Agent Runtime.
+        if auto_packaged and "./Dockerfile" not in source_packages:
+            raise click.ClickException(
+                "Dockerfile is present but excluded by .gcloudignore/.gitignore.\n"
+                "  Remove the matching ignore pattern so the deploy can package it."
+            )
     # Only binding an egress gateway needs the CA; an empty value unbinds.
     if agent_gateway_egress:
         _require_gateway_ready_project(cfg)
@@ -388,8 +416,10 @@ def deploy_agent_runtime(
     runtime_env_vars = _build_runtime_env_vars(
         env_vars=env_var_changes.updates,
         secrets=secrets,
-        port=port,
+        # A prebuilt image takes the port via container_spec.port instead.
+        port=None if image else port,
         language=cfg.language,
+        reserved=_PREBUILT_IMAGE_RESERVED_ENV if image else _AGENT_RUNTIME_RESERVED_ENV,
     )
 
     # Parse build args early during local preparation
@@ -476,6 +506,10 @@ def deploy_agent_runtime(
         # Shown on redeploys that omit --key.
         existing_kms_key: str | None = None
 
+        # A bare identity agent has no deployment until this deploy adds one.
+        has_deployment = False
+        resource_name: str | None = None
+
         # None leaves labels out of the update mask, so the live ones are preserved.
         resolved_labels = dict(label_changes.updates) or None
 
@@ -494,6 +528,20 @@ def deploy_agent_runtime(
                     existing=existing_kms_key,
                     display_name=display_name,
                 )
+            _check_deployment_source_unchanged(
+                existing_spec, image=image, display_name=display_name
+            )
+            has_deployment = bool(
+                existing_spec
+                and (
+                    existing_spec.source_code_spec
+                    or existing_spec.package_spec
+                    or existing_spec.container_spec
+                )
+            )
+            # container_spec is replaced whole, so keep a port set by an earlier deploy.
+            if image and port is None and existing_spec and existing_spec.container_spec:
+                port = existing_spec.container_spec.port
             migrates_to_agent_identity = (
                 agent_identity
                 and is_update
@@ -511,9 +559,7 @@ def deploy_agent_runtime(
             # instead of localhost; needs the existing engine's resource name, so a
             # first-time create picks it up on the next deploy.
             runtime_env_vars.setdefault(
-                "APP_URL",
-                f"https://{location}-aiplatform.googleapis.com/reasoningEngines/v1/"
-                f"{resource_name}/api",
+                "APP_URL", build_agent_runtime_passthrough_url(location, resource_name)
             )
             # When only one of cpu/memory is set, fill the other half from the live
             # spec so config_kwargs["resource_limits"] gets a complete pair. When both
@@ -533,10 +579,8 @@ def deploy_agent_runtime(
                         "memory" if memory is None else "cpu",
                     )
 
-        source_packages_list = list(source_packages)
         config_kwargs: dict[str, Any] = {
             "display_name": display_name,
-            "source_packages": source_packages_list,
             "env_vars": runtime_env_vars,
             "service_account": service_account,
             "identity_type": _resolve_identity_type(agent_identity),
@@ -548,13 +592,22 @@ def deploy_agent_runtime(
             "resource_limits": {"cpu": cpu, "memory": memory}
             if (cpu is not None and memory is not None)
             else None,
-            # Agent Runtime builds and serves the container over HTTP, so no entrypoint
-            # module or class-method spec is needed — just the image build config.
-            "image_spec": image_spec_dict,
             # The Console uses agent_framework to decide which playground to render.
             # It also selects which runtime contract the deployment declares.
             "agent_framework": framework,
         }
+
+        # Agent Runtime serves the container over HTTP, so no entrypoint module is
+        # needed: either a prebuilt image or the source plus its build config.
+        container_spec: types.ReasoningEngineSpecContainerSpecDict | None = None
+        if image:
+            container_spec = {"image_uri": image}
+            if port:
+                container_spec["port"] = port
+            config_kwargs["container_spec"] = container_spec
+        else:
+            config_kwargs["source_packages"] = list(source_packages or [])
+            config_kwargs["image_spec"] = image_spec_dict
 
         if framework == DEFAULT_FRAMEWORK:
             class_methods_builder = dispatch_language(
@@ -640,6 +693,8 @@ def deploy_agent_runtime(
                 ingress_cfg = agent_gateway_config.client_to_agent_config
                 new_val = ingress_cfg.agent_gateway if ingress_cfg else "(cleared)"
                 params.append(("Agent Gateway (ingress)", new_val))
+        if image:
+            params.append(("Image", image))
         if port:
             params.append(("Port", port))
         if build_args:
@@ -663,11 +718,14 @@ def deploy_agent_runtime(
             api_resource = matching_agents[0].api_resource
             assert api_resource is not None, "identity agent has no api_resource"
             resource_name = api_resource.name
-            app_url = (
-                f"https://{location}-aiplatform.googleapis.com/reasoningEngines/v1/"
-                f"{resource_name}/api"
+            if not resource_name:
+                raise click.ClickException(
+                    f"Agent Runtime created the agent identity for {display_name} "
+                    "but returned no resource name. Rerun `agents-cli deploy` to retry."
+                )
+            runtime_env_vars["APP_URL"] = build_agent_runtime_passthrough_url(
+                location, resource_name
             )
-            runtime_env_vars["APP_URL"] = app_url
             config_kwargs["env_vars"] = runtime_env_vars
             config = types.AgentRuntimeConfig(**config_kwargs)
             api_config = _create_api_config(
@@ -677,6 +735,21 @@ def deploy_agent_runtime(
                 agent_gateway_egress=agent_gateway_egress,
                 agent_gateway_ingress=agent_gateway_ingress,
             )
+
+        if container_spec and resource_name and not has_deployment:
+            try:
+                _deploy_image_first(
+                    client,
+                    matching_agents=matching_agents,
+                    container_spec=container_spec,
+                    project=project,
+                    location=location,
+                    claim=claim,
+                )
+            except click.ClickException:
+                claim.completed = True
+                clear_operation(owner_id=claim.owner_id)
+                raise
 
         # Remote submit mutation
         action = "Updating" if matching_agents else "Creating"
@@ -752,6 +825,10 @@ def deploy_agent_runtime(
 
         write_deployment_metadata(remote_agent, cfg, owner_id=claim.owner_id)
         claim.completed = True
+        if cfg.is_a2a:
+            _sync_agent_card(
+                client, remote_agent, cfg, resource_name=resource_name, location=location
+            )
         print_deployment_success(remote_agent, location, project, cfg)
 
         return remote_agent
@@ -814,6 +891,10 @@ def check_agent_runtime_operation(
         remote_agent = client.runtimes.get(name=resource_name)
 
         write_deployment_metadata(remote_agent, cfg, owner_id=owner_id)
+        if cfg.is_a2a:
+            _sync_agent_card(
+                client, remote_agent, cfg, resource_name=resource_name, location=location
+            )
         print_deployment_success(remote_agent, location, project, cfg)
         clear_operation(owner_id=owner_id)
     else:
@@ -1022,13 +1103,14 @@ def _build_runtime_env_vars(
     secrets: dict[str, dict[str, str]],
     port: int | None = None,
     language: str,
+    reserved: frozenset[str] = _AGENT_RUNTIME_RESERVED_ENV,
 ) -> dict[str, Any]:
     """Assemble the runtime env vars for the deployed Agent Runtime.
 
     Precedence (highest first): ``--secrets``, then ``env_vars`` (the project
     ``.env`` with ``--env-vars`` on top), then these overridable defaults.
-    ``GOOGLE_CLOUD_PROJECT`` is dropped — Agent Runtime reserves it (the platform
-    injects it) and rejects it.
+    Names in ``reserved`` (by default ``GOOGLE_CLOUD_PROJECT``) are dropped:
+    Agent Runtime injects them and rejects them.
     The backend defaults to Gemini platform (at ``GOOGLE_CLOUD_LOCATION=global``) unless
     the ``.env`` supplies an AI Studio API key:
 
@@ -1045,12 +1127,12 @@ def _build_runtime_env_vars(
     runtime_env_vars.update(secrets)  # type: ignore[arg-type]
     # Agent Runtime injects these itself; including them in deployment_spec.env is
     # rejected with FAILED_PRECONDITION ("... is reserved").
-    for reserved in _AGENT_RUNTIME_RESERVED_ENV & runtime_env_vars.keys():
+    for name in reserved & runtime_env_vars.keys():
         logging.warning(
             "Ignoring reserved Agent Runtime env var %s — it is set by the platform.",
-            reserved,
+            name,
         )
-        del runtime_env_vars[reserved]
+        del runtime_env_vars[name]
     # Skip the version read (and its warning) when the user has already supplied one.
     if "AGENT_VERSION" not in runtime_env_vars:
         runtime_env_vars["AGENT_VERSION"] = get_project_version(
@@ -1179,6 +1261,30 @@ def _check_kms_key_unchanged(
     )
 
 
+def _check_deployment_source_unchanged(
+    spec: types.ReasoningEngineSpec | None, *, image: str | None, display_name: str
+) -> None:
+    """Raise if the deploy would switch between a prebuilt image and a source build.
+
+    The API rejects the switch in both directions once an agent has a deployment.
+    """
+    if spec is None:
+        return
+    if image and (spec.source_code_spec or spec.package_spec):
+        # Includes agents the scaffolded Terraform provisions with a placeholder.
+        problem = "deploys from source, so it can't switch to a prebuilt --image"
+    elif not image and spec.container_spec:
+        problem = "deploys a prebuilt image, so it can't switch to a source build"
+    else:
+        return
+    raise click.ClickException(
+        f"Agent '{display_name}' {problem}: Agent Runtime doesn't allow changing "
+        "how an existing agent deploys.\n"
+        "  Deploy it the same way as before, or pass --service-name to deploy a "
+        "new agent."
+    )
+
+
 def _is_agent_identity_principal(effective_identity: str | None) -> bool:
     """Whether an effective identity is an Agent Identity principal."""
     return bool(
@@ -1209,19 +1315,6 @@ def _existing_labels(agent: types.Runtime) -> dict[str, str]:
     if not agent.api_resource:
         return {}
     return agent.api_resource.labels or {}
-
-
-def should_use_agent_identity(
-    *, agent_identity_flag: bool | None, identity_default: str, is_update: bool
-) -> bool | None:
-    """Whether the deploy uses Agent Identity, or None to keep the engine's identity.
-
-    The --agent-identity flag wins. Without it, a new engine follows the
-    manifest default.
-    """
-    if agent_identity_flag is None and not is_update:
-        return identity_default == AGENT_IDENTITY
-    return agent_identity_flag
 
 
 def _resolve_identity_type(agent_identity: bool | None) -> types.IdentityType | None:
@@ -1273,6 +1366,7 @@ CLASS_METHODS_BUILDERS: dict[str, Callable[[], list[dict[str, str]]] | None] = {
     "go": _adk_go_class_methods,
     "java": None,
     "typescript": None,
+    "kotlin": None,
 }
 
 
@@ -1307,6 +1401,7 @@ def _create_api_config(
         psc_interface_config=config.psc_interface_config,
         agent_gateway_config=config.agent_gateway_config,
         image_spec=config.image_spec,
+        container_spec=config.container_spec,
         encryption_spec=config.encryption_spec,
     )
 
@@ -1349,6 +1444,51 @@ def setup_agent_identity(
         raise _request_failed_error("create", exc, kms_key) from exc
     grant_agent_identity_roles(project, agent)
     return agent
+
+
+def _deploy_image_first(
+    client: AgentPlatformClient,
+    *,
+    matching_agents: list[Any],
+    container_spec: types.ReasoningEngineSpecContainerSpecDict,
+    project: str,
+    location: str,
+    claim: OperationClaim,
+) -> None:
+    """Deploy only the image to an agent that has no deployment yet.
+
+    The API rejects a deployment_spec update on such an agent unless it carries
+    source, and container_spec doesn't count, so the image has to land first.
+    """
+    click.echo(
+        "\n📦 Deploying the image before applying its configuration "
+        "(this step waits even with --no-wait)..."
+    )
+    started_at = datetime.datetime.now(tz=datetime.UTC)
+    # Records the operation so `deploy --status` can find it if this step is interrupted.
+    operation_name = _start_and_record_operation(
+        client=client,
+        matching_agents=matching_agents,
+        project=project,
+        location=location,
+        api_config={
+            "spec": {"container_spec": container_spec},
+            "update_mask": "spec.container_spec",
+        },
+        claim=claim,
+    )
+    logs_url = build_agent_engine_logs_url(operation_name, project)
+    click.echo(f"   Operation: {operation_name}\n   Monitor deploy logs: {logs_url}")
+    operation = _sdk_compat.wait_for_operation(client, operation_name=operation_name)
+    if operation.error:
+        raise click.ClickException(
+            _deployment_failed_message(
+                operation.error,
+                operation_name=operation_name,
+                project=project,
+                started_at=started_at,
+            )
+        )
 
 
 def _request_failed_error(
@@ -1526,11 +1666,111 @@ def write_deployment_metadata(
         "is_a2a": cfg.is_a2a,
         "language": cfg.language,
         "agent_directory": cfg.agent_directory,
+        "app_name": cfg.app_name,
         "deployment_timestamp": datetime.datetime.now(tz=datetime.UTC).isoformat(),
     }
 
     complete_operation(metadata_update=metadata, owner_id=owner_id)
     logging.info(f"Agent Runtime ID written to {METADATA_FILE}")
+
+
+def _sync_agent_card(
+    client: AgentPlatformClient,
+    remote_agent: types.Runtime,
+    cfg: ProjectConfig,
+    *,
+    resource_name: str,
+    location: str,
+) -> None:
+    """Copy the served A2A card to ``spec.agent_card``, which Agent Registry reads."""
+    a2a_path = a2a_base_path(cfg.language, cfg.app_name)
+    if a2a_path is None:
+        raise RuntimeError(f"{cfg.language} has no A2A base path.")
+    url = build_agent_runtime_card_url(location, resource_name, a2a_path)
+
+    logging.info("Writing the agent card to Agent Registry...")
+    try:
+        card = _fetch_deployed_agent_card(url, build_remote_headers((), url)).raw
+    except (requests.RequestException, ValueError) as exc:
+        hint = ""
+        if (
+            isinstance(exc, requests.HTTPError)
+            and exc.response is not None
+            and exc.response.status_code in (401, 403)
+        ):
+            ingress_gateway = _ingress_gateway(remote_agent)
+            hint = (
+                f" Check that the ingress Agent Gateway {ingress_gateway} allows "
+                "direct calls to the agent."
+                if ingress_gateway
+                else " Check that your credentials can call the agent."
+            )
+        logging.warning(
+            "The agent is deployed, but its agent card could not be read from %s "
+            "(%s), so Agent Registry may not show the current card.%s Rerun "
+            "`agents-cli deploy` to retry.",
+            url,
+            exc,
+            hint,
+        )
+        return
+
+    api_resource = remote_agent.api_resource
+    spec = api_resource.spec if api_resource else None
+    if card == (spec.agent_card if spec else None):
+        logging.info("Agent card unchanged.")
+        return
+
+    try:
+        operation_name = _sdk_compat.start_update(
+            client,
+            name=resource_name,
+            config={
+                "spec": {"agent_card": card},
+                "update_mask": _AGENT_CARD_UPDATE_MASK,
+            },
+        )
+        error = _sdk_compat.wait_for_operation(
+            client, operation_name=operation_name
+        ).error
+    except APIError as exc:
+        error = exc
+    if error:
+        logging.warning(
+            "The agent is deployed, but writing its agent card to Agent Registry "
+            "failed: %s. Rerun `agents-cli deploy` to retry.",
+            error,
+        )
+        return
+    logging.info("Agent card updated.")
+
+
+@backoff.on_exception(
+    backoff.expo,
+    requests.RequestException,
+    giveup=lambda exc: not is_transient_request_error(exc),
+    max_tries=None,
+    max_time=_AGENT_CARD_WAIT_SECONDS,
+    max_value=_AGENT_CARD_MAX_RETRY_DELAY_SECONDS,
+    jitter=None,
+    on_backoff=lambda details: logging.info(
+        "The agent card isn't served yet; retrying in %.0fs (%.0fs of %ds elapsed)...",
+        details["wait"],
+        details["elapsed"],
+        _AGENT_CARD_WAIT_SECONDS,
+    ),
+)
+def _fetch_deployed_agent_card(url: str, headers: dict[str, str]) -> FetchedAgentCard:
+    return fetch_agent_card(url, headers, timeout=_AGENT_CARD_REQUEST_TIMEOUT_SECONDS)
+
+
+def _ingress_gateway(agent: types.Runtime) -> str | None:
+    api_resource = agent.api_resource
+    spec = api_resource.spec if api_resource else None
+    deployment_spec = spec.deployment_spec if spec else None
+    gateway_config = deployment_spec.agent_gateway_config if deployment_spec else None
+    ingress = gateway_config.client_to_agent_config if gateway_config else None
+    return ingress.agent_gateway if ingress else None
 
 
 def print_deployment_success(
@@ -1549,20 +1789,15 @@ def print_deployment_success(
 
     if cfg.is_a2a:
         print("\n✅ Deployment successful!")
-        passthrough_url = build_agent_runtime_passthrough_url(location, resource_name)
-        a2a_path_factory: Callable[[str], str] | None = get_language_config(
-            cfg.language
-        ).get("a2a_base_path_factory")
-        if a2a_path_factory is None:
+        a2a_path = a2a_base_path(cfg.language, cfg.app_name)
+        if a2a_path is None:
             logging.warning(
                 "No A2A base path is defined for language '%s'; defaulting to the "
                 "root path. The agent card URL may be wrong.",
                 cfg.language,
             )
             a2a_path = ""
-        else:
-            a2a_path = a2a_path_factory(cfg.agent_directory)
-        agent_card_url = f"{passthrough_url}{a2a_path}{AGENT_CARD_WELL_KNOWN_PATH}"
+        agent_card_url = build_agent_runtime_card_url(location, resource_name, a2a_path)
         print(f"🪪 Agent Card URL: {agent_card_url}")
     else:
         print("\n✅ Deployment successful!")

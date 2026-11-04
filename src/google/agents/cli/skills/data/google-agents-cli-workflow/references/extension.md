@@ -70,9 +70,9 @@ commands:
 ## Adopt an existing extension
 
 ```bash
-agents-cli extension add <ref> [--global] [--ref <branch|tag|sha>] [--yes]
+agents-cli extension add <ref> [--global] [--ref <branch|tag|sha|:latest>] [--yes]
 agents-cli extension list                      # what's active, its scope, and its commands
-agents-cli extension update [<name>]           # advance the pin and replace its skills
+agents-cli extension update [<name>] [--to <branch|tag|sha|:latest>]  # advance or move the pin and replace its skills
 agents-cli extension remove <name> [--global]  # drop it, its vendored copy, and skills no other scope uses
 agents-cli info                                # shows active extensions + sources + conflicts
 ```
@@ -86,8 +86,9 @@ agents-cli info                                # shows active extensions + sourc
 | `https://git.example.com/acme/acli-extensions` | any git host — `https://`, `http://` or `ssh://` |
 | `git@git.example.com:acme/acli-extensions` | the same host, in scp form |
 | `local@../my-extension` | a local path (for development) |
-| `<name>` | first-party shorthand — resolves to the `google/agents-cli` repo |
+| `<name>` | first-party shorthand — pins the latest release tag of the `google/agents-cli` repo that is not newer than your agents-cli (for example `v1.12.0`) |
 | `--ref <branch\|tag\|sha>` | pin a branch, tag, or commit SHA |
+| `--ref :latest` | pin the latest release, as the shorthand does without `--ref` (first-party only) |
 
 A URL is cloned with your ambient git configuration, so whatever already authenticates you to that host (credential helper, ssh agent) applies — agents-cli neither asks for nor stores credentials.
 
@@ -112,7 +113,9 @@ An extension changes commands. To run a different agent framework, scaffold from
   - It deletes none when an extension list for that skills folder cannot be fully read, or when the project's or the user's `.agents/skills` folder is reached through a link.
   - A project whose `.agents` folder links to `~/.agents` is protected only while `install` runs in that project. `install` in another project can delete its skills from `~/.agents/skills`, and `install` in that project brings them back.
   - A skill folder with a `.agents-cli-extension` file belongs to the extension: `extension add`, `extension update` and `agents-cli install` replace it whole. To change a skill, copy its folder under a new name.
-- `extension update [name]` advances the pin to the latest commit of the **same tracked ref** (e.g. a branch), re-prompting for third-party trust, and replaces the extension's skills with the new version's. If the new skills cannot be installed, it keeps the old pin. Nothing updates in the background. Note: a pinned tag/SHA re-resolves to itself — to move to a **different** tag, re-run `extension add <ref> --ref <new-tag>` (it replaces the existing pin).
+- `extension update [name]` advances the pin to the latest commit of the **same tracked ref** (e.g. a branch), re-prompting for third-party trust, and replaces the extension's skills with the new version's. If the new skills cannot be installed, it keeps the old pin. Nothing updates in the background. A pinned tag/SHA re-resolves to itself.
+  - `--to <branch|tag|sha>` moves the named extension's pin to another ref.
+  - `--to :latest` moves a first-party extension to the latest release that is not newer than your agents-cli; without a name it moves every first-party extension and skips the rest. It records the tag, so run it again to pick up later releases.
 - `extension remove <name> [--global]` drops the entry and deletes the working copy and the skills it owns. It removes from one scope per call: project before user without `--global`, user scope only with `--global`. If the home folder is a project and the extension is still installed at both scopes, `remove` keeps the shared skills until the other scope is removed too.
 
 Tracking a version:
@@ -121,7 +124,7 @@ Tracking a version:
 agents-cli extension add acme/acli-extensions#soc2 --ref v1.2.0   # pin a tag (recommended)
 agents-cli extension add acme/acli-extensions#soc2 --ref main     # follow a branch
 agents-cli extension update soc2                               # advance within the tracked ref
-agents-cli extension add acme/acli-extensions#soc2 --ref v1.3.0   # move to another tag: re-add, not update
+agents-cli extension update soc2 --to v1.3.0               # move to another tag
 agents-cli extension add acme/acli-extensions#soc2 --ref v1.2.0   # roll back the same way
 ```
 

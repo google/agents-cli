@@ -275,6 +275,7 @@ def run_resolved(
         # Create a shallow copy to avoid modifying the original list passed by reference
         args = args.copy()
         args[0] = _tools.require_tool(executable)
+        kwargs = _with_gcloud_fallback_token(executable, args, kwargs)
 
     with _wrap_launch_errors(executable, args):
         return subprocess.run(args, **kwargs)
@@ -308,9 +309,21 @@ def popen_resolved(
         # Create a shallow copy to avoid modifying the original list passed by reference
         args = args.copy()
         args[0] = _tools.require_tool(executable)
+        kwargs = _with_gcloud_fallback_token(executable, args, kwargs)
 
     with _wrap_launch_errors(executable, args):
         return subprocess.Popen(args, **kwargs)
+
+
+def _with_gcloud_fallback_token(executable: str, args: list[str], kwargs: dict) -> dict:
+    """Add an ADC access token to a gcloud call's env when gcloud has no account."""
+    if executable != "gcloud":
+        return kwargs
+    # Imported here: _gcloud_auth imports run_resolved from this module.
+    from google.agents.cli._gcloud_auth import fallback_token_env
+
+    env = fallback_token_env(args[1:], kwargs.get("env"))
+    return kwargs if env is None else {**kwargs, "env": env}
 
 
 def popen_resolved_detached(

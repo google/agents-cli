@@ -152,7 +152,7 @@ Yes. `agents-cli scaffold enhance` adds deployment and CI/CD to existing project
 Yes. The CLI works standalone — you can run `agents-cli scaffold`, `eval`, `deploy`, and every other command directly from your terminal. The skills just make it easier for coding agents to do it for you.
 
 **How can I extend `agents-cli` with other skills?**<br>
-`agents-cli` skills cover the agent-building lifecycle (scaffold, ADK code patterns, evals, deploy, publish, observability). For adjacent concerns, you could install another skill suite alongside. For example, [agent-skills](https://github.com/addyosmani/agent-skills) covers general software-engineering workflows (ideation, spec gates, planning, code review), and [google/skills](https://github.com/google/skills) covers Google Cloud foundations (BigQuery, Cloud Run, Firebase, GKE).
+`agents-cli` skills cover the agent-building lifecycle (scaffold, ADK code patterns, evals, deploy, publish, observability). For adjacent concerns, you could install another skill suite alongside. For example, [agent-skills](https://github.com/addyosmani/agent-skills) covers general software-engineering workflows (ideation, spec gates, planning, code review), and [google/skills](https://github.com/google/skills) covers Google Cloud foundations (BigQuery, Cloud Run, Firebase, GKE). [genai-factory](https://github.com/GoogleCloudPlatform/genai-factory) has Terraform blueprints for enterprise GenAI infrastructure and ships as an extension: `agents-cli extension add GoogleCloudPlatform/genai-factory`.
 
 ## Feedback
 
@@ -178,7 +178,9 @@ it in Cloud Logging. It records only the metadata such as command name
 (e.g. `deploy`, `scaffold.create`), exit code, error class, duration (measured
 from command dispatch to exit, so it excludes CLI startup), CLI/Python versions,
 and OS — never file contents, arguments, or other input. Commands added by
-extensions are recorded without their names.
+extensions are recorded without their names. A command an extension serves is
+marked as such, and the extension is named only if it was installed from a
+repository in the `google` GitHub organization.
 
 The request that writes the entry also carries usage metadata in its
 `User-Agent` and `X-Goog-Api-Client` headers, which Google receives for

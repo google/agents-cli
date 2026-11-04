@@ -252,7 +252,12 @@ class _MainGroup(LazyGroup):
                 name,
             )
             return False
-        self._overrides[name] = self._synthesize(resolved, leaf=name, display=name)
+        self.add_override(
+            name,
+            self._synthesize(resolved, leaf=name, display=name),
+            resolved.extension_name,
+            resolved.first_party,
+        )
         return True
 
     def _install_subcommand(self, dotted: str, resolved: ResolvedCommand) -> bool:
@@ -299,8 +304,11 @@ class _MainGroup(LazyGroup):
                 dotted,
             )
             return False
-        parent._overrides[sub_name] = self._synthesize(
-            resolved, leaf=sub_name, display=f"{group_name} {sub_name}"
+        parent.add_override(
+            sub_name,
+            self._synthesize(resolved, leaf=sub_name, display=f"{group_name} {sub_name}"),
+            resolved.extension_name,
+            resolved.first_party,
         )
         return True
 
@@ -449,6 +457,15 @@ main.add_lazy_command(
     "Build the agent binary.",
     experiment="build_command",
 )
+# Agent Command Center; `acc` and `cc` are short aliases kept out of --help.
+for _name in ("command-center", "acc", "cc"):
+    main.add_lazy_command(
+        _name,
+        "google.agents.cli.command_center.cmd_command_center:cmd_command_center",
+        "Start Agent Command Center (experimental).",
+        experiment="command_center",
+        hidden=_name != "command-center",
+    )
 
 # Data commands
 main.add_lazy_command(

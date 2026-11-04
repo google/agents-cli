@@ -14,7 +14,10 @@
 
 """GCP project resolution and lookup utilities."""
 
+import json
+import logging
 import os
+from dataclasses import dataclass
 
 import click
 
@@ -91,3 +94,44 @@ def get_gcp_project_number(project_id: str) -> str | None:
     if project_id.isdigit():
         return project_id
     return None
+
+
+@dataclass(frozen=True)
+class ProjectAncestor:
+    """A resource a project sits under, as `gcloud projects get-ancestors` lists it."""
+
+    id: str
+    # "project", "folder" or "organization".
+    type: str
+
+
+def get_gcp_project_ancestors(project_id: str) -> list[ProjectAncestor] | None:
+    """Get the resource hierarchy a project sits in.
+
+    Args:
+        project_id: GCP project ID or project number.
+
+    Returns:
+        The ancestry (possibly empty), or None if it can't be read.
+    """
+    res = run(
+        ["gcloud", "projects", "get-ancestors", project_id, "--format=json"],
+        check=False,
+        capture=True,
+        print_cmd=False,
+    )
+    if res.returncode != 0:
+        logging.warning(
+            "Could not read the ancestry of project %s: %s",
+            project_id,
+            res.stderr.strip(),
+        )
+        return None
+    try:
+        return [
+            ProjectAncestor(id=entry["id"], type=entry["type"])
+            for entry in json.loads(res.stdout)
+        ]
+    except (json.JSONDecodeError, TypeError, KeyError) as e:
+        logging.warning("Could not read the ancestry of project %s: %s", project_id, e)
+        return None

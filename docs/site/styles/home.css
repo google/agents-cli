@@ -1,0 +1,66 @@
+/* Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/* Homepage only. White page, sections separated by space: a headline, one line, then the visual.
+   The hero's journey panel is the one moving thing. */
+.home {
+  --sec-y: clamp(88px, 10vw, 144px);
+  --col-gap: clamp(28px, 4vw, 64px);
+  --dim-on-dark: color-mix(in srgb, var(--island-ink) 68%, transparent);
+}
+.home .site-footer { margin-top: var(--sec-y); }
+
+/* ---------- type ---------- */
+.display, .h2 { margin: 0; font-weight: 500; font-variation-settings: 'opsz' 144; text-wrap: balance; }
+.display { font-size: clamp(40px, 4.6vw, 68px); line-height: 1.04; letter-spacing: -0.012em; }
+.h2 { font-size: clamp(30px, 3vw, 44px); line-height: 1.1; letter-spacing: -0.015em; }
+.h3 { margin: 0; font-size: 20px; line-height: 1.3; font-weight: 500; letter-spacing: -0.01em; }
+.sub { margin: 20px 0 0; font-size: clamp(17px, 1.4vw, 20px); line-height: 1.45; color: var(--ink-2); max-width: 64ch; text-wrap: pretty; }
+.more { display: inline-block; margin-top: 32px; font-weight: 500; color: var(--accent); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 4px; }
+.more:hover { text-decoration-thickness: 2px; }
+.home main p code { font-size: 0.86em; color: var(--ink); background: var(--surface); padding: 0.1em 0.35em; border-radius: 4px; white-space: nowrap; }
+
+.sec { padding-top: var(--sec-y); scroll-margin-top: var(--header-h); }
+.sec-anchor { display: block; height: 0; scroll-margin-top: var(--header-h); }
+.visual { margin-top: clamp(48px, 5vw, 72px); }
+
+/* split sections: headline left (5 of 12), the object right */
+.split { display: grid; grid-template-columns: minmax(0, 1fr); row-gap: 40px; align-items: start; }
+@media (min-width: 1101px) {
+  .split { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); column-gap: var(--col-gap); }
+}
+
+/* ---------- hero: the promise centered, the start box under it, the session panel full width below ---------- */
+.hero { padding: clamp(32px, 6vh, 64px) 0 clamp(32px, 6vh, 64px); }
+/* a soft glow in the four Google colours behind the headline; it drifts slowly unless motion is reduced */
+.hero { position: relative; isolation: isolate; overflow: clip; }
+.hero::before {
+  content: ''; position: absolute; z-index: -1; inset: -20% -10% 0; pointer-events: none; filter: blur(48px);
+  mask-image: linear-gradient(to bottom, #000 60%, transparent);
+  background:
+    radial-gradient(32% 42% at 22% 38%, rgb(66 133 244 / .32), transparent 70%),
+    radial-gradient(30% 40% at 80% 30%, rgb(52 168 83 / .24), transparent 70%),
+    radial-gradient(26% 36% at 68% 72%, rgb(251 188 4 / .26), transparent 70%),
+    radial-gradient(22% 30% at 34% 74%, rgb(234 67 53 / .16), transparent 70%);
+}
+[data-theme='dark'] .hero::before { opacity: .8; }
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes hero-glow { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(2%, -3%) scale(1.06); } }
+  .hero::before { animation: hero-glow 18s ease-in-out infinite; }
+}
+.lede .nw { white-space: nowrap; }
+.lede { margin: 0 0 24px; font-size: clamp(18px, 1.4vw, 20px); line-height: 1.45; color: var(--ink-2); max-width: 42ch; text-wrap: pretty; }
+.hero-h1 .hl { font-style: normal; color: var(--accent); }
+

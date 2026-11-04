@@ -57,7 +57,7 @@ import click
 from google.agents.cli._click import (
     COMMAND_INVOKED_META_KEY,
     COMMAND_PATH_META_KEY,
-    EXTENSION_PATH_MARKER,
+    EXTENSION_PATH_SEPARATOR,
 )
 
 
@@ -137,9 +137,10 @@ def _command_path(ctx: click.Context) -> str | None:
     parsing. Returns ``None`` when no subcommand resolved (``agents-cli``,
     ``agents-cli --help``, an unknown command).
 
-    Segments served by an extension carry ``EXTENSION_PATH_MARKER``: an
-    overridden built-in reads ``eval.generate~ext``, and a command an extension
-    adds reads ``eval.~ext``, never its name.
+    Segments served by an extension name it after ``EXTENSION_PATH_SEPARATOR``,
+    as ``ext`` unless it is first-party: an overridden built-in reads
+    ``eval.generate~ext`` (or ``eval.generate~<name>``), and a command an
+    extension adds reads ``eval.~ext``, never its name.
 
     Dots keep the path a single token with no spaces, as the ``command/<path>``
     header token requires.
@@ -151,10 +152,10 @@ def _command_path(ctx: click.Context) -> str | None:
 def _is_skipped(command_path: str) -> bool:
     """True if ``command_path`` is, or is under, one of ``_SKIP_COMMANDS``.
 
-    Segments are compared with the extension marker removed, so an extension's
-    override of a skipped command is skipped too.
+    Segments are compared without the extension that serves them, so an
+    extension's override of a skipped command is skipped too.
     """
-    segments = [s.removesuffix(EXTENSION_PATH_MARKER) for s in command_path.split(".")]
+    segments = [s.partition(EXTENSION_PATH_SEPARATOR)[0] for s in command_path.split(".")]
     for skip in _SKIP_COMMANDS:
         prefix = skip.split(".")
         if segments[: len(prefix)] == prefix:

@@ -60,7 +60,6 @@ from google.agents.cli._modes import (
     RUN_MODES,
 )
 from google.agents.cli._project import (
-    agent_package_name,
     chdir_project_root,
     read_project_config,
     require_agent_directory,
@@ -147,7 +146,7 @@ def _resolve_dispatch_target(
             chdir_project_root()
             cfg = read_project_config()
             require_agent_directory(cfg)
-            resolved = agent_package_name(cfg.agent_directory)
+            resolved = cfg.app_name
         return _DispatchTarget(
             service_url=url,
             headers=build_remote_headers(custom_headers, url),
@@ -171,7 +170,7 @@ def _resolve_dispatch_target(
         service_url=f"http://127.0.0.1:{server.port}{base_path}",
         headers={},
         mode=mode or MODE_ADK,
-        app_name=app_name or agent_package_name(cfg.agent_directory),
+        app_name=app_name or cfg.app_name,
         started_server=server.started,
         server_pid=server.pid,
     )
@@ -226,7 +225,7 @@ def _handle_stop_server(ctx: click.Context, _param: click.Parameter, value: bool
     default=None,
     help=(
         "Agent name for remote ADK SSE / A2A endpoints. "
-        "Defaults to the basename of the local project's agent_directory; "
+        "Defaults to the local project's app name; "
         "specify to query a different agent or to run from outside a project."
     ),
 )

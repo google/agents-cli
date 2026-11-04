@@ -26,12 +26,13 @@ import google.agents.cli._project as _project
 from google.agents.cli._agent_platform import AgentPlatformClient
 from google.agents.cli._agent_platform_types import types
 from google.agents.cli._output import Console
-from google.agents.cli.eval import _paths
+from google.agents.cli.eval import _paths, _verdict
 from google.agents.cli.eval.eval_utils import (
     load_eval_dotenv,
     prepare_eval_metrics,
     print_results_table,
     resolve_eval_region,
+    rewrite_evaluation_artifacts,
     save_evaluation_artifacts,
 )
 
@@ -54,6 +55,29 @@ qps_option = click.option(
         "Metric computations dispatched per second. Raise it when your metrics "
         "are cheap or your judge reuses one client; lower it when the judge "
         "model or the eval service rate-limits you."
+    ),
+)
+
+
+def _validate_fail_under(
+    ctx: click.Context, param: click.Parameter, value: tuple[str, ...]
+) -> tuple[str, ...]:
+    _verdict.parse_fail_under(value)
+    return value
+
+
+# Reused by `eval run`, which forwards the flag.
+fail_under_option = click.option(
+    "--fail-under",
+    "fail_under",
+    multiple=True,
+    metavar="METRIC=SCORE",
+    callback=_validate_fail_under,
+    help=(
+        "Fail (exit 1) when METRIC's mean score is below SCORE, in that metric's "
+        "own scale (0-1 for built-ins, 1-5 for the scaffolded judge). Repeatable, "
+        "one metric each. Overrides that metric's 'thresholds' entry in the eval "
+        "config. Errored cases always fail the run."
     ),
 )
 
@@ -85,7 +109,7 @@ def _load_traces_eval_cases(traces_path: str) -> tuple[list, int]:
 
 
 def _warn_on_dropped_cases(result: types.EvaluationResult) -> None:
-    """Name the cases that errored, which the mean and the exit status hide."""
+    """Name the metrics with errored cases, which their mean leaves out."""
     errored = {
         m.metric_name: m.num_cases_error
         for m in result.summary_metrics or []
@@ -161,6 +185,7 @@ def _drop_content_less_events(eval_cases: list) -> int:
     help="GCP region for the Eval Service in Gemini platform. Defaults to 'global'.",
 )
 @qps_option
+@fail_under_option
 def cmd_grade(
     *,
     traces_path: str | None = None,
@@ -170,9 +195,13 @@ def cmd_grade(
     project: str | None = None,
     region: str | None = None,
     qps: float = DEFAULT_QPS,
+    fail_under: tuple[str, ...] = (),
 ) -> None:
     """Score populated agent traces against one or more metrics."""
     console = Console()
+    # The option callback already rejected malformed values, before `eval run`
+    # spends an inference step on them.
+    fail_under_thresholds = _verdict.parse_fail_under(fail_under)
     project_root = _project.find_project_root()
     # Load the project's .env (same approach as the eval runners) so local,
     # model-calling metrics (e.g. an LLM-judge via google-genai) pick up the
@@ -201,12 +230,15 @@ def cmd_grade(
             config_path = str(_paths.default_eval_config(project_root))
             default_config_path = config_path
 
-    metrics, local_custom_count, remote_custom_count = prepare_eval_metrics(
+    prepared = prepare_eval_metrics(
         config_path=config_path,
         metrics_str=metrics_str,
         default_config_path=default_config_path,
         console=console,
     )
+    metrics = prepared.metrics
+    local_custom_count = prepared.local_custom_count
+    remote_custom_count = prepared.remote_custom_count
 
     if local_custom_count:
         console.print(
@@ -262,15 +294,26 @@ def cmd_grade(
             config={"evaluation_service_qps": qps},
         )
 
+        # Saved before judging, so a failure from here on can't lose results
+        # that were already paid for.
+        saved = _save_evaluation_artifacts(result, output_path, console)
+        verdict = _verdict.judge(result, prepared.thresholds, fail_under_thresholds)
+        if _verdict.fill_pass_rates(result, verdict):
+            saved = rewrite_evaluation_artifacts(result, saved)
         _print_results_table(result, console)
-        _save_evaluation_artifacts(result, output_path, console)
         # After saving, so the warning can point at the artifacts it mentions.
         _warn_on_dropped_cases(result)
+        _verdict.print_verdict(verdict, saved.report_path, console)
 
     except click.ClickException:
         raise
     except Exception as e:
         raise click.ClickException("Evaluation failed.") from e
+
+    # Outside the try: Exit isn't a ClickException, so the handler above would
+    # report it as "Evaluation failed."
+    if not verdict.passed:
+        raise click.exceptions.Exit(1)
 
 
 def _drop_genai_afc_advice(record: logging.LogRecord) -> bool:

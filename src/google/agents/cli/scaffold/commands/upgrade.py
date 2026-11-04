@@ -33,7 +33,7 @@ from ..utils import adk_shortcut
 from ..utils.backup import make_backup_pre_apply_hook
 from ..utils.cli_options import InteractionMode
 from ..utils.generation_metadata import metadata_to_cli_args
-from ..utils.language import LANGUAGE_CONFIGS
+from ..utils.language import get_language_config
 from ..utils.merge import (
     MergeResult,
     copy_file,
@@ -125,9 +125,8 @@ def _union_merge_dependencies(
         return []
 
 
-def _warn_force_mode_risks(agent_directory: str, language: str) -> None:
+def _warn_force_mode_risks(agent_directory: str, agent_file: str) -> None:
     """Warn about the two things force mode cannot check for the user."""
-    agent_file = LANGUAGE_CONFIGS.get(language, {}).get("agent_file", "")
     never_overwritten = (
         [
             pattern.replace("{agent_directory}", agent_directory)
@@ -157,6 +156,7 @@ def _run_force_upgrade(
     project_name: str,
     agent_directory: str,
     language: str,
+    agent_file: str,
     new_version: str,
     dry_run: bool,
     interactive: bool,
@@ -199,7 +199,7 @@ def _run_force_upgrade(
         )
         display_dependency_changes(dep_resolutions)
 
-        _warn_force_mode_risks(agent_directory, language)
+        _warn_force_mode_risks(agent_directory, agent_file)
 
         if dry_run:
             console.print(
@@ -347,6 +347,9 @@ def upgrade(
 
     # Get language from metadata for language-aware operations
     language = metadata.language
+    # Raises for a language this agents-cli doesn't support, before any
+    # template is generated.
+    agent_file = get_language_config(language)["agent_file"]
 
     # Version is normalized to acli_version by find_project_config
     old_version = metadata.acli_version
@@ -424,6 +427,7 @@ def upgrade(
             project_name=project_name,
             agent_directory=agent_directory,
             language=language,
+            agent_file=agent_file,
             new_version=new_version,
             dry_run=dry_run,
             interactive=interactive,

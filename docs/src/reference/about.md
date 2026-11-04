@@ -1,12 +1,13 @@
-# About This Project
+# About this project
 
 ## Feedback
 
-We value your input — it helps us improve `agents-cli` for the community.
+Your feedback helps us improve Agents CLI.
 
-- **Issues & suggestions:** [open an issue](https://github.com/google/agents-cli/issues) on GitHub
-- **Share your experience:** reach out at [agents-cli@google.com](mailto:agents-cli@google.com)
+- **Issues and suggestions**: [open an issue](https://github.com/google/agents-cli/issues) on GitHub
+- **Share your experience**: reach out at [agents-cli@google.com](mailto:agents-cli@google.com)
 
-## Contributing
+<a id="contributing"></a>
+## Contribute
 
-The best way to contribute is through feedback: bug reports, feature requests, and ideas shared via [issues](https://github.com/google/agents-cli/issues) to directly shape our roadmap.
+The best way to contribute is feedback: bug reports, feature requests, and ideas shared through [issues](https://github.com/google/agents-cli/issues). They shape our roadmap. The project doesn't currently accept pull requests; see the [contributing guide](https://github.com/google/agents-cli/blob/main/CONTRIBUTING.md).

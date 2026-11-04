@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 import click
 
-from google.agents.cli._project import AGENT_RUNTIME_IDENTITY_DEFAULTS
+from google.agents.cli._project import NESTED_CREATE_PARAMS
 
 from . import template
 
@@ -125,10 +125,20 @@ def shared_template_options(f: Callable) -> Callable:
     # None means "use the default for this project".
     f = click.option(
         "--agent-runtime-identity-default",
-        type=click.Choice(AGENT_RUNTIME_IDENTITY_DEFAULTS),
+        type=click.Choice(NESTED_CREATE_PARAMS["agent_runtime_identity_default"].allowed),
         default=None,
         help=(
             "Whether this project's Agent Runtime agents run as their own Agent "
+            "Identity principal (agent_identity) or as a service account "
+            "(service_account). New projects use agent_identity."
+        ),
+    )(f)
+    f = click.option(
+        "--cloud-run-identity-default",
+        type=click.Choice(NESTED_CREATE_PARAMS["cloud_run_identity_default"].allowed),
+        default=None,
+        help=(
+            "Whether this project's Cloud Run services run as their own Agent "
             "Identity principal (agent_identity) or as a service account "
             "(service_account). New projects use agent_identity."
         ),

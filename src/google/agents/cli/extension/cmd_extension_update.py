@@ -44,11 +44,19 @@ from google.agents.cli.extension._paths import (
     installed_scope_roots,
     vendored_extensions_dir,
 )
-from google.agents.cli.extension._refs import ExtensionRef, RefParseError, parse_ref
+from google.agents.cli.extension._refs import (
+    LATEST,
+    UNPINNED_REF,
+    ExtensionRef,
+    RefParseError,
+    parse_ref,
+)
 from google.agents.cli.extension._resolver import (
+    LOCAL_SHA,
     CopyChangedError,
     ResolverError,
     materialize,
+    pin_ref,
     resolve_sha,
     validate_extension_name,
 )
@@ -95,6 +103,7 @@ class _ScopeRun:
     backup_dir: Path
     auto_approve: bool
     updates_all: bool
+    to: str | None
     pending: deque[ExtensionEntry]
     retried: set[str]
     updated_earlier: tuple[str, ...]
@@ -103,15 +112,29 @@ class _ScopeRun:
 
 @click.command("update")
 @click.argument("name", required=False)
+@click.option(
+    "--to",
+    default=None,
+    help=(
+        "Re-pin NAME to this branch, tag, or SHA. For first-party extensions, "
+        f"{LATEST} pins the latest release, and works without NAME."
+    ),
+)
 @require_confirmation("Update extension(s) and replace their skills?")
 def cmd_update(
     name: str | None,
+    to: str | None,
     auto_approve: bool,
 ) -> None:
     """Advance extension pins and replace their skills.
 
     Updates all if NAME omitted.
     """
+    if to is not None and to != LATEST and name is None:
+        raise click.UsageError(
+            f"--to {to} needs an extension NAME; only --to {LATEST} "
+            "applies to every extension."
+        )
     updated: list[tuple[str, str]] = []
     skipped: list[str] = []
     scope_roots = list(installed_scope_roots())
@@ -122,6 +145,7 @@ def cmd_update(
                 scope,
                 root,
                 name,
+                to,
                 auto_approve=auto_approve,
                 backup_dir=backups / scope,
                 at_both_scopes=at_both_scopes,
@@ -164,6 +188,7 @@ def _update_scope(
     scope: str,
     root: Path,
     name: str | None,
+    to: str | None,
     *,
     auto_approve: bool,
     backup_dir: Path,
@@ -186,6 +211,7 @@ def _update_scope(
         backup_dir=backup_dir,
         auto_approve=auto_approve,
         updates_all=name is None,
+        to=to,
         pending=deque(entry for entry in entries if name is None or entry.name == name),
         retried=set(),
         updated_earlier=updated_earlier,
@@ -210,7 +236,7 @@ def _update_scope(
 
 def _update_entry(run: _ScopeRun, entry: ExtensionEntry) -> _Outcome:
     """Check that the entry can be updated, back up its copy, then advance it."""
-    ref = _parse_entry_ref(entry)
+    ref = _parse_entry_ref(run, entry)
     if ref is None:
         return "skipped"
     if entry.name in run.other_scope and _has_installed_skills(run, entry.name):
@@ -242,18 +268,31 @@ def _update_entry(run: _ScopeRun, entry: ExtensionEntry) -> _Outcome:
     return _advance(run, entry, ref, extension_dir, backup)
 
 
-def _parse_entry_ref(entry: ExtensionEntry) -> ExtensionRef | None:
+def _parse_entry_ref(run: _ScopeRun, entry: ExtensionEntry) -> ExtensionRef | None:
     """The ref to update the entry from.
 
-    Returns None (with a warning) when its name or ref is invalid.
+    Returns None when its name or ref is invalid (with a warning), or when a
+    batch ``--to :latest`` doesn't apply to it.
     """
     try:
         validate_extension_name(entry.name)
-        return parse_ref(
+        ref = parse_ref(
             entry.source,
-            # "HEAD" means "follow latest"; pass None so resolve_sha re-resolves.
-            ref_override=(None if entry.ref == "HEAD" else entry.ref),
+            ref_override=run.to or (None if entry.ref == UNPINNED_REF else entry.ref),
         )
+        if run.updates_all and run.to == LATEST and ref.kind != "first_party":
+            logging.info(
+                "Kept %r: --to %s moves first-party extensions only.",
+                entry.name,
+                LATEST,
+            )
+            return None
+        if run.to is not None and ref.kind == "local":
+            raise ResolverError(
+                "--to does not apply to a local@ extension: a local folder has "
+                "no branches or tags. Drop --to."
+            )
+        return pin_ref(ref)
     except (ResolverError, RefParseError) as e:
         logging.warning("Skipping extension %r: %s", entry.name, e)
         return None
@@ -365,7 +404,9 @@ def _advance(
         )
     except SkillError as e:
         return _skills_refused(run, entry, ref, extension_dir, backup, error=e)
-    return _record_update(run, entry, new_sha, new_spec, removed_skills)
+    return _record_update(
+        run, entry, ref, new_sha, new_spec=new_spec, removed_skills=removed_skills
+    )
 
 
 def _fetch_and_materialize_new_version(ref: ExtensionRef, extension_dir: Path) -> str:
@@ -373,7 +414,9 @@ def _fetch_and_materialize_new_version(ref: ExtensionRef, extension_dir: Path) -
     new_sha = resolve_sha(ref)
     # name=extension_dir.name pins the vendored dir to the stable id (see
     # materialize) so an update survives an upstream rename.
-    materialize(ref, new_sha, extension_dir.parent, name=extension_dir.name)
+    materialize(
+        ref, new_sha, extension_dir.parent, name=extension_dir.name, ref_flag="--to"
+    )
     return new_sha
 
 
@@ -574,7 +617,9 @@ def _skill_error_reason(
 def _record_update(
     run: _ScopeRun,
     entry: ExtensionEntry,
+    ref: ExtensionRef,
     new_sha: str,
+    *,
     new_spec: ExtensionSpec | None,
     removed_skills: tuple[str, ...],
 ) -> _Outcome:
@@ -582,17 +627,15 @@ def _record_update(
     # Even when no skill changed, a skill folder deleted by hand leaves a dead link.
     if run.skills_dir.is_dir():
         link_skills_for_antigravity_if_global(run.skills_dir)
+    new_entry = ExtensionEntry(
+        name=entry.name,
+        source=entry.source,
+        ref=ref.ref or UNPINNED_REF,
+        sha=new_sha,
+        scope=run.scope,
+    )
     try:
-        upsert_extension_entry(
-            run.root / EXTENSIONS_FILE,
-            ExtensionEntry(
-                name=entry.name,
-                source=entry.source,
-                ref=entry.ref,
-                sha=new_sha,
-                scope=run.scope,
-            ),
-        )
+        upsert_extension_entry(run.root / EXTENSIONS_FILE, new_entry)
     except (OSError, ExtensionListError) as e:
         report_skill_changes(new_spec, entry.name, run.skills_dir, removed_skills)
         logging.warning(
@@ -604,6 +647,7 @@ def _record_update(
             entry.name,
         )
         return "skipped"
+    _report_new_pin(run, entry, new_entry)
     if new_spec is not None and is_out_of_range(new_spec):
         logging.warning(
             "Updated %r to a version requiring agents-cli %s (running %s).",
@@ -613,3 +657,18 @@ def _record_update(
         )
     report_skill_changes(new_spec, entry.name, run.skills_dir, removed_skills)
     return "updated"
+
+
+def _report_new_pin(
+    run: _ScopeRun, entry: ExtensionEntry, new_entry: ExtensionEntry
+) -> None:
+    label = _scope_label(run, entry.name)
+    if new_entry.sha == LOCAL_SHA:
+        logging.info("Updated %r%s: copied %s again.", entry.name, label, entry.source)
+        return
+    new_pin = f"{new_entry.ref} ({new_entry.sha[:7]})"
+    if (entry.ref, entry.sha) == (new_entry.ref, new_entry.sha):
+        logging.info("%r%s has no new commit; still at %s.", entry.name, label, new_pin)
+    else:
+        old_pin = f"{entry.ref} ({entry.sha[:7]})"
+        logging.info("Updated %r%s: %s → %s.", entry.name, label, old_pin, new_pin)

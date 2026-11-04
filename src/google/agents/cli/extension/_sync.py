@@ -380,16 +380,19 @@ def _differing_skills(
     for skill in skills:
         if skill.name not in previously_installed:
             continue
-        source_fingerprint = _skill_fingerprint(skill.source_dir)
+        source_fingerprint = _skill_fingerprint(skill.source_dir, skill.extension_root)
+        installed = skills_dir / skill.name
         if source_fingerprint is None or source_fingerprint != _skill_fingerprint(
-            skills_dir / skill.name
+            installed, installed
         ):
             differing.append(skill.name)
     return differing
 
 
-def _skill_fingerprint(skill_dir: Path) -> str | None:
+def _skill_fingerprint(skill_dir: Path, repo_root: Path) -> str | None:
     """Fingerprint of a skill folder without its marker; None when it cannot be read.
+
+    Links are followed while they stay inside `repo_root`, as the copy does.
 
     Skips the names vendoring never copies (caches such as `__pycache__`, and
     `.env` files), so they do not count as a change.
@@ -402,6 +405,6 @@ def _skill_fingerprint(skill_dir: Path) -> str | None:
         return skipped
 
     try:
-        return fingerprint(skill_dir, skip)
+        return fingerprint(skill_dir, skip, repo_root)
     except ResolverError:
         return None

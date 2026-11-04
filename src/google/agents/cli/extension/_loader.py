@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -26,6 +27,7 @@ from google.agents.cli.__init__ import __version__
 from google.agents.cli.extension._compat import is_compatible
 from google.agents.cli.extension._manifest import EXTENSIONS_FILE
 from google.agents.cli.extension._paths import vendored_extensions_dir
+from google.agents.cli.extension._refs import RefParseError, parse_ref
 from google.agents.cli.extension._resolver import ResolverError, validate_extension_name
 from google.agents.cli.extension._spec import (
     EXTENSION_FILE,
@@ -71,6 +73,9 @@ class ResolvedCommand:
     # to the built-in would silently do something else (an ADK scaffold in a
     # LangChain project, say).
     blocked_requires: str | None = None
+    # Whether the extension comes from the `google` GitHub org, so telemetry may
+    # record its name.
+    first_party: bool = False
 
 
 @dataclass(frozen=True)
@@ -179,68 +184,8 @@ def load_extension_spec(root: Path) -> ExtensionSpec | None:
     return parse_extension_spec(data or {}, root=root, default_name=root.name)
 
 
-def _loaded_spec(root: Path) -> ExtensionSpec | None:
-    """`load_extension_spec`, fail-soft: a bad manifest warns and is skipped."""
-    try:
-        return load_extension_spec(root)
-    except ExtensionSpecError as e:
-        logging.warning("%s: %s; ignoring this extension.", root / EXTENSION_FILE, e)
-        return None
-
-
-def _vendored_specs(scope_root: Path) -> list[ExtensionSpec]:
-    """Load specs for extensions recorded under `extensions:` and vendored on disk."""
-    manifest = scope_root / EXTENSIONS_FILE
-    if not manifest.exists():
-        return []
-    data = _load_yaml(manifest)
-    raw = data.get("extensions") or []
-    specs: list[ExtensionSpec] = []
-    if not isinstance(raw, list):
-        return specs
-    for item in raw:
-        if not isinstance(item, dict) or not isinstance(item.get("name"), str):
-            continue
-        try:
-            safe_name = validate_extension_name(item["name"])
-        except ResolverError as e:
-            logging.warning("Skipping extension with %s", e)
-            continue
-        extension_dir = vendored_extensions_dir(scope_root) / safe_name
-        try:
-            spec = load_extension_spec(extension_dir)
-        except ExtensionSpecError as e:
-            logging.warning("%s: %s; ignoring this extension.", extension_dir, e)
-            continue
-
-        if spec is None:
-            logging.warning(
-                "Extension %r is recorded in %s but not vendored at %s; "
-                "run `agents-cli install`.",
-                item["name"],
-                manifest,
-                extension_dir,
-            )
-            continue
-        # The manifest id is the extension's stable identity (used by `extension
-        # remove`/`update`); keep it even if the upstream yaml `name` was
-        # renamed after the extension was pinned.
-        specs.append(replace(spec, name=safe_name))
-    return specs
-
-
 def load_extension_set(project_root: Path | None, user_root: Path | None) -> ExtensionSet:
-    # Lowest precedence first (user), highest last (project), so project-scope
-    # entries win by overwriting user-scope ones in the loop below.
-    discovered: list[ExtensionSpec] = []
-    for root, scope in ((user_root, "user"), (project_root, "project")):
-        if root is None:
-            continue
-        inline = _loaded_spec(root)
-        if inline is not None:
-            discovered.append(replace(inline, scope=scope))
-        for spec in _vendored_specs(root):
-            discovered.append(replace(spec, scope=scope))
+    discovered = _discover_specs(project_root, user_root)
 
     commands: dict[str, ResolvedCommand] = {}
     # (scope, command_name) -> extension_name that first claimed it at that scope.
@@ -294,6 +239,7 @@ def load_extension_set(project_root: Path | None, user_root: Path | None) -> Ext
                 scope=scope,
                 extension_root=spec.root,
                 blocked_requires=blocked_requires,
+                first_party=_is_first_party(spec.source),
             )
 
     return ExtensionSet(
@@ -302,3 +248,99 @@ def load_extension_set(project_root: Path | None, user_root: Path | None) -> Ext
         conflicts=tuple(conflicts),
         incompatible=tuple(incompatible),
     )
+
+
+def _discover_specs(
+    project_root: Path | None, user_root: Path | None
+) -> list[ExtensionSpec]:
+    """Every extension found, user scope first, each with its recorded `source`.
+
+    Project scope comes last so its entries win later by overwriting user-scope
+    ones. A scope holds its project-root `agents-cli-extension.yaml` and the
+    vendored copies its `agents-cli-extensions.yaml` lists. The project-root
+    extension has no vendored copy, but its install is still recorded by name, at
+    project scope or globally.
+    """
+    scopes = [
+        (scope, root)
+        for scope, root in (("user", user_root), ("project", project_root))
+        if root is not None
+    ]
+    recorded = {scope: _recorded_sources(root) for scope, root in scopes}
+    any_scope_sources = recorded.get("user", {}) | recorded.get("project", {})
+    return [
+        spec
+        for scope, root in scopes
+        for spec in _scope_specs(scope, root, recorded[scope], any_scope_sources)
+    ]
+
+
+def _recorded_sources(root: Path) -> dict[str, str | None]:
+    """Extension name -> recorded `source` from the scope's `agents-cli-extensions.yaml`."""
+    manifest = root / EXTENSIONS_FILE
+    raw = _load_yaml(manifest).get("extensions") if manifest.exists() else None
+    if not isinstance(raw, list):
+        return {}
+    recorded: dict[str, str | None] = {}
+    for item in raw:
+        if not isinstance(item, dict) or not isinstance(item.get("name"), str):
+            continue
+        try:
+            name = validate_extension_name(item["name"])
+        except ResolverError as e:
+            logging.warning("Skipping extension with %s", e)
+            continue
+        source = item.get("source")
+        recorded[name] = source if isinstance(source, str) else None
+    return recorded
+
+
+def _scope_specs(
+    scope: str,
+    root: Path,
+    recorded: Mapping[str, str | None],
+    any_scope_sources: Mapping[str, str | None],
+) -> list[ExtensionSpec]:
+    """The scope's project-root extension, then the vendored ones it records."""
+    specs: list[ExtensionSpec] = []
+    try:
+        inline = load_extension_spec(root)
+    except ExtensionSpecError as e:
+        logging.warning("%s: %s; ignoring this extension.", root / EXTENSION_FILE, e)
+        inline = None
+    if inline is not None:
+        specs.append(
+            replace(inline, scope=scope, source=any_scope_sources.get(inline.name))
+        )
+    for name, source in recorded.items():
+        extension_dir = vendored_extensions_dir(root) / name
+        try:
+            spec = load_extension_spec(extension_dir)
+        except ExtensionSpecError as e:
+            logging.warning("%s: %s; ignoring this extension.", extension_dir, e)
+            continue
+        if spec is None:
+            logging.warning(
+                "Extension %r is recorded in %s but not vendored at %s; "
+                "run `agents-cli install`.",
+                name,
+                root / EXTENSIONS_FILE,
+                extension_dir,
+            )
+            continue
+        # The manifest id is the extension's stable identity (used by
+        # `extension remove`/`update`); keep it even if the upstream yaml
+        # `name` was renamed after the extension was pinned.
+        specs.append(replace(spec, name=name, scope=scope, source=source))
+    return specs
+
+
+def _is_first_party(source: str | None) -> bool:
+    """Whether `source` is a repository in the `google` GitHub org."""
+    if source is None:
+        return False
+    try:
+        return parse_ref(source).tier in ("verified", "first_party")
+    except RefParseError as e:
+        logging.debug("Could not parse extension source %r: %s", source, e)
+        return False

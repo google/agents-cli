@@ -1,0 +1,35 @@
+---
+// Copyright 2026 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// The start box: the coding-agent prompt, its copy button and a way into the docs, then the coding agents it works in.
+// site.ts wires [data-copy].
+import { withBase } from '../lib/docs';
+import { setupPrompt } from '../data/home';
+
+interface Props { uid: string; label?: string }
+const { uid, label = 'How to start' } = Astro.props;
+const [before, after] = setupPrompt.split('google.github.io/agents-cli/setup.md');
+---
+<div class="start-wrap" id={`${uid}-start`} role="group" aria-label={label}>
+  <p class="start start-prompt"><span class="sr-only">Paste into your coding agent: </span>{before}<a href={withBase('/setup.md')}>google.github.io/agents-cli/setup.md</a>{' '}<span class="start-tail">{after.trim()}</span></p>
+  <div class="start-row">
+    <button type="button" class="start-copy" data-copy={setupPrompt}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
+      <span data-copy-label aria-live="polite">Copy prompt</span>
+    </button>
+    <a class="start-docs" href={withBase('/guide/getting-started/')}>Read the docs<span aria-hidden="true">&rarr;</span></a>
+  </div>
+  <p class="start-works"><span class="sr-only">Works with </span><img src={withBase('/assets/logos/antigravity.svg')} width="18" height="18" alt="Antigravity CLI" /><img src={withBase('/assets/logos/claude-symbol.svg')} width="18" height="18" alt="Claude Code" /><img class="start-mono" src={withBase('/assets/logos/openai.svg')} width="18" height="18" alt="Codex" /><span>&amp; more</span></p>
+</div>

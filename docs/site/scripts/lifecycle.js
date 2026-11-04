@@ -18,20 +18,19 @@
  * Lifecycle page interactive visualizations.
  *
  * Vanilla JS, no dependencies. Each animation is self-contained, mounts
- * lazily on scroll-into-view, and inherits theme colors from the CSS vars
- * mkdocs-material exposes (--md-primary-fg-color, --md-default-fg-color,
- * --md-code-bg-color, etc.) so light/dark works automatically.
+ * lazily on scroll-into-view, and colors SVG and inline styles with var()
+ * references to the tokens in styles/base.css (--accent, --ink, --rule, etc.),
+ * so the theme toggle recolors them without a re-render.
+ * Loaded only on /guide/lifecycle/ by pages/[...slug].astro.
+ * Animations play once when scrolled into view; anything else moves only on
+ * a click. Nothing loops.
  *
- *   #lifecycle-anim-transcript   Auto-playing 4-turn outage transcript
- *   #lifecycle-anim-loop         Four CLI verbs in a continuous loop
+ *   #lifecycle-anim-transcript   4-turn outage transcript, plays once
+ *   #lifecycle-anim-loop         Four CLI verbs, click a card to select it
  *   #lifecycle-anim-scaffold     Interactive scaffold wizard
  *   #lifecycle-anim-team         Orchestrator + 3 sub-agents with packet
  *   #lifecycle-anim-eval         Eval-fix loop + animated score chart
  *   #lifecycle-anim-trace        Multi-agent trace waterfall draw-in
- *
- * MkDocs Material's `navigation.instant` swaps page content via JS; this
- * script re-runs on every navigation by listening for `document$` if it's
- * around (a Material-internal RxJS subject), and falls back to DOMContentLoaded.
  */
 (function () {
   "use strict";
@@ -53,13 +52,6 @@
     initRolling(document.getElementById("lifecycle-anim-rolling"));
   }
 
-  // Material's instant navigation exposes a document$ observable. If present,
-  // re-run on every nav; otherwise use the standard DOMContentLoaded.
-  if (window.document$) {
-    window.document$.subscribe(init);
-  } else {
-    document.addEventListener("DOMContentLoaded", init);
-  }
 
   // ── Lazy: only fire when the element scrolls into view ──────────────────
   function whenInView(el, fn) {
@@ -120,20 +112,20 @@
       kind: "tool",
       tool: "query_logs",
       args: 'service="payments", severity="ERROR"',
-      result: "9 entries — top: 'connection refused: postgres-primary' (5 in last 2 min)",
+      result: "9 entries. Top: 'connection refused: postgres-primary' (5 in last 2 min)",
     },
     {
       kind: "tool",
       tool: "search_runbook",
       args: 'query="payments connection refused postgres-primary"',
-      result: "Runbook §5.1 — patch-window pattern. Sanctioned remediation: db-failover to read-replicas. Page DBA on-call.",
+      result: "Runbook §5.1: patch-window pattern. Sanctioned remediation: db-failover to read-replicas. Page DBA on-call.",
     },
     {
       kind: "agent",
       text:
-        "Diagnosis: postgres-primary is refusing connections — matches the §5.1 patch-window pattern. " +
+        "Diagnosis: postgres-primary is refusing connections, which matches the §5.1 patch-window pattern. " +
         "Recommended: run `db-failover` to shift writes to a read-replica and page the DBA on-call. " +
-        "Will not auto-execute — needs a human confirm.",
+        "Will not auto-execute. A human needs to confirm.",
     },
   ];
 
@@ -143,15 +135,15 @@
     host.classList.add("lc-transcript");
     const head = htmlEl("div", { class: "lc-transcript__head" });
     head.appendChild(htmlEl("span", { class: "lc-transcript__title" }, "$ agents-cli playground · root_agent"));
-    const status = htmlEl("span", { class: "lc-transcript__status" }, "auto · idle");
+    const status = htmlEl("span", { class: "lc-transcript__status" }, "Idle");
     head.appendChild(status);
     const body = htmlEl("div", { class: "lc-transcript__body" });
     const foot = htmlEl("div", { class: "lc-transcript__foot" });
-    const replayBtn = htmlEl("button", { class: "lc-btn lc-btn--ghost", type: "button" }, "↺ Replay");
+    const replayBtn = htmlEl("button", { class: "lc-btn lc-btn--ghost", type: "button" }, "Replay");
     replayBtn.style.display = "none";
-    replayBtn.addEventListener("click", () => play());
+    replayBtn.addEventListener("click", () => play(1));
     foot.appendChild(replayBtn);
-    foot.appendChild(htmlEl("span", { class: "lc-muted" }, "a recorded session — different scenario in /lifecycle"));
+    foot.appendChild(htmlEl("span", { class: "lc-muted" }, "Illustrative session"));
     host.appendChild(head);
     host.appendChild(body);
     host.appendChild(foot);
@@ -180,40 +172,55 @@
       return wrap;
     }
 
-    function play() {
-      body.innerHTML = "";
+    // Every turn is laid out up front so the box keeps its final height; the first two show at once,
+    // so the widget is never empty, and the rest are revealed in order.
+    const SHOWN = 2;
+    const nodes = TRANSCRIPT_TURNS.map((t, i) => {
+      const node = turnNode(t);
+      if (i >= SHOWN && !REDUCED) node.classList.add("lc-pending");
+      body.appendChild(node);
+      return node;
+    });
+
+    function play(from) {
       replayBtn.style.display = "none";
-      status.textContent = "auto · playing";
-      let i = 0;
+      status.textContent = "Playing";
+      nodes.forEach((n, idx) => {
+        n.classList.remove("lc-fade-in");
+        n.classList.toggle("lc-pending", idx >= from);
+      });
+      let i = from;
       function step() {
-        if (i >= TRANSCRIPT_TURNS.length) {
-          status.textContent = "auto · done";
+        if (i >= nodes.length) {
+          status.textContent = "Done";
           replayBtn.style.display = "";
           return;
         }
-        const node = turnNode(TRANSCRIPT_TURNS[i]);
-        node.classList.add("lc-fade-in");
-        body.appendChild(node);
-        body.scrollTop = body.scrollHeight;
+        nodes[i].classList.remove("lc-pending");
+        nodes[i].classList.add("lc-fade-in");
         i += 1;
-        setTimeout(step, i === 1 ? 600 : 1100);
+        setTimeout(step, REDUCED ? 0 : 1000);
       }
-      setTimeout(step, 400);
+      setTimeout(step, REDUCED ? 0 : 500);
     }
 
-    whenInView(host, play);
+    if (REDUCED) {
+      status.textContent = "Done";
+      replayBtn.style.display = "";
+    } else {
+      whenInView(host, () => play(SHOWN));
+    }
   }
 
   // ─────────────────────────────────────────── 2. LIFECYCLE LOOP ──────────
-  // Four verbs as HTML cards; a CSS-pulsed "active" card cycles through them
-  // every ~1.6s. Cleaner and more honest than the previous SVG/orbit version,
-  // which had visual collisions between the pulse and the box text.
+  // Four verbs as button cards. The first starts selected; the selection
+  // moves only when the reader clicks another card (no timer).
 
   const LOOP_VERBS = [
-    { label: "scaffold", desc: "spec → 72 files" },
+    { label: "scaffold", desc: "spec → ~60 files" },
     { label: "eval",     desc: "score before merge" },
     { label: "deploy",   desc: "ship to prod" },
-    { label: "observe",  desc: "trace + analytics" },
+    { label: "observe",  desc: "trace + analytics", prompt: "" },
   ];
 
   function initLoop(host) {
@@ -223,10 +230,10 @@
 
     const grid = htmlEl("div", { class: "lc-loop__grid" });
     const cards = LOOP_VERBS.map((v, i) => {
-      const card = htmlEl("div", { class: "lc-loop__card", "aria-label": v.label });
-      card.appendChild(htmlEl("div", { class: "lc-loop__step" }, "step " + (i + 1)));
+      const card = htmlEl("button", { type: "button", class: "lc-loop__card" });
+      card.appendChild(htmlEl("div", { class: "lc-loop__step" }, "Step " + (i + 1)));
       card.appendChild(htmlEl("div", { class: "lc-loop__verb" }, [
-        htmlEl("span", { class: "lc-loop__prompt" }, "$ "),
+        htmlEl("span", { class: "lc-loop__prompt" }, v.prompt ?? "$ "),
         v.label,
       ]));
       card.appendChild(htmlEl("div", { class: "lc-loop__desc" }, v.desc));
@@ -235,79 +242,43 @@
     });
     host.appendChild(grid);
 
-    host.appendChild(htmlEl("div", { class: "lc-loop__foot" }, [
-      htmlEl("span", { class: "lc-loop__arrow" }, "↻"),
-      htmlEl("span", { class: "lc-muted" }, "scaffold → eval → deploy → observe → repeat"),
-    ]));
+    host.appendChild(htmlEl("div", { class: "lc-loop__foot" },
+      "scaffold → eval → deploy → observe → repeat"));
 
-    // Cycle the active class through cards.
-    let active = 0;
     function setActive(i) {
-      cards.forEach((c, idx) => c.classList.toggle("lc-loop__card--active", idx === i));
+      cards.forEach((c, idx) => {
+        c.classList.toggle("lc-loop__card--active", idx === i);
+        c.setAttribute("aria-pressed", String(idx === i));
+      });
     }
     setActive(0);
-
-    let timer = null;
-    function tick() {
-      active = (active + 1) % cards.length;
-      setActive(active);
-    }
-    function start() {
-      if (timer) return;
-      timer = setInterval(tick, 1600);
-    }
-    function restart() {
-      if (timer) clearInterval(timer);
-      timer = setInterval(tick, 1600);
-    }
-
-    // Click any card to jump to it (and restart the rotation from there).
-    cards.forEach((card, idx) => {
-      card.style.cursor = "pointer";
-      card.setAttribute("role", "button");
-      card.setAttribute("tabindex", "0");
-      card.addEventListener("click", () => {
-        active = idx;
-        setActive(active);
-        restart();
-      });
-      card.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          active = idx;
-          setActive(active);
-          restart();
-        }
-      });
-    });
-
-    whenInView(host, start);
+    cards.forEach((card, idx) => card.addEventListener("click", () => setActive(idx)));
   }
 
   // ─────────────────────────────────────────── 5b. FAILURE MUSEUM ─────────
   // A small gallery of common agent failures + the eval rubric that catches
-  // each. Cards reveal on scroll-into-view with a subtle wobble.
+  // each. Cards fade in once on scroll-into-view.
 
   const FAILURES = [
     {
       name: "Hallucinated tool result",
       what: "Agent claims it called a tool it never invoked, then quotes a fabricated result.",
-      caught: "tool_use_quality — compares actual tool calls to the expected trajectory",
+      caught: "tool_use_quality, which compares actual tool calls to the expected trajectory",
     },
     {
       name: "Ungrounded answer",
       what: "Agent's final response invents facts that aren't supported by what its tools returned.",
-      caught: "hallucination — checks each claim in the response against tool-returned context",
+      caught: "hallucination, which checks each claim in the response against tool-returned context",
     },
     {
       name: "Prompt-injection bypass",
       what: "User message smuggles instructions to override the safety rule.",
-      caught: "safety — pair with Model Armor on the prompt path for runtime defense",
+      caught: "safety. Pair it with Model Armor on the prompt path for runtime defense",
     },
     {
       name: "Persona drift",
-      what: "Agent starts answering off-topic — chit-chat, generic advice — instead of investigating.",
-      caught: "final_response_reference_free — grades whether the final response stays relevant to the user's question",
+      what: "Agent drifts off-topic into chit-chat or generic advice instead of investigating.",
+      caught: "final_response_reference_free, which grades whether the final response stays relevant to the user's question",
     },
   ];
 
@@ -317,19 +288,18 @@
     host.classList.add("lc-failures");
 
     host.appendChild(htmlEl("div", { class: "lc-failures__head" },
-      htmlEl("span", { class: "lc-mono lc-muted" }, "common failure modes · and the rubric that catches each")));
+      htmlEl("span", null, "Common failure modes and the rubric that catches each")));
 
     const grid = htmlEl("div", { class: "lc-failures__grid" });
     FAILURES.forEach((f, i) => {
       const card = htmlEl("div", { class: "lc-failures__card", "data-i": i });
       card.style.opacity = "0";
-      card.style.transform = "translateY(8px)";
-      card.style.transition = "opacity 300ms ease-out, transform 300ms ease-out";
-      card.appendChild(htmlEl("p", { class: "lc-failures__eyebrow" }, "failure mode"));
+      card.style.transition = "opacity 300ms ease-out";
+      card.appendChild(htmlEl("p", { class: "lc-failures__eyebrow" }, "Failure mode"));
       card.appendChild(htmlEl("h4", { class: "lc-failures__name" }, f.name));
       card.appendChild(htmlEl("p", { class: "lc-failures__what" }, f.what));
       card.appendChild(htmlEl("p", { class: "lc-failures__caught" }, [
-        htmlEl("span", { class: "lc-failures__caughtLabel" }, "caught by: "),
+        htmlEl("span", { class: "lc-failures__caughtLabel" }, "Caught by "),
         f.caught,
       ]));
       grid.appendChild(card);
@@ -340,7 +310,6 @@
       grid.querySelectorAll(".lc-failures__card").forEach((card, i) => {
         setTimeout(() => {
           card.style.opacity = "1";
-          card.style.transform = "translateY(0)";
         }, 90 * i);
       });
     }
@@ -385,8 +354,8 @@
     },
     {
       key: "bq",
-      q: "Log every prompt + response to BigQuery?",
-      help: "Optional — but you'll want this in production for analytics and replay.",
+      q: "Log agent events (model calls, tool use) to BigQuery?",
+      help: "Optional, but you'll want it in production for analytics and replay.",
       options: [
         { v: "yes", l: "Yes" },
         { v: "no",  l: "No" },
@@ -405,8 +374,8 @@
 
     // Header
     host.appendChild(htmlEl("div", { class: "lc-wizard__head" }, [
-      htmlEl("strong", null, "scaffold wizard"),
-      htmlEl("span", { class: "lc-muted" }, "every choice updates the command"),
+      htmlEl("strong", null, "Scaffold wizard"),
+      htmlEl("span", { class: "lc-muted" }, "Every choice updates the command"),
     ]));
 
     // Steps
@@ -446,7 +415,7 @@
     function render() {
       const c = state;
       const lines = [
-        "agents-cli scaffold create outage-recovery-bot \\",
+        "agents-cli create outage-recovery-bot \\",
         "  --agent adk_python \\",
       ];
       lines.push("  --deployment-target " + c.target + " \\");
@@ -501,8 +470,8 @@
     host.classList.add("lc-team");
 
     const head = htmlEl("div", { class: "lc-team__head" });
-    head.appendChild(htmlEl("span", { class: "lc-muted" }, "orchestrator routes work to specialists, then synthesizes the answer"));
-    const replayBtn = htmlEl("button", { class: "lc-btn lc-btn--ghost", type: "button" }, "▶ replay one investigation");
+    head.appendChild(htmlEl("span", { class: "lc-muted" }, "The orchestrator routes work to specialists, then synthesizes the answer"));
+    const replayBtn = htmlEl("button", { class: "lc-btn lc-btn--ghost", type: "button" }, "Replay one investigation");
     head.appendChild(replayBtn);
     host.appendChild(head);
 
@@ -518,7 +487,7 @@
     ].forEach((c) => {
       const path = svgEl("path", {
         d: c.d, fill: "none",
-        stroke: "var(--md-default-fg-color--lightest)",
+        stroke: "var(--rule)",
         "stroke-width": "1.4",
         "stroke-linecap": "round",
       });
@@ -528,33 +497,33 @@
 
     // Orchestrator box
     const orch = svgEl("g", {});
-    orch.appendChild(svgEl("rect", { x: 200, y: 20, width: 200, height: 70, rx: 12, fill: "var(--md-default-bg-color)", stroke: "var(--md-primary-fg-color)", "stroke-width": "1.2", "stroke-opacity": "0.45" }));
-    addBoxLabels(orch, 200 + 100, 20, 70, "ORCHESTRATOR", "orchestrator", "routes & synthesizes");
+    orch.appendChild(svgEl("rect", { x: 200, y: 20, width: 200, height: 70, rx: 10, fill: "var(--page)", stroke: "var(--ink-3)", "stroke-width": "1.2" }));
+    addBoxLabels(orch, 200 + 100, 20, 70, "Orchestrator", "orchestrator", "routes & synthesizes");
     svg.appendChild(orch);
 
     // Sub-agents
     const subBoxes = {};
     TEAM_SUBS.forEach((s) => {
       const g = svgEl("g", {});
-      const rect = svgEl("rect", { x: s.x, y: SUB_TOP_Y, width: 170, height: 100, rx: 12, fill: "var(--md-default-bg-color)", stroke: "var(--md-default-fg-color--light)", "stroke-width": "1.2", "stroke-opacity": "0.4" });
+      const rect = svgEl("rect", { x: s.x, y: SUB_TOP_Y, width: 170, height: 100, rx: 10, fill: "var(--page)", stroke: "var(--rule)", "stroke-width": "1.2" });
       g.appendChild(rect);
-      addBoxLabels(g, s.x + 85, SUB_TOP_Y, 100, "SUB-AGENT", s.label, s.tools);
+      addBoxLabels(g, s.x + 85, SUB_TOP_Y, 100, "Sub-agent", s.label, s.tools);
       svg.appendChild(g);
       subBoxes[s.id] = rect;
     });
 
     // Packet
-    const packet = svgEl("circle", { r: 8, fill: "var(--md-primary-fg-color)", stroke: "var(--md-default-bg-color)", "stroke-width": 2, opacity: 0 });
+    const packet = svgEl("circle", { r: 8, fill: "var(--accent)", stroke: "var(--page)", "stroke-width": 2, opacity: 0 });
     svg.appendChild(packet);
 
     function addBoxLabels(g, cx, top, h, eyebrow, label, sub) {
-      const e = svgEl("text", { x: cx, y: top + 22, "text-anchor": "middle", "font-family": "var(--md-code-font-family)", "font-size": "10", "letter-spacing": "1.5", fill: "var(--md-primary-fg-color)", opacity: "0.85" });
+      const e = svgEl("text", { x: cx, y: top + 22, "text-anchor": "middle", "font-family": "var(--sans)", "font-size": "12", fill: "var(--ink-3)" });
       e.textContent = eyebrow;
       g.appendChild(e);
-      const l = svgEl("text", { x: cx, y: top + h / 2 + 6, "text-anchor": "middle", "font-family": "var(--md-text-font-family)", "font-size": "14", "font-weight": "600", fill: "var(--md-default-fg-color)" });
+      const l = svgEl("text", { x: cx, y: top + h / 2 + 6, "text-anchor": "middle", "font-family": "var(--sans)", "font-size": "14", "font-weight": "600", fill: "var(--ink)" });
       l.textContent = label;
       g.appendChild(l);
-      const s = svgEl("text", { x: cx, y: top + h - 12, "text-anchor": "middle", "font-family": "var(--md-code-font-family)", "font-size": "10.5", fill: "var(--md-default-fg-color--light)" });
+      const s = svgEl("text", { x: cx, y: top + h - 12, "text-anchor": "middle", "font-family": "var(--code)", "font-size": "10.5", fill: "var(--ink-2)" });
       s.textContent = sub;
       g.appendChild(s);
     }
@@ -562,13 +531,12 @@
     function setHighlight(id) {
       Object.entries(subBoxes).forEach(([k, rect]) => {
         const isOn = k === id;
-        rect.setAttribute("stroke", isOn ? "var(--md-primary-fg-color)" : "var(--md-default-fg-color--light)");
-        rect.setAttribute("stroke-width", isOn ? "2.5" : "1.2");
-        rect.setAttribute("stroke-opacity", isOn ? "1" : "0.4");
+        rect.setAttribute("stroke", isOn ? "var(--accent)" : "var(--rule)");
+        rect.setAttribute("stroke-width", isOn ? "2" : "1.2");
       });
       Object.entries(connectors).forEach(([k, path]) => {
         const isOn = k === id;
-        path.setAttribute("stroke", isOn ? "var(--md-primary-fg-color)" : "var(--md-default-fg-color--lightest)");
+        path.setAttribute("stroke", isOn ? "var(--accent)" : "var(--rule)");
         path.setAttribute("stroke-width", isOn ? "2.2" : "1.4");
       });
     }
@@ -587,7 +555,8 @@
     function tweenPacket(waypoints, durMs, onDone) {
       const start = performance.now();
       function step(now) {
-        const t = Math.min(1, (now - start) / durMs);
+        // rAF's frame timestamp can precede `start`; clamp so segIdx never goes negative.
+        const t = Math.max(0, Math.min(1, (now - start) / durMs));
         // Move along waypoints linearly
         const segs = waypoints.length - 1;
         if (segs === 0) {
@@ -616,7 +585,7 @@
         packet.setAttribute("opacity", "0");
         setHighlight(null);
         replayBtn.disabled = false;
-        replayBtn.textContent = "▶ replay one investigation";
+        replayBtn.textContent = "Replay one investigation";
         return;
       }
       const seg = TEAM_SEQ[i];
@@ -630,7 +599,7 @@
     function start() {
       clearTimers();
       replayBtn.disabled = true;
-      replayBtn.textContent = "▸ playing…";
+      replayBtn.textContent = "Playing";
       runStep(0);
     }
 
@@ -643,7 +612,7 @@
   const EVAL_CASES_INITIAL = [
     { id: "api_gateway_5xx_spike",                prompt: "api-gateway 500s in us-east1, p99 latency spiking past 2s.", passing: true },
     { id: "ambiguous_pager_alert",                prompt: "Pager fired for 'payments error rate above threshold'.",      passing: true },
-    { id: "no_runbook_match_should_escalate",    prompt: "checkout flow stuck on /confirm — symptom is unfamiliar.",   passing: false, reason: "Response invented a 'restart payment-svc' remediation. No runbook section was cited. Violates safety rubric." },
+    { id: "no_runbook_match_should_escalate",    prompt: "checkout flow stuck on /confirm. Symptom is unfamiliar.",   passing: false, reason: "Response invented a 'restart payment-svc' remediation. No runbook section was cited. Violates safety rubric." },
   ];
   const EVAL_HISTORY = [
     { iter: 1, score: 0.42 },
@@ -679,18 +648,18 @@
         const main = htmlEl("div", { class: "lc-eval__main" });
         main.appendChild(htmlEl("div", { class: "lc-eval__meta" }, [
           htmlEl("span", { class: "lc-mono lc-muted" }, "eval_case_id=" + c.id),
-          htmlEl("span", { class: "lc-eval__pill lc-eval__pill--" + (c.passing ? "pass" : "fail") }, c.passing ? "PASS" : "FAIL"),
+          htmlEl("span", { class: "lc-eval__pill lc-eval__pill--" + (c.passing ? "pass" : "fail") }, c.passing ? "Pass" : "Fail"),
         ]));
         main.appendChild(htmlEl("p", { class: "lc-eval__prompt" }, '"' + c.prompt + '"'));
         if (!c.passing && c.reason) {
           main.appendChild(htmlEl("div", { class: "lc-eval__judge" }, [
-            htmlEl("span", { class: "lc-eval__judgeLabel" }, "rationale ›"),
+            htmlEl("span", { class: "lc-eval__judgeLabel" }, "Rationale"),
             c.reason,
           ]));
         }
         if (c.passing && c.id === "no_runbook_match_should_escalate" && fixed) {
           main.appendChild(htmlEl("div", { class: "lc-eval__judge lc-eval__judge--ok" }, [
-            htmlEl("span", { class: "lc-eval__judgeLabel lc-eval__judgeLabel--ok" }, "rationale ›"),
+            htmlEl("span", { class: "lc-eval__judgeLabel" }, "Rationale"),
             "Response correctly escalated. Runbook citation present. Safety rubric satisfied.",
           ]));
         }
@@ -705,8 +674,8 @@
 
     // Footer with action button
     const foot = htmlEl("div", { class: "lc-eval__foot" });
-    const actionBtn = htmlEl("button", { type: "button", class: "lc-btn" }, "Apply fix → re-run");
-    const note = htmlEl("span", { class: "lc-mono lc-muted" }, "Iteration #1 — 1 case failing, 2 passing");
+    const actionBtn = htmlEl("button", { type: "button", class: "lc-btn" }, "Apply fix and re-run");
+    const note = htmlEl("span", { class: "lc-muted" }, "Iteration 1: 1 case failing, 2 passing");
     foot.appendChild(actionBtn);
     foot.appendChild(note);
     host.appendChild(foot);
@@ -726,17 +695,17 @@
 
     // Grid lines
     [0, 0.25, 0.5, 0.75, 1].forEach((g) => {
-      svg.appendChild(svgEl("line", { x1: padL, x2: W - padR, y1: yScale(g), y2: yScale(g), stroke: "var(--md-default-fg-color--lightest)", "stroke-width": "0.6" }));
+      svg.appendChild(svgEl("line", { x1: padL, x2: W - padR, y1: yScale(g), y2: yScale(g), stroke: "var(--rule)", "stroke-width": "0.6" }));
     });
     // Threshold
-    svg.appendChild(svgEl("line", { x1: padL, x2: W - padR, y1: yT, y2: yT, stroke: "var(--md-default-fg-color--light)", "stroke-dasharray": "3 4", "stroke-width": "1" }));
-    const thLabel = svgEl("text", { x: W - padR, y: yT - 4, "text-anchor": "end", "font-family": "var(--md-code-font-family)", "font-size": "9", fill: "var(--md-default-fg-color--light)" });
-    thLabel.textContent = "threshold 0.80";
+    svg.appendChild(svgEl("line", { x1: padL, x2: W - padR, y1: yT, y2: yT, stroke: "var(--ink-2)", "stroke-dasharray": "3 4", "stroke-width": "1" }));
+    const thLabel = svgEl("text", { x: W - padR, y: yT - 4, "text-anchor": "end", "font-family": "var(--sans)", "font-size": "9", fill: "var(--ink-3)" });
+    thLabel.textContent = "Threshold 0.80";
     svg.appendChild(thLabel);
 
     // Iteration tick labels (always all 5)
     EVAL_HISTORY.forEach((p) => {
-      const t = svgEl("text", { x: xScale(p.iter), y: H - 6, "text-anchor": "middle", "font-family": "var(--md-code-font-family)", "font-size": "9", fill: "var(--md-default-fg-color--light)" });
+      const t = svgEl("text", { x: xScale(p.iter), y: H - 6, "text-anchor": "middle", "font-family": "var(--sans)", "font-size": "9", fill: "var(--ink-3)" });
       t.textContent = "#" + p.iter;
       svg.appendChild(t);
     });
@@ -745,7 +714,7 @@
     const line = svgEl("path", {
       d: fullPath,
       fill: "none",
-      stroke: "var(--md-primary-fg-color)",
+      stroke: "var(--accent)",
       "stroke-width": "2.5",
       "stroke-linecap": "round",
       pathLength: "1",
@@ -757,7 +726,7 @@
 
     // Dots
     const dots = EVAL_HISTORY.map((p) => {
-      const c = svgEl("circle", { cx: xScale(p.iter), cy: yScale(p.score), r: 0, fill: "var(--md-default-bg-color)", stroke: "var(--md-primary-fg-color)", "stroke-width": "2" });
+      const c = svgEl("circle", { cx: xScale(p.iter), cy: yScale(p.score), r: 0, fill: "var(--page)", stroke: "var(--accent)", "stroke-width": "2" });
       c.style.transition = "r 280ms ease-out";
       svg.appendChild(c);
       return c;
@@ -765,7 +734,7 @@
 
     // Score label that slides to the latest revealed dot
     const lastInit = EVAL_HISTORY[0];
-    const scoreLabel = svgEl("text", { x: xScale(lastInit.iter) + 8, y: yScale(lastInit.score) + 4, "font-family": "var(--md-code-font-family)", "font-size": "11", "font-weight": "600", fill: "var(--md-primary-fg-color)" });
+    const scoreLabel = svgEl("text", { x: xScale(lastInit.iter) + 8, y: yScale(lastInit.score) + 4, "font-family": "var(--code)", "font-size": "11", "font-weight": "600", fill: "var(--accent)" });
     scoreLabel.textContent = lastInit.score.toFixed(2);
     scoreLabel.style.transition = "transform 380ms ease-out";
     svg.appendChild(scoreLabel);
@@ -815,8 +784,8 @@
       );
       fixed = true;
       renderCases();
-      note.textContent = "Iteration #2 — all rubrics satisfied";
-      actionBtn.textContent = "↺ Replay the fix loop";
+      note.textContent = "Iteration 2: all rubrics satisfied";
+      actionBtn.textContent = "Reset";
       actionBtn.classList.add("lc-btn--ghost");
       animateReveal();
     }
@@ -824,8 +793,8 @@
       cases = JSON.parse(JSON.stringify(EVAL_CASES_INITIAL));
       fixed = false;
       renderCases();
-      note.textContent = "Iteration #1 — 1 case failing, 2 passing";
-      actionBtn.textContent = "Apply fix → re-run";
+      note.textContent = "Iteration 1: 1 case failing, 2 passing";
+      actionBtn.textContent = "Apply fix and re-run";
       actionBtn.classList.remove("lc-btn--ghost");
       setRevealed(1);
     }
@@ -878,15 +847,20 @@
 
     const ROW_H = 26;
     const PAD_TOP = 14;
-    const PAD_RIGHT = 16;
+    // Room for the root span's duration label ("5800ms") past the end of its bar.
+    const PAD_RIGHT = 52;
     const INDENT = 14;
     const padLeft = 200 + maxDepth * INDENT;
     const W = 720;
     const H = PAD_TOP * 2 + ROW_H * TRACE_SPANS.length + 24;
 
     host.appendChild(htmlEl("div", { class: "lc-trace__head" }, [
-      htmlEl("span", { class: "lc-mono" }, "trace · session sess_3f0b… · orchestrator + 3 sub-agents"),
-      htmlEl("span", { class: "lc-mono lc-muted" }, totalMs.toLocaleString() + " ms total"),
+      htmlEl("span", null, "Trace · session sess_3f0b… · orchestrator + 3 sub-agents · " + totalMs.toLocaleString() + " ms total"),
+      htmlEl("span", { class: "lc-trace__legend" }, [
+        htmlEl("span", null, [htmlEl("i", { class: "lc-key lc-key--agent" }), "Agent"]),
+        htmlEl("span", null, [htmlEl("i", { class: "lc-key lc-key--model" }), "Model"]),
+        htmlEl("span", null, [htmlEl("i", { class: "lc-key lc-key--tool" }), "Tool"]),
+      ]),
     ]));
 
     const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", role: "img", "aria-label": "Multi-agent trace waterfall" });
@@ -897,22 +871,24 @@
     for (let i = 0; i <= tickCount; i++) {
       const ms = (totalMs / tickCount) * i;
       const x = padLeft + (ms / totalMs) * (W - padLeft - PAD_RIGHT);
-      svg.appendChild(svgEl("line", { x1: x, x2: x, y1: PAD_TOP, y2: H - 4, stroke: "var(--md-default-fg-color--lightest)", "stroke-width": "0.6" }));
-      const t = svgEl("text", { x, y: H - 6, "text-anchor": "middle", "font-family": "var(--md-code-font-family)", "font-size": "9", fill: "var(--md-default-fg-color--light)" });
+      svg.appendChild(svgEl("line", { x1: x, x2: x, y1: PAD_TOP, y2: H - 4, stroke: "var(--rule)", "stroke-width": "0.6" }));
+      const t = svgEl("text", { x, y: H - 6, "text-anchor": "middle", "font-family": "var(--code)", "font-size": "10", fill: "var(--ink-3)" });
       t.textContent = Math.round(ms) + " ms";
       svg.appendChild(t);
     }
 
+    // Span kind colors, as on the homepage: yellow agent, blue model, green tool.
     function spanColor(name) {
-      if (name.indexOf("execute_tool") === 0) return "var(--md-primary-fg-color)";
-      if (name.indexOf("generate_content") === 0) return "#fbbc04";
-      if (name.indexOf("invoke_agent") === 0) return "var(--md-primary-fg-color--dark)";
-      return "var(--md-default-fg-color--light)";
+      if (name.indexOf("execute_tool") === 0) return "var(--green)";
+      if (name.indexOf("generate_content") === 0) return "var(--blue)";
+      if (name.indexOf("invoke_agent") === 0) return "var(--yellow)";
+      return "var(--ink-2)";
     }
 
-    // Hover detail strip below the SVG.
+    // Detail strip below the SVG, filled on hover or tap.
+    const HINT = "<span class='lc-muted'>Hover or tap a span to see its attributes</span>";
     const detail = htmlEl("div", { class: "lc-trace__detail" });
-    detail.innerHTML = "<span class='lc-muted'>hover any span to see attributes</span>";
+    detail.innerHTML = HINT;
 
     const bars = [];
     TRACE_SPANS.forEach((s, i) => {
@@ -930,38 +906,39 @@
       // Indented, left-aligned label so the parent → child hierarchy reads
       // as a visual tree.
       const indentPx = 6 + d * INDENT;
-      const lbl = svgEl("text", { x: indentPx, y: y + 16, "text-anchor": "start", "font-family": "var(--md-code-font-family)", "font-size": "11", fill: d === 0 ? "var(--md-default-fg-color)" : "var(--md-default-fg-color--light)", "font-weight": d === 0 ? "600" : "400" });
+      const lbl = svgEl("text", { x: indentPx, y: y + 16, "text-anchor": "start", "font-family": "var(--code)", "font-size": "11", fill: d === 0 ? "var(--ink)" : "var(--ink-2)", "font-weight": d === 0 ? "600" : "400" });
       const maxChars = 32 - d * 2;
       lbl.textContent = s.name.length > maxChars ? s.name.slice(0, maxChars - 1) + "…" : s.name;
       row.appendChild(lbl);
 
-      const bar = svgEl("rect", { x, y: y + 5, width: 0, height: ROW_H - 10, rx: 3, fill: spanColor(s.name), opacity: 0.85 });
+      const bar = svgEl("rect", { x, y: y + 5, width: 0, height: ROW_H - 10, rx: 2, fill: spanColor(s.name), opacity: 0.85 });
       bar.style.transition = "width 350ms ease-out, opacity 150ms ease";
       row.appendChild(bar);
-      const dur = svgEl("text", { x: x + w + 6, y: y + 16, "font-family": "var(--md-code-font-family)", "font-size": "10", fill: "var(--md-default-fg-color--light)", opacity: 0 });
+      const dur = svgEl("text", { x: x + w + 6, y: y + 16, "font-family": "var(--code)", "font-size": "10", fill: "var(--ink-2)", opacity: 0 });
       dur.textContent = s.dur + "ms";
       dur.style.transition = "opacity 280ms ease-out";
       row.appendChild(dur);
 
-      // Hover handlers
-      row.addEventListener("mouseenter", () => {
+      function show() {
         bar.setAttribute("opacity", 1);
         const attrs = Object.entries(s.attrs || {})
           .map(([k, v]) => `${k}=${v}`)
           .join(" · ");
         detail.innerHTML = "";
         const left = htmlEl("span", { class: "lc-mono" }, [
-          htmlEl("strong", { style: "color: var(--md-primary-fg-color);" }, s.name),
+          htmlEl("strong", null, s.name),
           " · ",
           s.dur + "ms",
           attrs ? " · " : "",
           htmlEl("span", { class: "lc-muted" }, attrs),
         ]);
         detail.appendChild(left);
-      });
+      }
+      row.addEventListener("mouseenter", show);
+      row.addEventListener("click", show);
       row.addEventListener("mouseleave", () => {
         bar.setAttribute("opacity", 0.85);
-        detail.innerHTML = "<span class='lc-muted'>hover any span to see attributes</span>";
+        detail.innerHTML = HINT;
       });
 
       svg.appendChild(row);
@@ -990,22 +967,19 @@
       provider: "Google",
       badge:    "Gemini 3.1 Pro",
       swap:     'Gemini(model="gemini-3.1-pro")',
-      accent:   "#4285f4",
-      response: "Diagnosis: api-gateway 5xx is downstream of auth-service degradation. Per runbook §3.2, the sanctioned remediation is `traffic-shift` away from the auth-service canary — NOT a restart. Recommend executing now and paging the auth-service on-call.",
+      response: "Diagnosis: api-gateway 5xx is downstream of auth-service degradation. Per runbook §3.2, the sanctioned remediation is `traffic-shift` away from the auth-service canary, NOT a restart. Recommend executing now and paging the auth-service on-call.",
     },
     {
       provider: "Anthropic",
       badge:    "Claude Sonnet 4.6",
       swap:     'LiteLlm(model="anthropic/claude-sonnet-4-6")',
-      accent:   "#cc7d54",
       response: "Looking at the logs and metrics for api-gateway: the 5xx errors correlate with elevated p99 latency on auth-service. Per runbook §3.2, for this exact symptom the documented remediation is `traffic-shift` away from the auth-service canary; restarts are explicitly NOT sanctioned. I'd run the shift and page auth-service on-call.",
     },
     {
       provider: "OpenAI",
       badge:    "GPT-5",
       swap:     'LiteLlm(model="openai/gpt-5")',
-      accent:   "#10a37f",
-      response: "Root cause: auth-service degradation. 8 upstream timeouts in the last 4 minutes; auth-service p99 at 920 ms vs. ~110 ms baseline. Runbook §3.2 covers this pattern — remediation is a `traffic-shift` off the canary, not a restart. Suggest executing the shift and notifying auth-service on-call.",
+      response: "Root cause: auth-service degradation. 8 upstream timeouts in the last 4 minutes; auth-service p99 at 920 ms vs. ~110 ms baseline. Runbook §3.2 covers this pattern. Remediation is a `traffic-shift` off the canary, not a restart. Suggest executing the shift and notifying auth-service on-call.",
     },
   ];
 
@@ -1016,7 +990,7 @@
 
     host.appendChild(htmlEl("div", { class: "lc-models__head" }, [
       htmlEl("strong", null, "Same prompt, three models"),
-      htmlEl("span", { class: "lc-models__pill" }, "illustrative · responses are sample text"),
+      htmlEl("span", { class: "lc-models__pill" }, "Illustrative, responses are sample text"),
     ]));
     host.appendChild(htmlEl("pre", { class: "lc-models__prompt" },
       htmlEl("code", null, "user > api-gateway is returning 500s in us-east1, p99 latency spiking past 2s. What's going on?")));
@@ -1024,14 +998,10 @@
     const grid = htmlEl("div", { class: "lc-models__grid" });
     MODELS.forEach((m) => {
       const card = htmlEl("div", { class: "lc-models__card" });
-      card.style.borderColor = "color-mix(in srgb, " + m.accent + " 28%, var(--md-default-fg-color--lightest))";
       card.appendChild(htmlEl("p", { class: "lc-models__provider" }, m.provider));
-      const badge = htmlEl("p", { class: "lc-models__badge" }, m.badge);
-      badge.style.color = m.accent;
-      card.appendChild(badge);
+      card.appendChild(htmlEl("p", { class: "lc-models__badge" }, m.badge));
       card.appendChild(htmlEl("p", { class: "lc-models__response" }, m.response));
-      // span (not code) — sidesteps mkdocs-material's .md-typeset code rules
-      // which override our padding/font/background by specificity.
+      // span, not code, so the docs' inline code styles don't apply.
       const swap = htmlEl("span", { class: "lc-models__swap", title: m.swap }, m.swap);
       card.appendChild(swap);
       const passRow = htmlEl("div", { class: "lc-models__pass" }, [
@@ -1044,7 +1014,7 @@
     host.appendChild(grid);
 
     host.appendChild(htmlEl("p", { class: "lc-models__foot lc-mono lc-muted" },
-      "Swap one line in agent.py — eval, deploy, observability all behave the same regardless of provider."));
+      "Swap one line in agent.py. Eval, deploy and observability all behave the same regardless of provider."));
   }
 
   // ─────────────────────────────────────────── 8. INLINE PLAYGROUND ───────
@@ -1055,30 +1025,30 @@
   const PLAYGROUND_TURNS = [
     { kind: "user", text: "ALERT: payments service error_rate_5xx > 1% sustained for 5 min. Triage." },
     { kind: "tool", tool: "query_logs", args: 'service="payments", severity="ERROR"',
-      result: "9 entries — top: 'connection refused: postgres-primary' (5 in last 2 min)" },
+      result: "9 entries. Top: 'connection refused: postgres-primary' (5 in last 2 min)" },
     { kind: "tool", tool: "check_metrics", args: 'service="postgres-primary", metric="connections_active"',
-      result: "active=0 (baseline ~140), refused_connections=12 in last 2 min — primary is down or unreachable" },
+      result: "active=0 (baseline ~140), refused_connections=12 in last 2 min. Primary is down or unreachable" },
     { kind: "tool", tool: "search_runbook", args: 'query="payments postgres-primary refused"',
-      result: "Runbook §5.1 — patch-window pattern. Sanctioned remediation: db-failover to read-replicas. Page DBA on-call." },
+      result: "Runbook §5.1: patch-window pattern. Sanctioned remediation: db-failover to read-replicas. Page DBA on-call." },
     { kind: "agent", text:
-      "Diagnosis: postgres-primary is refusing connections — matches the §5.1 patch-window pattern. " +
+      "Diagnosis: postgres-primary is refusing connections, which matches the §5.1 patch-window pattern. " +
       "Recommended: run `db-failover` to shift writes to a read-replica and page the DBA on-call. " +
-      "Will not auto-execute — needs a human confirm." },
+      "Will not auto-execute. A human needs to confirm." },
   ];
 
   function initPlayground(host) {
     if (!host) return;
     host.innerHTML = "";
-    host.classList.add("lc-transcript");
+    host.classList.add("lc-transcript", "lc-playground");
     const head = htmlEl("div", { class: "lc-transcript__head" });
     head.appendChild(htmlEl("span", { class: "lc-transcript__title" }, "$ agents-cli playground · root_agent"));
     const counter = htmlEl("span", { class: "lc-mono lc-muted" }, "0/" + PLAYGROUND_TURNS.length);
     head.appendChild(counter);
     const body = htmlEl("div", { class: "lc-transcript__body" });
     const foot = htmlEl("div", { class: "lc-transcript__foot" });
-    const advance = htmlEl("button", { class: "lc-btn", type: "button" }, "▶ Send the first prompt");
+    const advance = htmlEl("button", { class: "lc-btn", type: "button" }, "Send the first prompt");
     foot.appendChild(advance);
-    foot.appendChild(htmlEl("span", { class: "lc-muted" }, "click to step through · payments triage · 5 turns"));
+    foot.appendChild(htmlEl("span", { class: "lc-muted" }, "Click to step through. Payments triage, 5 turns."));
     host.appendChild(head);
     host.appendChild(body);
     host.appendChild(foot);
@@ -1112,7 +1082,7 @@
         step = 0;
         body.innerHTML = "";
         counter.textContent = "0/" + PLAYGROUND_TURNS.length;
-        advance.textContent = "▶ Send the first prompt";
+        advance.textContent = "Send the first prompt";
         return;
       }
       const node = renderTurn(PLAYGROUND_TURNS[step]);
@@ -1121,7 +1091,7 @@
       body.scrollTop = body.scrollHeight;
       step += 1;
       counter.textContent = step + "/" + PLAYGROUND_TURNS.length;
-      advance.textContent = step >= PLAYGROUND_TURNS.length ? "↺ Replay" : "→ Next turn";
+      advance.textContent = step >= PLAYGROUND_TURNS.length ? "Replay" : "Next turn";
     }
     advance.addEventListener("click", next);
   }
@@ -1133,23 +1103,23 @@
       id:    "agent_runtime",
       label: "Agent Runtime",
       blurb: "Fastest path to prod. Sessions, eval, traces built-in.",
-      cmd:   "agents-cli deploy --dry-run\n  Would deploy to Agent Runtime in Gemini platform: project=outage-recovery-prod, region=us-east1",
+      cmd:   "agents-cli deploy --project outage-recovery-prod --dry-run\n  Would deploy to Agent Runtime in Gemini platform: project=outage-recovery-prod, region=us-east1",
       pipeline: [
-        { tool: "uv build",                what: "package the agent into a Python wheel" },
-        { tool: "vertexai.agent_engines",  what: "upload the wheel to a staging bucket" },
-        { tool: "Agent Runtime",           what: "create a managed runtime instance" },
-        { tool: "telemetry",               what: "wire Cloud Trace + sessions automatically" },
+        { tool: "agents-cli deploy",        what: "package the project, Dockerfile included" },
+        { tool: "Agent Runtime",            what: "build the container image from the Dockerfile" },
+        { tool: "Agent Runtime",            what: "create or update the managed runtime instance" },
+        { tool: "deployment_metadata.json", what: "record the Agent Runtime resource ID" },
       ],
     },
     {
       id:    "cloud_run",
       label: "Cloud Run",
-      blurb: "When you need a custom HTTP surface around the agent.",
-      cmd: "agents-cli deploy --dry-run\n  Would run: gcloud beta run deploy outage-recovery-bot --project outage-recovery-prod --region us-east1 --source . --memory 4Gi --no-allow-unauthenticated --no-cpu-throttling --port 8080 --labels created-by=agents-cli",
+      blurb: "When you need custom HTTP endpoints around the agent.",
+      cmd: "agents-cli deploy --project outage-recovery-prod --dry-run\n  Would run: gcloud run deploy outage-recovery-bot --project outage-recovery-prod --region us-east1 --source . --memory 4Gi --no-allow-unauthenticated --no-cpu-throttling --port 8080 --update-labels created-by=agents-cli",
       pipeline: [
-        { tool: "Cloud Build", what: "buildpack-build the container" },
+        { tool: "Cloud Build", what: "build the container from the Dockerfile" },
         { tool: "Artifact Registry", what: "push the image" },
-        { tool: "gcloud beta run deploy", what: "create the service · 4Gi · port 8080" },
+        { tool: "gcloud run deploy", what: "create the service · 4Gi · port 8080" },
         { tool: "IAP / secrets", what: "wire identity, env vars, and scaling" },
       ],
     },
@@ -1157,12 +1127,11 @@
       id:    "gke",
       label: "GKE",
       blurb: "When you need cluster-level isolation, sidecars, or VPC-bound services.",
-      cmd: "agents-cli deploy --dry-run\n  Would run: terraform -chdir=deployment/terraform/single-project apply -auto-approve\n  Would run: gcloud builds submit --tag ...\n  Would run: gcloud container clusters get-credentials ...\n  Would run: kubectl set image ... us-east1-docker.pkg.dev/outage-recovery-prod/outage-recovery-bot/outage-recovery-bot:latest\n  Would run: kubectl rollout status ...",
+      cmd: "agents-cli deploy --project outage-recovery-prod --dry-run\n  Would run: terraform -chdir=deployment/terraform/single-project apply -auto-approve\n  Would run: gcloud builds submit --tag ...\n  Would run: gcloud container clusters get-credentials ...\n  Would run: kubectl set image ... us-east1-docker.pkg.dev/outage-recovery-prod/outage-recovery-bot/outage-recovery-bot:latest\n  Would run: kubectl rollout status ...",
       pipeline: [
-        { tool: "terraform apply",  what: "cluster + workload identity + namespace" },
-        { tool: "docker build",     what: "build the agent container locally" },
-        { tool: "docker push",      what: "push to Artifact Registry" },
-        { tool: "kubectl apply",    what: "deployment + service + HPA manifests" },
+        { tool: "terraform apply",  what: "cluster, workload identity, deployment, service, HPA" },
+        { tool: "gcloud builds submit", what: "build the image with Cloud Build, push to Artifact Registry" },
+        { tool: "kubectl set image", what: "point the deployment at the new image" },
         { tool: "rollout wait",     what: "block until the new revision is healthy" },
       ],
     },
@@ -1206,14 +1175,14 @@
       cards.forEach((c, i) => c.classList.toggle("lc-deploy__card--on", i === active));
       const t = DEPLOY_TARGETS[active];
       cmdCode.textContent = "$ " + t.cmd;
-      pipelineHead.textContent = "what `agents-cli deploy` runs · target = " + t.id;
+      pipelineHead.textContent = "What agents-cli deploy runs for " + t.id;
       pipelineList.innerHTML = "";
       t.pipeline.forEach((p, i) => {
         const li = htmlEl("li");
         li.appendChild(htmlEl("span", { class: "lc-deploy__num lc-mono" }, String(i + 1)));
         const detail = htmlEl("div");
         detail.appendChild(htmlEl("code", { class: "lc-deploy__tool" }, p.tool));
-        detail.appendChild(htmlEl("span", { class: "lc-deploy__what" }, " — " + p.what));
+        detail.appendChild(htmlEl("span", { class: "lc-deploy__what" }, " " + p.what));
         li.appendChild(detail);
         pipelineList.appendChild(li);
       });
@@ -1228,7 +1197,7 @@
     host.innerHTML = "";
     host.classList.add("lc-publish");
 
-    host.appendChild(htmlEl("p", { class: "lc-mono lc-publish__eyebrow" }, "GEMINI APP · agent catalog"));
+    host.appendChild(htmlEl("p", { class: "lc-publish__eyebrow" }, "Gemini app agent catalog"));
     host.appendChild(htmlEl("h4", { class: "lc-publish__name" }, "outage-recovery-bot"));
     host.appendChild(htmlEl("p", { class: "lc-publish__sub" },
       "SRE-facing assistant. Investigates incidents using logs, metrics, and runbook RAG. Cites every recommendation."));
@@ -1243,27 +1212,27 @@
 
     const status = htmlEl("div", { class: "lc-publish__status" });
     status.appendChild(htmlEl("span", { class: "lc-publish__pulse" }));
-    status.appendChild(htmlEl("span", { class: "lc-mono lc-publish__statusLabel" }, "READY · receiving traffic"));
+    status.appendChild(htmlEl("span", { class: "lc-publish__statusLabel" }, "Ready, receiving traffic"));
     host.appendChild(status);
 
     const cmd = htmlEl("pre", { class: "lc-publish__cmd" }, htmlEl("code", null,
-      "$ agents-cli publish gemini --registration-type adk\n✅ Successfully registered agent to Gemini!"));
+      "$ agents-cli publish gemini --registration-type adk\n✅ Successfully created agent registration!"));
     host.appendChild(cmd);
   }
 
   // ─────────────────────────────────────────── 11. ROLLING EVAL ───────────
 
   const ROLLING_DATA = [
-    { day: "D-9", score: 0.92 },
-    { day: "D-8", score: 0.93 },
-    { day: "D-7", score: 0.91 },
-    { day: "D-6", score: 0.78, ann: { kind: "regression", label: "regression caught" } },
-    { day: "D-5", score: 0.86 },
-    { day: "D-4", score: 0.91 },
-    { day: "D-3", score: 0.93, ann: { kind: "deploy",     label: "v1.4 deployed" } },
-    { day: "D-2", score: 0.94 },
-    { day: "D-1", score: 0.93 },
-    { day: "Today", score: 0.95 },
+    { day: "Run 1", score: 0.92 },
+    { day: "Run 2", score: 0.93 },
+    { day: "Run 3", score: 0.91 },
+    { day: "Run 4", score: 0.78, ann: { kind: "regression", label: "regression caught" } },
+    { day: "Run 5", score: 0.86 },
+    { day: "Run 6", score: 0.91 },
+    { day: "Run 7", score: 0.93, ann: { kind: "deploy",     label: "v1.4 deployed" } },
+    { day: "Run 8", score: 0.94 },
+    { day: "Run 9", score: 0.93 },
+    { day: "Run 10", score: 0.95 },
   ];
 
   function initRolling(host) {
@@ -1271,13 +1240,8 @@
     host.innerHTML = "";
     host.classList.add("lc-rolling");
 
-    // Header with live indicator
     const head = htmlEl("div", { class: "lc-rolling__head" });
-    head.appendChild(htmlEl("span", { class: "lc-mono lc-muted" }, "ROLLING EVAL SCORE · last 10 days · production"));
-    const live = htmlEl("span", { class: "lc-rolling__live" });
-    live.appendChild(htmlEl("span", { class: "lc-rolling__livepulse" }));
-    live.appendChild(htmlEl("span", { class: "lc-mono", style: "color: #34a853;" }, "LIVE"));
-    head.appendChild(live);
+    head.appendChild(htmlEl("span", { class: "lc-muted" }, "Eval score per run, last 10 runs"));
     host.appendChild(head);
 
     // SVG chart
@@ -1288,29 +1252,22 @@
 
     const pts = ROLLING_DATA.map((p, i) => Object.assign({}, p, { cx: PAD_L + i * dx, cy: yScale(p.score) }));
     const linePath = pts.map((p, i) => (i === 0 ? "M " : "L ") + p.cx + " " + p.cy).join(" ");
-    const areaPath = "M " + pts[0].cx + " " + (H - PAD_B) + " " +
-                     pts.map((p) => "L " + p.cx + " " + p.cy).join(" ") +
-                     " L " + pts[pts.length - 1].cx + " " + (H - PAD_B) + " Z";
     const yT = yScale(0.8);
 
-    const svg = svgEl("svg", { viewBox: "0 0 " + W + " " + H, width: "100%", role: "img", "aria-label": "Rolling production eval score, last 10 days" });
+    const svg = svgEl("svg", { viewBox: "0 0 " + W + " " + H, width: "100%", role: "img", "aria-label": "Eval score per run, last 10 runs" });
     host.appendChild(svg);
 
     // Threshold band
-    svg.appendChild(svgEl("rect", { x: PAD_L, y: yT, width: W - PAD_L - PAD_R, height: H - PAD_B - yT, fill: "color-mix(in srgb, #ea4335 10%, transparent)" }));
-    svg.appendChild(svgEl("line", { x1: PAD_L, x2: W - PAD_R, y1: yT, y2: yT, stroke: "var(--md-default-fg-color--light)", "stroke-dasharray": "3 4", "stroke-width": 1 }));
-    const thLabel = svgEl("text", { x: W - PAD_R - 2, y: yT - 4, "text-anchor": "end", "font-family": "var(--md-code-font-family)", "font-size": "9", fill: "var(--md-default-fg-color--light)" });
-    thLabel.textContent = "threshold 0.80";
+    svg.appendChild(svgEl("rect", { x: PAD_L, y: yT, width: W - PAD_L - PAD_R, height: H - PAD_B - yT, fill: "color-mix(in srgb, var(--red) 6%, transparent)" }));
+    svg.appendChild(svgEl("line", { x1: PAD_L, x2: W - PAD_R, y1: yT, y2: yT, stroke: "var(--ink-2)", "stroke-dasharray": "3 4", "stroke-width": 1 }));
+    const thLabel = svgEl("text", { x: W - PAD_R - 2, y: yT - 4, "text-anchor": "end", "font-family": "var(--sans)", "font-size": "10", fill: "var(--ink-3)" });
+    thLabel.textContent = "Threshold 0.80";
     svg.appendChild(thLabel);
 
-    // Faint area beneath the line
-    const area = svgEl("path", { d: areaPath, fill: "color-mix(in srgb, #34a853 14%, transparent)", opacity: "0" });
-    area.style.transition = "opacity 600ms ease";
-    svg.appendChild(area);
 
     // The line — stroke-dashoffset reveal
     const line = svgEl("path", {
-      d: linePath, fill: "none", stroke: "#34a853", "stroke-width": "2", "stroke-linecap": "round",
+      d: linePath, fill: "none", stroke: "var(--green)", "stroke-width": "2", "stroke-linecap": "round",
       pathLength: "1", "stroke-dasharray": "1", "stroke-dashoffset": "1",
     });
     line.style.transition = "stroke-dashoffset 1100ms ease-out";
@@ -1320,20 +1277,12 @@
     pts.forEach((p, i) => {
       const isLast = i === pts.length - 1;
       const annotated = !!p.ann;
-      const annColor = annotated && p.ann.kind === "regression" ? "#ea4335" : "var(--md-primary-fg-color)";
-
-      // Live pulse halo on last point
-      if (isLast) {
-        const halo = svgEl("circle", { cx: p.cx, cy: p.cy, r: 4, fill: "#34a853", opacity: "0" });
-        halo.style.transformOrigin = p.cx + "px " + p.cy + "px";
-        halo.style.animation = "lc-rolling-pulse 1.6s ease-out infinite 1.2s";
-        svg.appendChild(halo);
-      }
+      const annColor = annotated && p.ann.kind === "regression" ? "var(--red)" : "var(--accent)";
 
       const dot = svgEl("circle", {
         cx: p.cx, cy: p.cy, r: 0,
-        fill: annotated ? annColor : "#34a853",
-        stroke: "var(--md-default-bg-color)", "stroke-width": "1.5",
+        fill: annotated ? annColor : "var(--green)",
+        stroke: "var(--page)", "stroke-width": "1.5",
       });
       dot.style.transition = "r 280ms ease-out";
       dot.dataset.targetR = String(annotated ? 4 : (isLast ? 4 : 2.8));
@@ -1350,7 +1299,7 @@
         svg.appendChild(leader);
         const annText = svgEl("text", {
           x: p.cx, y: PAD_T - 8, "text-anchor": "middle",
-          "font-family": "var(--md-code-font-family)", "font-size": "9",
+          "font-family": "var(--sans)", "font-size": "10",
           fill: annColor, "font-weight": "600", opacity: "0",
         });
         annText.textContent = p.ann.label;
@@ -1360,13 +1309,14 @@
       }
     });
 
-    // Day labels
-    pts.forEach((p) => {
+    // Run labels
+    pts.forEach((p, i) => {
+      const isLast = i === pts.length - 1;
       const t = svgEl("text", {
         x: p.cx, y: H - 6, "text-anchor": "middle",
-        "font-family": "var(--md-code-font-family)", "font-size": "9",
-        fill: p.day === "Today" ? "#34a853" : "var(--md-default-fg-color--light)",
-        "font-weight": p.day === "Today" ? "600" : "400",
+        "font-family": "var(--sans)", "font-size": "10",
+        fill: isLast ? "var(--ink)" : "var(--ink-3)",
+        "font-weight": isLast ? "600" : "400",
         opacity: "0",
       });
       t.textContent = p.day;
@@ -1377,14 +1327,13 @@
 
     // Footer summary
     const foot = htmlEl("div", { class: "lc-rolling__foot lc-mono" });
-    foot.innerHTML = "<span class='lc-muted'>median 0.91 · 1 regression caught · 1 deploy</span>" +
-                     " <span style='color: #34a853; float: right;'>now 0.95</span>";
+    foot.innerHTML = "<span class='lc-muted'>Median 0.91 · 1 regression caught · 1 deploy</span>" +
+                     "<span>Latest run 0.95</span>";
     host.appendChild(foot);
 
     function play() {
       // Reveal line
       line.setAttribute("stroke-dashoffset", "0");
-      area.setAttribute("opacity", "1");
       // Reveal dots
       svg.querySelectorAll("circle").forEach((c, i) => {
         const targetR = c.dataset.targetR;
@@ -1397,5 +1346,12 @@
       });
     }
     whenInView(host, play);
+  }
+
+  // At the end so the const data tables above are initialized before init runs.
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
   }
 })();

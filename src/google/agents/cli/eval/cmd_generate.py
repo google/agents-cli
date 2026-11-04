@@ -37,7 +37,6 @@ from google.agents.cli._modes import MODE_ADK, MODE_ADK_LIVE
 from google.agents.cli._output import Console
 from google.agents.cli._project import (
     ProjectConfig,
-    agent_package_name,
     find_project_root,
     read_project_config,
     require_agent_directory,
@@ -54,9 +53,6 @@ from google.agents.cli.eval._events import (
 from google.agents.cli.run._local_server import ensure_server, stop_server
 
 _DEFAULT_CONCURRENCY = min(32, (os.cpu_count() or 4))
-
-# Default agent app name in the local ADK URL path (/apps/<app-name>/...).
-_DEFAULT_APP_NAME = "app"
 
 # Fallback root-agent name for the rewrite_model_author_events rewrite
 # when /app-info is unavailable.
@@ -485,11 +481,11 @@ def _print_failure_summary(
 )
 @click.option(
     "--app-name",
-    default=_DEFAULT_APP_NAME,
+    default=None,
     help=(
         "Agent app name to use in the ADK URL path "
         "(/apps/<app-name>/users/...). Only used when --url is set. "
-        "Defaults to 'app'."
+        "Defaults to the project's app name."
     ),
 )
 @click.option(
@@ -518,7 +514,7 @@ def cmd_generate(
     output: str | None,
     url: str | None,
     mode: str,
-    app_name: str,
+    app_name: str | None,
     concurrency: int,
     custom_headers: tuple[str, ...],
 ):
@@ -608,7 +604,7 @@ def cmd_generate(
             eval_cases=eval_cases,
             dataset=dataset,
             url=url,
-            app_name=app_name,
+            app_name=app_name or cfg.app_name,
             output_path=output_path,
             concurrency=concurrency,
             custom_headers=custom_headers,
@@ -667,7 +663,7 @@ def _run_against_local_server(
     live: bool,
 ) -> None:
     """Run inference against a local ADK server booted for this command."""
-    local_app_name = agent_package_name(cfg.agent_directory)
+    local_app_name = cfg.app_name
     console.print(f"[bold]Booting local ADK server (app_name={local_app_name})[/bold]")
     console.print(f"[bold]Running inference on dataset:[/bold] [cyan]{dataset}[/cyan]")
     server_info = ensure_server(

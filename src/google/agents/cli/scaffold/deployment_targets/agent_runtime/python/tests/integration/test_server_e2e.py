@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "http://127.0.0.1:8000"
 RUN_SSE_URL = BASE_URL + "/run_sse"
-A2A_RPC_URL = BASE_URL + "/a2a/{{cookiecutter.agent_package}}/"
+A2A_RPC_URL = BASE_URL + "/a2a/{{cookiecutter.app_name}}/"
 AGENT_CARD_URL = A2A_RPC_URL + ".well-known/agent-card.json"
 
 HEADERS = {"Content-Type": "application/json"}

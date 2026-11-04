@@ -6,9 +6,9 @@
   "main": "{{cookiecutter.agent_directory}}/agent.ts",
   "scripts": {
     "build": "tsc",
-    "dev": "tsc && npx @google/adk-devtools web -h localhost dist/agent.js",
-    "run": "tsc && npx @google/adk-devtools run dist/agent.js",
-    "test": "vitest run",
+    "dev": "tsc && npx @google/adk-devtools web -h localhost dist",
+    "run": "tsc && npx @google/adk-devtools run dist/{{cookiecutter.app_name}}/agent.js",
+    "test": "tsc && vitest run",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit"
   },
@@ -20,17 +20,18 @@
     "tsx": "^4.21.0",
     "typescript": "^5.9.0",
     "typescript-eslint": "^8.57.2",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   },
   "dependencies": {
-    "@google/adk": "^2.2.0",
-    "@google/adk-devtools": "^2.2.0",
-    "zod": "^4.2.1"
+    "@google/adk": "^2.3.0",
+    "@google/adk-devtools": "^2.3.0",
+    "zod": "^4.6.6"
   },
   "overrides": {
     "uuid": "^11.1.1",
     "@opentelemetry/core": "^2.8.0",
     "protobufjs": "^7.6.5",
-    "qs": "^6.16.0"
+    "qs": "^6.16.1",
+    "minimatch": "^11.0.1"
   }
 }

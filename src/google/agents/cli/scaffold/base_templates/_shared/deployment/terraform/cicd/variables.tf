@@ -173,6 +173,10 @@ variable "agent_identity_roles" {
     "roles/logging.logWriter",
     "roles/monitoring.metricWriter",
     "roles/cloudtrace.agent",
+{%- if cookiecutter.session_type == "cloud_sql" %}
+    "roles/cloudsql.client",
+    "roles/secretmanager.secretAccessor",
+{%- endif %}
 {%- if cookiecutter.bq_analytics %}
     "roles/bigquery.dataOwner",
     "roles/bigquery.jobUser",

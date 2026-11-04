@@ -24,14 +24,14 @@ from google.agents.cli.extension._refs import ExtensionRef
 def confirm_trust(ref: ExtensionRef, *, auto_approve: bool) -> bool:
     """Return True if it's OK to install/run this extension's code.
 
-    First-party extensions are trusted. Everything else prompts unless
+    Verified extensions are trusted. Everything else prompts unless
     `auto_approve`.
     """
-    if ref.kind == "first_party" or auto_approve:
+    if ref.tier == "verified" or auto_approve:
         return True
     click.echo()
     click.secho(
-        f"  Extension source {ref.raw!r} is third-party. It can run arbitrary code "
+        f"  Extension source {ref.raw!r} is not verified. It can run arbitrary code "
         "on your machine when its commands are invoked.",
         fg="yellow",
     )

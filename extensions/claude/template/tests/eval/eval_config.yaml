@@ -1,6 +1,11 @@
 metrics_to_run:
   - custom_response_quality
 
+# Fail `agents-cli eval run` (exit 1) when a metric's mean score drops below
+# its threshold. Set it once you know the bar this agent must meet.
+# thresholds:
+#   custom_response_quality: 4  # the judge scores 1-5
+
 custom_metrics:
   # Local LLM judge via google-genai: ADC on Gemini platform, or GEMINI_API_KEY.
   - name: custom_response_quality

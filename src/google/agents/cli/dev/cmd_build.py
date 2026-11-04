@@ -60,4 +60,5 @@ LANGUAGE_HANDLERS = {
     "go": _build_go,
     "java": None,
     "typescript": None,
+    "kotlin": None,
 }

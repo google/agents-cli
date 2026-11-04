@@ -4,7 +4,7 @@
 
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
-| `--agent` | `-a` | `adk_python` with `-y`; otherwise required | Agent template — local name (`adk_python` for Python, `adk_go` for Go; `adk` is an alias for `adk_python`), local path (`local@/path`), or remote Git URL |
+| `--agent` | `-a` | `adk_python` with `-y`; otherwise required | Agent template — local name (`adk_python` for Python, `adk_go` for Go; `adk` is an alias for `adk_python`), local path (`local@/path`), or remote Git URL (`<org>/<repo>[/<path>][@<ref>]`) |
 | `--deployment-target` | `-d` | `agent_runtime` with `-y`; otherwise required unless `--prototype` | Deployment target (`agent_runtime`, `cloud_run`, `gke`, `none`) |
 | `--region` | | `us-east1` | GCP region |
 | `--prototype` | `-p` | off | Skip CI/CD and Terraform (recommended for first pass) |
@@ -22,8 +22,8 @@
 For all available flags, run `agents-cli scaffold create --help`.
 
 > **ADK-specific:** `--adk` is a shortcut for the built-in ADK template, and `adk_python` is the only
-> built-in one (`adk` is accepted as an alias). `--agent` also takes a template repo (`<org>/<repo>[/<path>]@<tag>` or `local@<path>`),
-> which is how other frameworks ship.
+> built-in one (`adk` is accepted as an alias). `--agent` also takes a template repo (`<org>/<repo>[/<path>][@<ref>]` or `local@<path>`),
+> which is how third-party templates and other frameworks ship.
 
 > **Go templates:** a remote template whose `manifest.yaml` says `language: go` renders on `adk_go`.
 > It must use ADK Go v2 (`google.golang.org/adk/v2`); other versions are rejected. Its agent package

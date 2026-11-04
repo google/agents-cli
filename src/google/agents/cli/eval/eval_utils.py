@@ -18,9 +18,11 @@ import datetime
 import functools
 import json
 import logging
+import math
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, get_args
 
@@ -184,11 +186,12 @@ def _resolve_custom_function_file(
         m_dict["custom_function"] = f.read()
 
 
-def load_eval_config(config_path: str) -> tuple[list[str], dict]:
+def load_eval_config(config_path: str) -> tuple[list[str], dict, dict[str, float]]:
     """Helper to load and validate eval configuration from a JSON/YAML file.
 
     Returns:
-        A tuple of (metrics_to_run, dictionary of custom metric definitions mapped by name).
+        A tuple of (metrics_to_run, dictionary of custom metric definitions
+        mapped by name, per-metric pass thresholds mapped by metric name).
     """
     try:
         with open(config_path, encoding="utf-8") as f:
@@ -229,7 +232,9 @@ def load_eval_config(config_path: str) -> tuple[list[str], dict]:
             if name:
                 custom_metrics_pool[name] = m
 
-        return metrics_to_run, custom_metrics_pool
+        thresholds = _parse_thresholds(data.get("thresholds", {}))
+
+        return metrics_to_run, custom_metrics_pool, thresholds
 
     except click.ClickException:
         raise
@@ -237,6 +242,31 @@ def load_eval_config(config_path: str) -> tuple[list[str], dict]:
         raise click.ClickException(
             f"Failed to load eval configuration from {config_path}"
         ) from e
+
+
+def _parse_thresholds(raw: object) -> dict[str, float]:
+    """Validate the config's ``thresholds`` mapping of metric name to minimum mean score."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise click.ClickException(
+            "'thresholds' must map metric names to numbers, e.g. "
+            "'thresholds: {final_response_quality: 0.8}'."
+        )
+    thresholds = {}
+    for name, value in raw.items():
+        # bool is an int subclass, but `true` is never a meant threshold. NaN
+        # compares false to everything, so the metric could never fail.
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int | float)
+            or not math.isfinite(value)
+        ):
+            raise click.ClickException(
+                f"Threshold for metric '{name}' must be a finite number, got {value!r}."
+            )
+        thresholds[str(name)] = float(value)
+    return thresholds
 
 
 def _defines_own_metric_body(custom_metric: dict[str, Any]) -> bool:
@@ -292,27 +322,37 @@ def _resolve_predefined_metric_name(name: str) -> str | None:
     return max(matches, key=lambda m: int(m.group(1))).group(0)
 
 
+@dataclass(frozen=True)
+class PreparedMetrics:
+    """Metrics resolved for one eval run, plus the config's pass thresholds.
+
+    ``local_custom_count`` is the number of custom metrics that will execute
+    in-process via a compiled ``custom_function``; ``remote_custom_count`` is
+    the number that will run server-side via ``CodeExecutionMetric``.
+    """
+
+    metrics: list[Any]
+    local_custom_count: int
+    remote_custom_count: int
+    thresholds: Mapping[str, float]
+
+
 def prepare_eval_metrics(
     config_path: str | None,
     metrics_str: str | None,
     default_config_path: str | None = None,
     default_metrics: list[str] | None = None,
     console: Console | None = None,
-) -> tuple[list[Any], int, int]:
-    """Loads configuration and resolves/validates metrics to evaluate.
-
-    Returns:
-        A tuple of (metrics, local_custom_count, remote_custom_count).
-        ``local_custom_count`` is the number of custom metrics that will
-        execute in-process via a compiled ``custom_function``;
-        ``remote_custom_count`` is the number that will run server-side
-        via ``CodeExecutionMetric``.
-    """
+) -> PreparedMetrics:
+    """Loads configuration and resolves/validates metrics to evaluate."""
     custom_metrics_pool = {}
     metrics_to_run_list = []
+    thresholds: dict[str, float] = {}
 
     if config_path and os.path.exists(config_path):
-        metrics_to_run_list, custom_metrics_pool = load_eval_config(config_path)
+        metrics_to_run_list, custom_metrics_pool, thresholds = load_eval_config(
+            config_path
+        )
     elif config_path and default_config_path and (config_path != default_config_path):
         raise click.ClickException(f"Configuration file not found at {config_path}.")
     elif config_path and not default_config_path:
@@ -418,7 +458,12 @@ def prepare_eval_metrics(
         else:
             metrics.append(m_name)
 
-    return metrics, local_custom_count, remote_custom_count
+    return PreparedMetrics(
+        metrics=metrics,
+        local_custom_count=local_custom_count,
+        remote_custom_count=remote_custom_count,
+        thresholds=thresholds,
+    )
 
 
 def print_results_table(result: vertex_types.EvaluationResult, console: Console) -> None:
@@ -455,16 +500,46 @@ def print_results_table(result: vertex_types.EvaluationResult, console: Console)
     console.print("")
 
 
+@dataclass(frozen=True)
+class SavedArtifacts:
+    """Absolute paths of the results one save wrote."""
+
+    json_path: str
+    # None when the HTML report could not be written.
+    html_path: str | None
+
+    @property
+    def report_path(self) -> str:
+        """The report to open: the HTML file, or the JSON file without one."""
+        return self.html_path or self.json_path
+
+
 def save_evaluation_artifacts(
     result: vertex_types.EvaluationResult, output_dir: str, console: Console
-) -> None:
+) -> SavedArtifacts:
     """Creates the artifacts directory and saves JSON/HTML results."""
     os.makedirs(output_dir, exist_ok=True)
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    json_path = os.path.join(output_dir, f"results_{timestamp}.json")
-    html_path = os.path.join(output_dir, f"results_{timestamp}.html")
+    stem = os.path.abspath(os.path.join(output_dir, f"results_{timestamp}"))
+    saved = _write_artifacts(result, f"{stem}.json", f"{stem}.html")
+    console.print(f"[green]Saved full results to {saved.json_path}[/green]")
+    if saved.html_path:
+        console.print(f"[green]Saved HTML results to {saved.html_path}[/green]")
+    return saved
 
+
+def rewrite_evaluation_artifacts(
+    result: vertex_types.EvaluationResult, saved: SavedArtifacts
+) -> SavedArtifacts:
+    """Overwrite the files of an earlier save with an updated result."""
+    stem = os.path.splitext(saved.json_path)[0]
+    return _write_artifacts(result, saved.json_path, f"{stem}.html")
+
+
+def _write_artifacts(
+    result: vertex_types.EvaluationResult, json_path: str, html_path: str
+) -> SavedArtifacts:
     dumpable = result.model_dump(mode="json")
     metadata_dataset = []
     try:
@@ -482,9 +557,6 @@ def save_evaluation_artifacts(
     try:
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(dumpable, f, indent=2)
-        console.print(
-            f"[green]Saved full results to {os.path.abspath(json_path)}[/green]"
-        )
     except Exception as dump_err:
         raise click.ClickException("Failed to dump full results to json.") from dump_err
 
@@ -495,10 +567,8 @@ def save_evaluation_artifacts(
         if html_content:
             with open(html_path, "w", encoding="utf-8") as f:
                 f.write(str(html_content))
-            console.print(
-                f"[green]Saved HTML results to {os.path.abspath(html_path)}[/green]"
-            )
-        else:
-            logging.warning("Could not generate HTML results (JSON results were saved).")
+            return SavedArtifacts(json_path=json_path, html_path=html_path)
+        logging.warning("Could not generate HTML results (JSON results were saved).")
     except Exception as e:
         logging.warning("Failed to save HTML results: %s (JSON results were saved).", e)
+    return SavedArtifacts(json_path=json_path, html_path=None)

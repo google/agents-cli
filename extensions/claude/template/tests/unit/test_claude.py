@@ -21,7 +21,6 @@ import os
 import pathlib
 import shutil
 import sys
-import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import anyio
@@ -29,8 +28,8 @@ import pytest
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
-    HookMatcher,
     InMemorySessionStore,
+    MirrorErrorMessage,
     ResultMessage,
     StreamEvent,
     TextBlock,
@@ -48,13 +47,15 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 
 from app.app_utils import (
     claude,
-    project_settings,
     replies,
     settings,
     turn_options,
     workspaces,
 )
 from app.app_utils.telemetry import traces
+from tests.unit.helpers import workspaces_root, write_local_transcript
+
+pytestmark = pytest.mark.usefixtures("isolated")
 
 
 def _result(**overrides) -> ResultMessage:
@@ -107,53 +108,6 @@ def _fake_query(messages, seen: list[dict] | None = None):
             yield message
 
     return fake
-
-
-@pytest.fixture(autouse=True)
-def isolated(monkeypatch, tmp_path):
-    """Gemini platform env, and workspaces and project root inside tmp_path."""
-    # Keep the project's .env out of the tests: load_dotenv() finds it from
-    # claude.py's location, not cwd.
-    monkeypatch.setattr(claude, "load_dotenv", lambda: None)
-    monkeypatch.setenv("ANTHROPIC_VERTEX_PROJECT_ID", "test-project")
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    # Most tests run a bare ClaudeAgentOptions(), which names no model.
-    monkeypatch.setenv("ANTHROPIC_MODEL", "claude-test")
-    for name in (
-        "INSTANCE_CONNECTION_NAME",
-        "DB_PASS",
-        "DB_USER",
-        "DB_NAME",
-        "BQ_ANALYTICS_DATASET_ID",
-    ):
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-config"))
-    turn_options._cloud_sql_store.cache_clear()
-    monkeypatch.setattr(workspaces, "WORKSPACES", tmp_path / "workspaces")
-    monkeypatch.setattr(workspaces, "_workspaces", {})
-    project = tmp_path / "project"
-    agent_config = project / "agent_config"
-    agent_config.mkdir(parents=True)
-    monkeypatch.setattr(project_settings, "PROJECT_ROOT", project)
-    monkeypatch.setattr(project_settings, "AGENT_CONFIG_DIR", agent_config)
-    return agent_config
-
-
-def _workspaces() -> pathlib.Path:
-    """Where the agent's conversation workspaces go."""
-    return workspaces.WORKSPACES / settings.AGENT_NAME
-
-
-def _options_for(*args, **kwargs) -> ClaudeAgentOptions:
-    return anyio.run(turn_options.turn_options, *args, **kwargs)
-
-
-def _write_local_transcript(conversation_id: str) -> None:
-    """What the CLI leaves on disk after a conversation's first turn."""
-    session = turn_options.session_id_for(conversation_id)
-    transcript = workspaces.transcripts_dir(_workspaces() / session)
-    transcript.mkdir(parents=True, exist_ok=True)
-    (transcript / f"{session}.jsonl").write_text('{"type": "user"}\n')
 
 
 class TestRunTurn:
@@ -211,6 +165,25 @@ class TestRunTurn:
         with patch.object(claude.claude_agent_sdk, "query", _fake_query(failing)):
             with pytest.raises(claude.AgentError, match="model not available"):
                 anyio.run(claude.run_turn, "hi", ClaudeAgentOptions(), "c")
+
+    # The SDK reports a dropped write mid-turn, or just before the result.
+    @pytest.mark.parametrize("at", [0, len(_TOOL_TURN) - 1])
+    def test_a_failed_session_store_write_fails_the_turn_once_it_ends(self, at):
+        dropped = MirrorErrorMessage(
+            subtype="mirror_error", data={}, error="connection refused"
+        )
+        messages = [*_TOOL_TURN[:at], dropped, *_TOOL_TURN[at:]]
+        seen = []
+
+        async def read() -> None:
+            async for message in claude.stream_turn("hi", ClaudeAgentOptions(), "c"):
+                seen.append(message)
+
+        with patch.object(claude.claude_agent_sdk, "query", _fake_query(messages)):
+            with pytest.raises(claude.AgentError, match="connection refused"):
+                anyio.run(read)
+        # Read to the end, so analytics still get the result's cost and turns.
+        assert seen == _TOOL_TURN
 
     @pytest.mark.parametrize("capture", [None, "true"])
     def test_a_denied_call_is_logged_with_its_arguments_only_on_capture(
@@ -274,12 +247,12 @@ class TestRunTurn:
     def test_least_recently_used_workspaces_are_evicted(self, monkeypatch):
         monkeypatch.setattr(workspaces, "MAX_WORKSPACES", 2)
         # Another process serving the same agent shares its directory.
-        (_workspaces() / "other-service").mkdir(parents=True)
+        (workspaces_root() / "other-service").mkdir(parents=True)
         with patch.object(claude.claude_agent_sdk, "query", _fake_query([_result()])):
             for conversation in ["old", "mid", "new", "old", "newest"]:
                 anyio.run(claude.run_turn, "hi", ClaudeAgentOptions(), conversation)
 
-        kept = {d.name for d in _workspaces().iterdir()}
+        kept = {d.name for d in workspaces_root().iterdir()}
         assert kept == {"other-service"} | {
             turn_options.session_id_for(c) for c in ("old", "newest")
         }
@@ -374,7 +347,7 @@ class TestRunTurn:
             events.append(f"start {prompt}")
             resumed[prompt] = options.resume
             if prompt != "c":
-                _write_local_transcript("ctx-1")
+                write_local_transcript("ctx-1")
             await anyio.sleep(0.01)
             events.append(f"end {prompt}")
             yield _result(result=prompt)
@@ -578,322 +551,6 @@ class TestRunTurn:
                 anyio.run(claude.run_turn, "hi", ClaudeAgentOptions(), "c")
 
 
-class TestTurnOptions:
-    def test_conversation_starts_then_resumes_its_session(self):
-        first = _options_for(ClaudeAgentOptions(), "ctx-1")
-        _write_local_transcript("ctx-1")
-        later = _options_for(ClaudeAgentOptions(), "ctx-1")
-
-        session = turn_options.session_id_for("ctx-1")
-        assert (first.session_id, first.resume) == (session, None)
-        assert (later.session_id, later.resume) == (None, session)
-        # Same conversation, same workspace: that is where the CLI keys it.
-        assert first.cwd == later.cwd == str(_workspaces() / session)
-        assert first.include_partial_messages is True
-
-    def test_a_uuid_conversation_id_is_the_session_id(self):
-        # A2A clients send UUID context ids: the caller, the CLI and the spans
-        # then all see the same id.
-        context_id = "3e3a0114-1fa0-463c-a119-b599a1beb275"
-        assert _options_for(ClaudeAgentOptions(), context_id).session_id == context_id
-        # Any other spelling, or a non-UUID id, gets a stable derived UUID.
-        for other in (context_id.upper(), "ctx-1"):
-            session = _options_for(ClaudeAgentOptions(), other).session_id
-            assert session != other
-            assert str(uuid.UUID(session)) == session
-            assert _options_for(ClaudeAgentOptions(), other).session_id == session
-
-    def test_prompts_are_delivered_verbatim(self):
-        # Remote callers write the prompt: no "@/path" file reads, no slash commands.
-        assert _options_for(ClaudeAgentOptions(), "c").verbatim_prompts is True
-
-    def test_agent_running_in_the_project_root_needs_no_copy(self, isolated):
-        (isolated / "CLAUDE.md").write_text("Be terse.")
-        options = _options_for(ClaudeAgentOptions(cwd=str(isolated)), "c")
-        assert options.cwd == str(isolated)
-        assert options.setting_sources == ["project"]
-
-    def test_an_agents_own_directory_keeps_its_claude_settings(
-        self, isolated, tmp_path
-    ):
-        (isolated / ".claude").mkdir()
-        (isolated / ".claude" / "settings.json").write_text("{}")
-        repo = tmp_path / "repo"
-        (repo / ".claude").mkdir(parents=True)
-        (repo / ".claude" / "settings.json").write_text('{"model": "repo"}')
-        (repo / "CLAUDE.md").write_text("The repo's notes.")
-        (repo / ".mcp.json").write_text('{"mcpServers": {}}')
-
-        options = _options_for(ClaudeAgentOptions(cwd=str(repo)), "c")
-
-        # Nothing is copied over or deleted in a directory the agent points at.
-        assert (repo / ".claude" / "settings.json").read_text() == '{"model": "repo"}'
-        assert (repo / "CLAUDE.md").read_text() == "The repo's notes."
-        assert (repo / ".mcp.json").exists()
-        assert options.setting_sources == []
-
-    def test_conversations_get_their_own_workspace(self):
-        a = _options_for(ClaudeAgentOptions(), "ctx-a")
-        b = _options_for(ClaudeAgentOptions(), "ctx-b")
-        assert a.cwd != b.cwd
-
-    def test_server_defaults_apply_only_where_unset(self, tmp_path):
-        defaults = _options_for(ClaudeAgentOptions(), "c")
-        assert defaults.permission_mode == "dontAsk"
-        assert defaults.env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1"
-        assert defaults.env["ENABLE_TOOL_SEARCH"] == "false"
-        assert defaults.env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == "1"
-        # Without project settings to copy, the CLI loads none.
-        assert defaults.setting_sources == []
-
-        own = _options_for(
-            ClaudeAgentOptions(
-                permission_mode="default",
-                cwd=str(tmp_path / "own"),
-                env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "0"},
-                setting_sources=["user"],
-            ),
-            "c",
-        )
-        assert own.permission_mode == "default"
-        assert own.cwd == str(tmp_path / "own")
-        assert own.env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "0"
-        assert own.setting_sources == ["user"]
-
-    def test_own_permission_callback_is_not_shadowed(self):
-        async def allow(tool_name, tool_input, context):
-            return None
-
-        options = _options_for(ClaudeAgentOptions(can_use_tool=allow), "c")
-        assert options.permission_mode is None
-
-    @pytest.mark.parametrize(
-        ("options", "bare"),
-        [
-            (ClaudeAgentOptions(tools=[]), True),
-            (ClaudeAgentOptions(), False),
-            (ClaudeAgentOptions(tools=["WebSearch"]), False),
-            (ClaudeAgentOptions(tools=[], setting_sources=["user"]), False),
-            (ClaudeAgentOptions(tools=[], skills="all"), False),
-            (
-                ClaudeAgentOptions(tools=[], plugins=[{"type": "local", "path": "p"}]),
-                False,
-            ),
-            (
-                ClaudeAgentOptions(tools=[], hooks={"PreToolUse": [HookMatcher()]}),
-                False,
-            ),
-            (ClaudeAgentOptions(tools=[], env={"CLAUDE_CODE_SIMPLE": "0"}), False),
-        ],
-    )
-    def test_bare_mode_only_for_agents_that_lose_nothing_to_it(self, options, bare):
-        # Bare mode drops the reminders that make the model refuse plain
-        # instructions, but also built-in tools, settings, skills, plugins and hooks.
-        env = _options_for(options, "c").env
-        assert (env.get("CLAUDE_CODE_SIMPLE") == "1") == bare
-
-    def test_project_settings_rule_out_bare_mode(self, isolated):
-        (isolated / "CLAUDE.md").write_text("Be terse.")
-        options = _options_for(ClaudeAgentOptions(tools=[]), "c")
-        assert "CLAUDE_CODE_SIMPLE" not in options.env
-
-    def test_project_claude_settings_ship_with_the_agent(self, isolated):
-        (isolated / ".claude" / "agents").mkdir(parents=True)
-        (isolated / ".claude" / "agents" / "reviewer.md").write_text("---\n---\n")
-        (isolated / "CLAUDE.md").write_text("Always answer in French.")
-
-        options = _options_for(ClaudeAgentOptions(), "ctx-1")
-
-        workspace = _workspaces() / turn_options.session_id_for("ctx-1")
-        assert options.setting_sources == ["project"]
-        assert (workspace / "CLAUDE.md").read_text() == "Always answer in French."
-        assert (workspace / ".claude" / "agents" / "reviewer.md").is_file()
-
-    def test_project_mcp_servers_ship_with_the_agent(self, isolated):
-        (isolated / ".mcp.json").write_text('{"mcpServers": {}}')
-
-        options = _options_for(ClaudeAgentOptions(), "ctx-1")
-
-        workspace = _workspaces() / turn_options.session_id_for("ctx-1")
-        assert options.setting_sources == ["project"]
-        assert (workspace / ".mcp.json").read_text() == '{"mcpServers": {}}'
-
-    def test_agents_that_load_project_settings_get_the_copy(self, isolated):
-        (isolated / "CLAUDE.md").write_text("Be terse.")
-        options = _options_for(ClaudeAgentOptions(setting_sources=["project"]), "c")
-        assert (
-            _workspaces() / turn_options.session_id_for("c") / "CLAUDE.md"
-        ).is_file()
-        assert options.setting_sources == ["project"]
-
-    @pytest.mark.parametrize(
-        ("setting_sources", "allowed"),
-        [
-            (None, ["mcp__w__get_weather", "Bash(touch:*)"]),
-            (["project", "local"], ["mcp__w__get_weather", "Bash(touch:*)", "Read"]),
-            ([], ["mcp__w__get_weather"]),
-        ],
-    )
-    def test_project_permission_rules_apply_in_the_workspace(
-        self, isolated, setting_sources, allowed
-    ):
-        # The CLI ignores allow rules from an untrusted workspace's settings,
-        # and a fresh workspace is never trusted.
-        (isolated / ".claude").mkdir()
-        (isolated / ".claude" / "settings.json").write_text(
-            '{"permissions": {"allow": ["Bash(touch:*)", "mcp__w__get_weather"]}}'
-        )
-        (isolated / ".claude" / "settings.local.json").write_text(
-            '{"permissions": {"allow": ["Read"]}}'
-        )
-        options = _options_for(
-            ClaudeAgentOptions(
-                allowed_tools=["mcp__w__get_weather"], setting_sources=setting_sources
-            ),
-            "c",
-        )
-        assert options.allowed_tools == allowed
-
-    def test_the_developers_own_claude_settings_are_not_loaded(self, isolated):
-        # The project root's files belong to the developer's coding assistant.
-        project = isolated.parent
-        (project / ".claude").mkdir()
-        (project / ".claude" / "settings.json").write_text(
-            '{"permissions": {"allow": ["Bash(*)"]}}'
-        )
-        (project / "CLAUDE.md").write_text("You are a coding assistant.")
-
-        options = _options_for(ClaudeAgentOptions(), "ctx-1")
-
-        workspace = _workspaces() / turn_options.session_id_for("ctx-1")
-        assert options.setting_sources == []
-        assert options.allowed_tools == []
-        assert not (workspace / "CLAUDE.md").exists()
-        assert not (workspace / ".claude").exists()
-
-    def test_settings_the_agent_writes_into_its_workspace_are_dropped(self, isolated):
-        (isolated / ".claude" / "agents").mkdir(parents=True)
-        (isolated / ".claude" / "agents" / "reviewer.md").write_text("---\n---\n")
-        _options_for(ClaudeAgentOptions(), "ctx-1")
-        # An agent that can write files adds settings and an MCP server to its
-        # workspace, hoping the next turn loads them.
-        workspace = _workspaces() / turn_options.session_id_for("ctx-1")
-        (workspace / ".claude" / "settings.json").write_text(
-            '{"permissions": {"allow": ["Bash(*)"]}, "hooks": {}}'
-        )
-        (workspace / ".mcp.json").write_text('{"mcpServers": {"x": {"command": "sh"}}}')
-
-        options = _options_for(ClaudeAgentOptions(), "ctx-1")
-
-        assert options.allowed_tools == []
-        assert not (workspace / ".claude" / "settings.json").exists()
-        assert not (workspace / ".mcp.json").exists()
-        assert (workspace / ".claude" / "agents" / "reviewer.md").is_file()
-
-    @pytest.mark.parametrize(
-        "settings",
-        ["{", "[]", '{"permissions": []}', '{"permissions": {"allow": "Bash"}}'],
-    )
-    def test_malformed_project_settings_add_no_rules(self, isolated, settings):
-        (isolated / ".claude").mkdir()
-        (isolated / ".claude" / "settings.json").write_text(settings)
-        assert _options_for(ClaudeAgentOptions(), "c").allowed_tools == []
-
-    def test_the_cli_does_not_get_the_cloud_sql_password(self, monkeypatch):
-        from app.app_utils.session_store import PostgresSessionStore
-
-        monkeypatch.setenv("INSTANCE_CONNECTION_NAME", "proj:us-east1:db")
-        monkeypatch.setenv("DB_PASS", "secret")
-        with patch.object(
-            PostgresSessionStore, "exists", AsyncMock(return_value=False)
-        ):
-            options = _options_for(ClaudeAgentOptions(), "ctx-1")
-
-        # The server's store has it; the CLI and its tools see it blanked.
-        assert isinstance(options.session_store, PostgresSessionStore)
-        assert options.env["DB_PASS"] == ""
-
-    def test_the_cli_always_calls_gemini_platform(self, monkeypatch):
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-server")
-        options = _options_for(
-            ClaudeAgentOptions(
-                env={
-                    "ANTHROPIC_API_KEY": "sk-agent",
-                    "ANTHROPIC_AUTH_TOKEN": "token",
-                    "CLAUDE_CODE_USE_VERTEX": "0",
-                }
-            ),
-            "ctx-1",
-        )
-        assert options.env["CLAUDE_CODE_USE_VERTEX"] == "1"
-        assert options.env["ANTHROPIC_API_KEY"] == ""
-        assert options.env["ANTHROPIC_AUTH_TOKEN"] == ""
-
-    def test_cloud_sql_env_gives_one_postgres_store_per_process(self, monkeypatch):
-        from app.app_utils.session_store import PostgresSessionStore
-
-        monkeypatch.setenv("INSTANCE_CONNECTION_NAME", "proj:us-east1:db")
-        monkeypatch.setenv("DB_PASS", "secret")
-        exists = AsyncMock(side_effect=[False, True])
-        with patch.object(PostgresSessionStore, "exists", exists):
-            first = _options_for(ClaudeAgentOptions(), "ctx-1")
-            later = _options_for(ClaudeAgentOptions(), "ctx-1")
-
-        assert isinstance(first.session_store, PostgresSessionStore)
-        assert later.session_store is first.session_store
-        session = turn_options.session_id_for("ctx-1")
-        assert (first.session_id, later.resume) == (session, session)
-        key = exists.call_args.args[0]
-        assert key["session_id"] == session
-        assert key["project_key"] == claude.claude_agent_sdk.project_key_for_directory(
-            _workspaces() / session
-        )
-
-    def test_agents_own_store_wins_over_cloud_sql(self, monkeypatch):
-        monkeypatch.setenv("INSTANCE_CONNECTION_NAME", "proj:us-east1:db")
-        monkeypatch.setenv("DB_PASS", "secret")
-        own = InMemorySessionStore()
-        options = _options_for(ClaudeAgentOptions(session_store=own), "ctx-1")
-        assert options.session_store is own
-        assert options.session_id == turn_options.session_id_for("ctx-1")
-
-    def test_resumes_from_an_agents_own_store(self):
-        own = InMemorySessionStore()
-        session = turn_options.session_id_for("ctx-1")
-        project_key = claude.claude_agent_sdk.project_key_for_directory(
-            _workspaces() / session
-        )
-        anyio.run(
-            own.append,
-            {"project_key": project_key, "session_id": session},
-            [{"type": "user"}],
-        )
-        options = _options_for(ClaudeAgentOptions(session_store=own), "ctx-1")
-        assert options.resume == session
-
-    def test_another_agent_does_not_resume_the_conversation(self, monkeypatch):
-        # Services running different agents can share a machine and a database.
-        store = InMemorySessionStore()
-        monkeypatch.setattr(settings, "AGENT_NAME", "agent_a")
-        first = _options_for(ClaudeAgentOptions(session_store=store), "ctx-1")
-        key = {
-            "project_key": claude.claude_agent_sdk.project_key_for_directory(first.cwd),
-            "session_id": first.session_id,
-        }
-        anyio.run(store.append, key, [{"type": "user"}])
-
-        monkeypatch.setattr(settings, "AGENT_NAME", "agent_b")
-        other = _options_for(ClaudeAgentOptions(session_store=store), "ctx-1")
-        assert other.cwd != first.cwd
-        assert other.resume is None
-        monkeypatch.setattr(settings, "AGENT_NAME", "agent_a")
-        again = _options_for(ClaudeAgentOptions(session_store=store), "ctx-1")
-        assert again.resume == first.session_id
-
-    def test_without_cloud_sql_there_is_no_store(self):
-        assert _options_for(ClaudeAgentOptions(), "ctx-1").session_store is None
-
-
 class TestCallerScopedConversations:
     """With an authenticated caller, a conversation is that caller's alone."""
 
@@ -954,7 +611,7 @@ class TestCallerScopedConversations:
     def test_without_a_caller_the_context_id_alone_keys_it(self):
         anyone = self._turn(None)
         again = self._turn(None)
-        assert anyone.cwd == str(_workspaces() / self.CONTEXT_ID)
+        assert anyone.cwd == str(workspaces_root() / self.CONTEXT_ID)
         assert (again.cwd, again.resume) == (anyone.cwd, self.CONTEXT_ID)
         # A caller doesn't pick up the unauthenticated conversation either.
         assert self._turn("alice@example.com").resume is None

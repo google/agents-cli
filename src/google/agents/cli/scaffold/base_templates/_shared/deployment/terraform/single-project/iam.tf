@@ -34,7 +34,7 @@ resource "google_project_iam_member" "default_compute_sa_storage_object_creator"
   member     = "serviceAccount:${data.google_project.project.number}-compute@developer.gserviceaccount.com"
   depends_on = [resource.google_project_service.services]
 }
-{%- if not cookiecutter.agent_identity_enabled %}
+{%- if not cookiecutter.agent_identity_enabled or cookiecutter.deployment_target == 'cloud_run' %}
 
 # Agent service account
 resource "google_service_account" "app_sa" {
@@ -43,6 +43,8 @@ resource "google_service_account" "app_sa" {
   project      = var.project_id
   depends_on   = [resource.google_project_service.services]
 }
+{%- endif %}
+{%- if not cookiecutter.agent_identity_enabled %}
 
 # Grant application SA the required permissions to run the application
 resource "google_project_iam_member" "app_sa_roles" {
@@ -92,3 +94,42 @@ resource "google_storage_bucket_iam_member" "agent_identity_logs_bucket" {
 }
 {%- endif %}
 {% endif %}
+{%- if cookiecutter.deployment_target == 'cloud_run' and cookiecutter.agent_identity_enabled %}
+
+# Cloud Run names a service's Agent Identity after the service, so the principal
+# is known before the service exists, and IAM accepts grants to it then.
+# Principal format: https://docs.cloud.google.com/run/docs/ai/authenticate-agents#authenticate-apis-agents-tools
+data "google_project_ancestry" "project" {
+  project = var.project_id
+
+  depends_on = [google_project_service.bootstrap]
+}
+
+locals {
+  # Projects outside an organization get a project-scoped trust domain.
+  agent_identity_trust_domain = (
+    data.google_project_ancestry.project.org_id != ""
+    ? "org-${data.google_project_ancestry.project.org_id}"
+    : "project-${data.google_project.project.number}"
+  )
+  agent_identity_principal = join("", [
+    "principal://agents.global.${local.agent_identity_trust_domain}.system.id.goog",
+    "/resources/run/projects/${data.google_project.project.number}",
+    "/locations/${var.region}/services/${var.project_name}",
+  ])
+}
+
+resource "google_project_iam_member" "agent_identity_roles" {
+  for_each = toset(var.agent_identity_roles)
+
+  project = var.project_id
+  role    = each.value
+  member  = local.agent_identity_principal
+}
+
+resource "google_storage_bucket_iam_member" "agent_identity_logs_bucket" {
+  bucket = google_storage_bucket.logs_data_bucket.name
+  role   = "roles/storage.objectAdmin"
+  member = local.agent_identity_principal
+}
+{%- endif %}

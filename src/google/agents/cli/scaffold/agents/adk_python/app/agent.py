@@ -111,7 +111,7 @@ if _project_id:
 
 app = App(
     root_agent=root_agent,
-    name="{{cookiecutter.agent_package}}",
+    name="{{cookiecutter.app_name}}",
 {%- if cookiecutter.bq_analytics %}
     plugins=_plugins,
 {%- endif %}

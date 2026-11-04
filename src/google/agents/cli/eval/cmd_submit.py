@@ -91,12 +91,18 @@ def cmd_submit(
     logging.warning("`eval submit` is experimental and may change.")
     console = Console()
 
-    client_metrics, _, _ = prepare_eval_metrics(
+    prepared = prepare_eval_metrics(
         config_path=config_path,
         metrics_str=metrics_str,
         default_metrics=["final_response_quality"],
         console=console,
     )
+    client_metrics = prepared.metrics
+    if prepared.thresholds:
+        logging.warning(
+            "`eval submit` ignores 'thresholds' in the eval config; grade with "
+            "`eval grade` or `eval run` to gate on scores."
+        )
 
     console.print(f"Loading dataset from [cyan]{dataset}[/cyan]...")
     try:

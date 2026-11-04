@@ -32,7 +32,9 @@ from google.agents.cli._project import (
     read_project_config,
     require_deployment_target,
 )
-from google.agents.cli.deploy._cloud_validation import validate_agent_runtime_deployment
+from google.agents.cli.deploy._agent_runtime_validation import (
+    validate_agent_runtime_deployment,
+)
 from google.agents.cli.deploy._utils import (
     DEFAULT_CONCURRENCY,
     DEFAULT_CPU,
@@ -89,8 +91,8 @@ _TARGET_ONLY_FLAGS: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("--agent-gateway-egress", (_AGENT_RUNTIME,), ""),
     ("--agent-gateway-ingress", (_AGENT_RUNTIME,), ""),
     ("--key", (_AGENT_RUNTIME,), ""),
-    ("--agent-identity", (_AGENT_RUNTIME,), ""),
-    ("--no-agent-identity", (_AGENT_RUNTIME,), ""),
+    ("--agent-identity", (_AGENT_RUNTIME, _CLOUD_RUN), ""),
+    ("--no-agent-identity", (_AGENT_RUNTIME, _CLOUD_RUN), ""),
     # TODO: b/555632530 - extend --update-only to Cloud Run and GKE, which have
     # the same "configuration owned by Terraform" problem but are untested for it.
     ("--update-only", (_AGENT_RUNTIME,), ""),
@@ -99,16 +101,8 @@ _TARGET_ONLY_FLAGS: tuple[tuple[str, tuple[str, ...], str], ...] = (
         (_AGENT_RUNTIME, _CLOUD_RUN),
         "On GKE, mount secrets via Kubernetes Secrets or the Secret Manager CSI driver.",
     ),
-    # Container-build flags split by target: Agent Runtime builds from the
-    # project Dockerfile (--build-args); Cloud Run / GKE take a prebuilt --image.
     ("--build-args", (_AGENT_RUNTIME,), ""),
     ("--framework", (_AGENT_RUNTIME,), "Cloud Run and GKE record no framework."),
-    (
-        "--image",
-        (_CLOUD_RUN, _GKE),
-        "Agent Runtime builds from the project Dockerfile and does not support "
-        "prebuilt images.",
-    ),
     ("--timeout", (_CLOUD_RUN,), ""),
     ("--ingress", (_CLOUD_RUN,), ""),
     ("--iap", (_CLOUD_RUN,), ""),
@@ -248,7 +242,9 @@ _TARGET_ONLY_FLAGS: tuple[tuple[str, tuple[str, ...], str], ...] = (
 @click.option(
     "--image",
     default=None,
-    help="Container image URI (Cloud Run / GKE). Skips source build.",
+    help="Prebuilt container image URI. Skips the source build. On Agent "
+    "Runtime the image must be in Artifact Registry, readable by the "
+    "Agent Runtime service agent.",
 )
 @click.option(
     "--build-args",
@@ -291,8 +287,8 @@ _TARGET_ONLY_FLAGS: tuple[tuple[str, tuple[str, ...], str], ...] = (
     "-n",
     is_flag=True,
     default=False,
-    help="Print what would be executed without running it. For Agent Runtime "
-    "and Cloud Run, also run read-only Google Cloud checks.",
+    help="Print what would be executed without running it. For Agent Runtime, "
+    "Cloud Run and GKE, also run read-only Google Cloud checks.",
 )
 @click.option(
     "--list",
@@ -508,6 +504,12 @@ def cmd_deploy(
         _parse_key_value_flags("env-vars", env_vars, removals=None, clear=False)
     )
 
+    if image and build_args:
+        raise click.UsageError(
+            "--image deploys a prebuilt image, so there is nothing to build. "
+            "Drop --build-args, or drop --image to build from the Dockerfile."
+        )
+
     # Prompt only once every flag is known to be valid, so a bad flag never
     # costs the user a confirmation.
     if not project_explicitly_passed and not no_confirm_project:
@@ -535,6 +537,8 @@ def cmd_deploy(
                 agent_gateway_ingress=agent_gateway_ingress,
                 kms_key=key,
                 label_changes=label_changes,
+                agent_card_sync=cfg.is_a2a,
+                image=image,
             )
             report.raise_if_failed()
             return
@@ -554,6 +558,7 @@ def cmd_deploy(
             agent_gateway_egress=agent_gateway_egress,
             agent_gateway_ingress=agent_gateway_ingress,
             build_args=build_args,
+            image=image,
             port=port,
             framework=framework,
             cpu=shape.cpu,
@@ -566,6 +571,7 @@ def cmd_deploy(
 
     elif cfg.deployment_target == _CLOUD_RUN:
         deploy_cloud_run(
+            cfg=cfg,
             project=project,
             region=region,
             service_name=service_name,
@@ -576,6 +582,7 @@ def cmd_deploy(
             port=port,
             iap=iap,
             service_account=service_account,
+            agent_identity=agent_identity,
             env_var_changes=env_var_changes,
             secret_changes=secret_changes,
             label_changes=label_changes,

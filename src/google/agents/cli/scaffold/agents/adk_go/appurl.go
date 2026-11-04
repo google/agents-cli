@@ -17,6 +17,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 // resolveAppURL returns the base URL advertised in the A2A agent card (and used
@@ -26,8 +27,8 @@ import (
 //  1. APP_URL — injected by the deployment (Cloud Run and GKE set it).
 //  2. Otherwise, when the Agent Runtime env is present, self-derive the
 //     public reasoning-engine HTTP passthrough URL.
-//  3. Otherwise, a localhost URL for local development.
-func resolveAppURL() string {
+//  3. Otherwise, localhost on the web launcher's --port, for local development.
+func resolveAppURL(args []string) string {
 	if url := os.Getenv("APP_URL"); url != "" {
 		return url
 	}
@@ -43,5 +44,20 @@ func resolveAppURL() string {
 		)
 	}
 
-	return "http://localhost:8000"
+	return "http://localhost:" + webPort(args)
+}
+
+// webPort returns the --port value passed to the web launcher, or 8080 (ADK's default) when none is given
+func webPort(args []string) string {
+	for i, arg := range args {
+		for _, name := range []string{"-port", "--port"} {
+			if arg == name && i+1 < len(args) {
+				return args[i+1]
+			}
+			if port, ok := strings.CutPrefix(arg, name+"="); ok {
+				return port
+			}
+		}
+	}
+	return "8080"
 }

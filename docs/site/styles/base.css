@@ -1,0 +1,208 @@
+/* Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/* Shared tokens and site chrome. The homepage and the lifecycle widgets reuse the tokens in :root. */
+:root {
+  /* Material 3 / Google Cloud palette. Green means a production check passed; keep it for that. */
+  --page: #ffffff;
+  --ink: #1f1f1f;
+  --ink-2: #444746;
+  --ink-3: #5e5e5e;
+  --rule: #dfe3e7;
+  --surface: #f0f4f9;
+  --surface-2: #f8fafd;
+  --island: #1e1f20;
+  --island-2: #282a2c;
+  --island-ink: #e3e3e3;
+  --blue: #0b57d0;
+  --green: #146c2e;
+  --yellow: #f9ab00;
+  --red: #b3261e;
+  --blue-ink: #0b57d0;
+  --accent: #0b57d0;
+  --accent-on-dark: #a8c7fa;
+  --pass: #146c2e;
+  --pass-surface: #e6f4ea;
+  --code-foreground: #1f1f1f;
+  --code-background: #f0f4f9;
+  /* two tones like the homepage code window; these resolve per theme because data-theme sits on <html> */
+  --code-token-keyword: var(--accent);
+  --code-token-string: var(--ink-2);
+  --code-token-string-expression: var(--ink-2);
+  --code-token-comment: var(--ink-3);
+  --code-token-constant: var(--ink);
+  --code-token-function: var(--ink);
+  --code-token-parameter: var(--ink);
+  --code-token-punctuation: var(--ink);
+  --code-token-link: var(--accent);
+  --sans: 'Google Sans Flex', 'Google Sans', system-ui, sans-serif;
+  --code: 'Google Sans Code', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --header-h: 60px;
+  --wrap: 1480px;
+  --gutter: clamp(20px, 4vw, 56px);
+  color-scheme: light;
+}
+[data-theme='dark'] {
+  --page: #131314;
+  --ink: #e3e3e3;
+  --ink-2: #c4c7c5;
+  --ink-3: #a8abad;
+  --rule: #3c4043;
+  --surface: #1e1f20;
+  --surface-2: #18191a;
+  /* the dark band must stand apart from the #131314 page */
+  --island: #282a2c;
+  --island-2: #333537;
+  --blue: #a8c7fa;
+  --green: #6dd58c;
+  --yellow: #fdd663;
+  --red: #f2b8b5;
+  --blue-ink: #a8c7fa;
+  --accent: #a8c7fa;
+  --pass: #6dd58c;
+  --pass-surface: #0f2e1a;
+  --code-foreground: #e3e3e3;
+  --code-background: #1e1f20;
+  color-scheme: dark;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; scroll-padding-top: calc(var(--header-h) + 24px); }
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 17px;
+  line-height: 1.6;
+  font-optical-sizing: auto;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; }
+img { max-width: 100%; height: auto; }
+code, pre, kbd { font-family: var(--code); }
+:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 2px; }
+.wrap { max-width: var(--wrap); margin: 0 auto; padding: 0 var(--gutter); }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.skip-link:focus { position: fixed; z-index: 1000; top: 8px; left: 8px; width: auto; height: auto; margin: 0; padding: 8px 14px; overflow: visible; clip: auto; background: var(--page); color: var(--ink); border: 1px solid var(--rule); border-radius: 8px; font-size: 14px; }
+
+/* ---------- header: white, one hairline; the current section sits on the hairline ---------- */
+.site-header {
+  position: sticky; top: 0; z-index: 50;
+  height: var(--header-h);
+  background: var(--page);
+  border-bottom: 1px solid var(--rule);
+}
+.site-header .wrap { height: 100%; display: flex; align-items: center; gap: 40px; }
+/* the wordmark is the command name, so it is set in the code face */
+.brand { display: flex; align-items: center; gap: 10px; text-decoration: none; font: 500 17px/1 var(--code); letter-spacing: -0.02em; color: var(--ink); white-space: nowrap; }
+.brand { flex: none; }
+.brand svg, .brand .logo { display: block; }
+/* section tabs read as paths, matching the code-face wordmark */
+.nav-main { display: flex; gap: 24px; align-items: stretch; align-self: stretch; }
+.nav-main a { display: flex; align-items: center; position: relative; text-decoration: none; font: 450 15px/1 var(--code); letter-spacing: -0.01em; color: var(--ink-2); white-space: nowrap; }
+.nav-main .slug { color: var(--ink-3); margin-right: 1px; }
+.nav-main a:hover { color: var(--ink); }
+.nav-main a[aria-current] { color: var(--ink); font-weight: 550; }
+.nav-main a[aria-current] .slug { color: var(--accent); }
+.nav-main a[aria-current]::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--ink); }
+.header-tools { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+.search-btn {
+  display: flex; align-items: center; gap: 10px;
+  height: 36px; padding: 0 8px 0 12px; min-width: 232px; margin-right: 8px;
+  border: 1px solid transparent; border-radius: 8px; background: var(--surface);
+  color: var(--ink-3); font: inherit; font-size: 14px; cursor: pointer;
+}
+.search-btn kbd { margin-left: auto; font: 12px/20px var(--sans); color: var(--ink-3); background: var(--page); border-radius: 4px; padding: 0 6px; }
+.icon-btn {
+  height: 36px; min-width: 36px; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--ink-2);
+  font: inherit; font-size: 14px; cursor: pointer; text-decoration: none; padding: 0 9px;
+}
+.icon-btn:hover { color: var(--ink); background: var(--surface); }
+.search-btn:hover { border-color: var(--rule); color: var(--ink-2); }
+.menu-btn { display: none; }
+/* between tablet and desktop the tabs need the room: the GitHub label and wide gaps go first */
+@media (max-width: 1180px) {
+  .site-header .wrap { gap: 28px; }
+  .nav-main { gap: 16px; }
+  .gh-link span { display: none; }
+}
+@media (max-width: 1080px) {
+  .search-btn { min-width: 0; margin-right: 0; background: transparent; }
+  .search-btn span, .search-btn kbd { display: none; }
+}
+@media (max-width: 860px) {
+  .nav-main { display: none; }
+  .gh-link span { display: none; }
+  .menu-btn { display: inline-flex; }
+  body.nav-open .nav-main { display: flex; flex-direction: column; align-items: stretch; gap: 0; position: fixed; top: var(--header-h); left: 0; right: 0; background: var(--page); padding: 8px var(--gutter) 16px; border-bottom: 1px solid var(--rule); }
+  body.nav-open .nav-main a { padding: 10px 0; }
+  body.nav-open .nav-main a[aria-current]::after { display: none; }
+}
+
+/* ---------- buttons ---------- */
+.btn {
+  display: inline-flex; align-items: center; gap: 10px; height: 48px; padding: 0 22px;
+  border-radius: 999px; font: inherit; font-size: 16px; font-weight: 500; text-decoration: none; cursor: pointer;
+  border: 1px solid var(--ink); background: var(--ink); color: var(--page);
+}
+.btn:hover { background: color-mix(in srgb, var(--ink) 85%, var(--page)); }
+.btn.ghost { background: transparent; color: var(--ink); border-color: var(--rule); }
+.btn.ghost:hover { border-color: var(--ink); }
+
+/* ---------- footer ---------- */
+.site-footer { border-top: 1px solid var(--rule); margin-top: 120px; padding: 48px 0 64px; font-size: 14px; line-height: 1.5; color: var(--ink-2); }
+.site-footer .cols { display: grid; grid-template-columns: 2fr repeat(3, 1fr); gap: 32px; }
+.site-footer .brand { font-size: 15px; }
+.site-footer .cols > div:first-child p { margin: 14px 0 0; max-width: 34ch; color: var(--ink-3); }
+.site-footer h3 { font-size: 14px; font-weight: 600; color: var(--ink); margin: 0 0 12px; }
+.site-footer ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.site-footer a { text-decoration: none; }
+.site-footer ul a:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+@media (max-width: 760px) { .site-footer .cols { grid-template-columns: 1fr 1fr; row-gap: 36px; } .site-footer .cols > div:first-child { grid-column: 1 / -1; } }
+
+/* ---------- 404 ---------- */
+.not-found { padding-block: clamp(64px, 12vh, 140px); }
+.not-found h1 { margin: 0 0 16px; font-size: clamp(40px, 5vw, 64px); line-height: 1; letter-spacing: -0.03em; font-weight: 520; font-variation-settings: 'opsz' 144, 'wdth' 84; }
+.not-found p { margin: 0; max-width: 52ch; font-size: 17px; color: var(--ink-2); }
+.not-found a { color: var(--accent); text-underline-offset: 3px; }
+
+/* ---------- search modal ---------- */
+.search-modal { position: fixed; inset: 0; z-index: 100; display: none; background: rgb(32 33 36 / 0.45); padding: 10vh var(--gutter); }
+.search-modal.open { display: block; }
+.search-panel { max-width: 720px; margin: 0 auto; background: var(--page); border-radius: 14px; padding: 16px; max-height: 76vh; overflow: auto; box-shadow: 0 24px 80px rgb(0 0 0 / 0.3); }
+.search-panel .pagefind-ui { --pagefind-ui-font: var(--sans); --pagefind-ui-primary: var(--blue); --pagefind-ui-text: var(--ink); --pagefind-ui-background: var(--page); --pagefind-ui-border: var(--rule); --pagefind-ui-tag: var(--surface); --pagefind-ui-border-radius: 8px; }
+.search-panel .search-missing { color: var(--ink-2); font-size: 15px; }
+
+/* ---------- code ---------- */
+pre.shiki, .code-island {
+  background: var(--code-background) !important; color: var(--code-foreground);
+  border-radius: 10px; padding: 16px 20px; overflow-x: auto;
+  font-size: 14px; line-height: 1.65; margin: 24px 0;
+}
+pre.shiki code { font-family: var(--code); }
+.code-wrap { position: relative; }
+.copy-code {
+  position: absolute; top: 8px; right: 8px; opacity: 0; transition: opacity .15s;
+  background: var(--page); color: var(--ink-2); border: 0; border-radius: 6px;
+  font: 500 12.5px var(--sans); padding: 5px 10px; cursor: pointer;
+}
+.copy-code:hover { color: var(--ink); }
+.code-wrap:hover .copy-code, .copy-code:focus-visible { opacity: 1; }
+@media (hover: none) { .copy-code { opacity: 1; } }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }

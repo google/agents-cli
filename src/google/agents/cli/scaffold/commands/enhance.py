@@ -23,6 +23,7 @@ import tomllib
 from typing import Any
 
 import click
+from click.core import ParameterSource
 from packaging import version as pkg_version
 from rich.prompt import IntPrompt, Prompt
 
@@ -778,7 +779,8 @@ def _run_smart_merge(
                 # that so later runs don't replay (and re-warn about) the ignored value.
                 metadata_updates["session_type"] = "in_memory"
             stale_keys = _stale_manifest_keys_for_target(cli_overrides, project_config)
-        if not (metadata_updates or stale_keys or migrated_base_template):
+        region = metadata_updates.pop("region", None)
+        if not (metadata_updates or stale_keys or migrated_base_template or region):
             return
         if update_acli_metadata(
             proj_dir,
@@ -786,6 +788,7 @@ def _run_smart_merge(
             acli_version=get_current_version() if stamp_version else None,
             remove_keys=stale_keys or None,
             base_template=migrated_base_template,
+            region=region,
         ):
             console.print("Recorded changes to agents-cli-manifest.yaml.")
 
@@ -882,6 +885,7 @@ def enhance(
     bq_analytics: bool = False,
     agent_gateway: bool | None = None,
     agent_runtime_identity_default: str | None = None,
+    cloud_run_identity_default: str | None = None,
     agent_guidance_filename: str = "GEMINI.md",
 ) -> None:
     """Enhance your existing project with deployment, CI/CD, or RAG scaffolding.
@@ -937,6 +941,11 @@ def enhance(
         cli_override_args["agent_runtime_identity_default"] = (
             agent_runtime_identity_default
         )
+    # --region has a default, so only an explicit one may override the recorded region.
+    if ctx.get_parameter_source("region") == ParameterSource.COMMANDLINE:
+        cli_override_args["region"] = region
+    if cloud_run_identity_default:
+        cli_override_args["cloud_run_identity_default"] = cloud_run_identity_default
 
     # Smart-merge is the default when saved config exists (unless --force).
     # Skip if running in subprocess with saved config (subprocess re-execution
@@ -1305,23 +1314,19 @@ def enhance(
             )
             console.print()
             console.print(
-                f"📁 [bold]Expected Structure:[/bold] [cyan]/{final_agent_directory}[/cyan] folder containing your agent code"
-            )
-            console.print(f"📍 [bold]Current Directory:[/bold] {current_dir}")
-            console.print(
-                f"❌ [bold red]Missing:[/bold red] /{final_agent_directory} folder"
+                f"❌ [bold red]Missing:[/bold red] agent directory [cyan]{final_agent_directory}/[/cyan] not found in {current_dir}"
             )
             console.print()
             console.print(
                 f"The enhance command can still proceed, but for best compatibility"
-                f" your agent code should be organized in a /{final_agent_directory} folder structure."
+                f" your agent code should live in {final_agent_directory}/."
             )
             console.print()
 
             # Ask for confirmation after showing the structure warning
             console.print("💡 Options:")
             console.print(
-                f"   • Create a /{final_agent_directory} folder and move your agent code there"
+                f"   • Create {final_agent_directory}/ and move your agent code there"
             )
             if final_agent_directory == "app":
                 console.print(
@@ -1335,7 +1340,7 @@ def enhance(
 
             if interactive:
                 if not click.confirm(
-                    f"Continue with enhancement despite missing /{final_agent_directory} folder?",
+                    f"Continue with enhancement despite missing {final_agent_directory}/?",
                     default=True,
                 ):
                     console.print("✋ [yellow]Enhancement cancelled.[/yellow]")
@@ -1433,6 +1438,7 @@ def enhance(
             "session_type": session_type,
             "agent_gateway": agent_gateway,
             "agent_runtime_identity_default": agent_runtime_identity_default,
+            "cloud_run_identity_default": cloud_run_identity_default,
         },
     )
 
@@ -1479,6 +1485,7 @@ def enhance(
         agent_runtime_identity_default=effective_create_params[
             "agent_runtime_identity_default"
         ],
+        cloud_run_identity_default=effective_create_params["cloud_run_identity_default"],
         agent_guidance_filename=agent_guidance_filename,
     )
 

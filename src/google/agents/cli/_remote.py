@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""URL classification + auth headers for talking to remote agents.
+"""URL classification, auth headers and agent card reads for talking to remote agents.
 
 Transport-neutral so all callers (ADK, A2A, Agent Runtime) agree on
 how a ``--url`` is classified and what auth token it gets.
@@ -20,15 +20,23 @@ how a ``--url`` is classified and what auth token it gets.
 
 from __future__ import annotations
 
+import copy
 import ipaddress
 import logging
 import re
-from typing import NamedTuple
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, NamedTuple
 from urllib.parse import urlparse, urlsplit, urlunsplit
 
 import click
+import requests
+from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
 
 from google.agents.cli.auth import get_access_token, get_id_token
+
+if TYPE_CHECKING:
+    from a2a.types import AgentCard
 
 _AGENT_ENGINE_URL_FRAGMENT = "aiplatform.googleapis.com"
 _REASONING_ENGINE_PATH = "reasoningEngines"
@@ -38,6 +46,18 @@ _AGENT_RUNTIME_HOST_RE = re.compile(rf".+-{re.escape(_AGENT_ENGINE_URL_FRAGMENT)
 # WebSocket traffic has its own ingress; HTTP goes through reasoningEngines/v1.
 # https://github.com/GoogleCloudPlatform/generative-ai/blob/main/agents/agent_engine/tutorial_bidi_stream_v2.ipynb
 _AGENT_RUNTIME_WS_INGRESS = "reasoningEngines/ws/internal"
+
+
+@dataclass(frozen=True)
+class FetchedAgentCard:
+    """An agent card as served (``raw``) and converted to the A2A 1.0 layout by a2a-sdk (``card``).
+
+    The 1.0 layout has no top-level 0.3 fields such as ``url`` (a 0.3 card's ``url``
+    moves into ``supported_interfaces``), so use ``raw`` to keep the card as served.
+    """
+
+    raw: dict[str, Any]
+    card: AgentCard
 
 
 def is_agent_runtime_url(url: str) -> bool:
@@ -84,6 +104,13 @@ def build_agent_runtime_passthrough_url(location: str, runtime_resource: str) ->
         f"https://{location}-aiplatform.googleapis.com/reasoningEngines/v1/"
         f"{runtime_resource}/api"
     )
+
+
+def build_agent_runtime_card_url(
+    location: str, runtime_resource: str, a2a_path: str
+) -> str:
+    passthrough_url = build_agent_runtime_passthrough_url(location, runtime_resource)
+    return f"{passthrough_url}{a2a_path}{AGENT_CARD_WELL_KNOWN_PATH}"
 
 
 class AgentEndpoints(NamedTuple):
@@ -155,20 +182,19 @@ def build_remote_headers(
     Auto-detects Google Cloud credentials unless the caller supplies
     an ``Authorization`` header via ``--header``.
 
-    Uses an **access token** for Gemini platform / Agent Runtime URLs and an
-    **identity token** (with the service URL as audience) for everything
-    else (Cloud Run, GKE, etc.). Loopback URLs (the local dev server) get
-    no token.
+    Uses an access token for ``*.googleapis.com`` hosts, an identity token
+    with the URL's origin as audience for other hosts, and no token for
+    loopback URLs.
     """
     headers: dict[str, str] = {"Content-Type": "application/json"}
     parsed = dict(_parse_header(h) for h in custom_headers)
 
     if "Authorization" not in parsed and not _is_loopback_url(url):
         try:
-            if is_agent_runtime_url(url):
+            parsed_url = urlparse(url)
+            if (parsed_url.hostname or "").endswith(".googleapis.com"):
                 token = get_access_token()
             else:
-                parsed_url = urlparse(url)
                 audience = f"{parsed_url.scheme}://{parsed_url.netloc}"
                 token = get_id_token(audience)
             headers["Authorization"] = f"Bearer {token}"
@@ -190,3 +216,34 @@ def _is_loopback_url(url: str) -> bool:
         return False
     # 0.0.0.0 / :: is what local servers print as their bind address.
     return ip.is_loopback or ip.is_unspecified
+
+
+def fetch_agent_card(
+    url: str, headers: Mapping[str, str], *, timeout: float
+) -> FetchedAgentCard:
+    """Raises ``requests.RequestException`` on a failed request, ``ValueError`` on a body that isn't an agent card."""
+    # Deferred: a2a.client takes about 0.5s to import.
+    from a2a.client.card_resolver import parse_agent_card
+    from google.protobuf.json_format import ParseError
+
+    response = requests.get(url, headers=headers, timeout=timeout)
+    if not response.ok:
+        raise requests.HTTPError(f"HTTP {response.status_code}", response=response)
+    raw = response.json()
+    if not isinstance(raw, dict):
+        raise ValueError("the response is not a JSON object")
+    try:
+        # parse_agent_card rewrites legacy fields in its argument. Before a2a-sdk
+        # 1.2.3, it raises AttributeError/TypeError on malformed ones.
+        card = parse_agent_card(copy.deepcopy(raw))
+    except (ParseError, AttributeError, TypeError) as exc:
+        raise ValueError(f"the response is not a valid agent card: {exc}") from exc
+    return FetchedAgentCard(raw=raw, card=card)
+
+
+def is_transient_request_error(exc: Exception) -> bool:
+    if isinstance(exc, (requests.ConnectionError, requests.Timeout)):
+        return True
+    if isinstance(exc, requests.HTTPError) and exc.response is not None:
+        return exc.response.status_code == 429 or exc.response.status_code >= 500
+    return False

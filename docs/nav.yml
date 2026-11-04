@@ -1,0 +1,50 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Docs navigation, read by scripts/convert-docs.mjs. Same structure as the
+# old MkDocs nav. A group's "Overview" entry becomes the group's own page.
+nav:
+  - Guide:
+    - Overview:
+      - Getting started: guide/getting-started.md
+      - The lifecycle: guide/lifecycle.md
+      - "Tutorial: Build your first agent": guide/quickstart-tutorial.md
+      - "Tutorial: Manual workflow": guide/hands-on-tutorial.md
+      - Use cases: guide/use-cases.md
+      - Authentication: guide/authentication.md
+    - Development:
+      - Development guide: guide/development.md
+      - Project structure: guide/project-structure.md
+      - Control cost: guide/cost.md
+    - Extensions:
+      - Overview: guide/extensions/index.md
+      - Using extensions: guide/extensions/using.md
+      - Authoring extensions: guide/extensions/authoring.md
+      - First-party frameworks: guide/extensions/first-party.md
+    - Evaluation:
+      - Evaluation guide: guide/evaluation.md
+      - Debug a failing agent: guide/debugging.md
+    - Deployment and operations:
+      - Deployment: guide/deployment.md
+      - CI/CD and production: guide/cicd.md
+      - Observability:
+        - Overview: guide/observability/index.md
+        - Cloud Trace: guide/observability/cloud-trace.md
+        - BigQuery Agent Analytics: guide/observability/bq-agent-analytics.md
+  - Reference:
+    - CLI: cli/index.md
+    - Skills: reference/skills.md
+    - Security and trust: guide/security.md
+    - About this project: reference/about.md
+    - Migrate eval datasets: reference/eval-dataset-migration.md

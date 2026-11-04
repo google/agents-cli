@@ -25,11 +25,10 @@ from google.agents.cli._output import Console
 from google.agents.cli._project import find_project_root
 from google.agents.cli.eval import _paths
 from google.agents.cli.eval.cmd_generate import (
-    _DEFAULT_APP_NAME,
     _DEFAULT_CONCURRENCY,
     cmd_generate,
 )
-from google.agents.cli.eval.cmd_grade import cmd_grade, qps_option
+from google.agents.cli.eval.cmd_grade import cmd_grade, fail_under_option, qps_option
 
 
 @click.command("run")
@@ -105,9 +104,10 @@ from google.agents.cli.eval.cmd_grade import cmd_grade, qps_option
 )
 @click.option(
     "--app-name",
-    default=_DEFAULT_APP_NAME,
+    default=None,
     help=(
-        "Agent app name to use in the ADK URL path. Defaults to 'app'. "
+        "Agent app name to use in the ADK URL path. Defaults to the project's "
+        "app name. "
         "Forwarded to `eval generate`."
     ),
 )
@@ -128,6 +128,7 @@ from google.agents.cli.eval.cmd_grade import cmd_grade, qps_option
     ),
 )
 @qps_option
+@fail_under_option
 def cmd_run(
     *,
     dataset: str | None,
@@ -138,10 +139,11 @@ def cmd_run(
     region: str | None,
     url: str | None,
     mode: str,
-    app_name: str,
+    app_name: str | None,
     concurrency: int,
     custom_headers: tuple[str, ...],
     qps: float,
+    fail_under: tuple[str, ...],
 ):
     """Chain `eval generate` and `eval grade` in one command.
 
@@ -197,7 +199,7 @@ def cmd_run(
         ]
         if url:
             argv += ["--url", url]
-        if app_name != _DEFAULT_APP_NAME:
+        if app_name:
             argv += ["--app-name", app_name]
         if concurrency != _DEFAULT_CONCURRENCY:
             argv += ["--concurrency", str(concurrency)]
@@ -226,4 +228,5 @@ def cmd_run(
         project=project,
         region=region,
         qps=qps,
+        fail_under=fail_under,
     )

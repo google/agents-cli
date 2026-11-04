@@ -387,6 +387,7 @@ AGENT_DIR_VALIDATORS: dict[str, Callable[[str], None] | None] = {
     "go": _validate_go_agent_dir,
     "java": None,
     "typescript": None,
+    "kotlin": None,
 }
 
 
@@ -465,6 +466,9 @@ DEPLOYMENT_TARGETS = {
 }
 
 
+_JAVA_PACKAGE_PREFIX = "com.example"
+
+
 def generate_java_package_vars(project_name: str) -> dict[str, str]:
     """Generate Java package variables from project name.
 
@@ -482,15 +486,12 @@ def generate_java_package_vars(project_name: str) -> dict[str, str]:
     if sanitized and sanitized[0].isdigit():
         sanitized = "_" + sanitized
 
-    # Package name is just the sanitized project name
-    java_package = sanitized
-
-    # Package path is the same (single-level package)
-    java_package_path = sanitized
+    # Maven convention: a reverse-domain package, as in the ADK Java examples.
+    java_package = f"{_JAVA_PACKAGE_PREFIX}.{sanitized}"
 
     return {
         "java_package": java_package,
-        "java_package_path": java_package_path,
+        "java_package_path": java_package.replace(".", "/"),
     }
 
 
@@ -636,7 +637,7 @@ def get_agent_language(
         remote_config: Optional remote template configuration
 
     Returns:
-        A LANGUAGE_CONFIGS key, defaults to 'python'
+        The template's ``settings.language``, or 'python' if it sets none.
     """
     if remote_config:
         config = remote_config
@@ -649,13 +650,7 @@ def get_agent_language(
     if not config:
         return "python"
 
-    language = config.get("settings", {}).get("language", "python")
-    if language not in LANGUAGE_CONFIGS:
-        logging.warning(
-            f"Unsupported language '{language}' for agent {agent_name}, defaulting to python"
-        )
-        return "python"
-    return language
+    return (config.get("settings") or {}).get("language") or "python"
 
 
 def get_deployment_targets(
@@ -881,13 +876,14 @@ def _extract_agent_garden_labels(
 
 
 def _inject_app_object_if_missing(
-    agent_py_path: pathlib.Path, agent_directory: str, console: Console
+    agent_py_path: pathlib.Path, agent_directory: str, app_name: str, console: Console
 ) -> None:
     """Inject app object into agent.py if missing (backward compatibility for ADK).
 
     Args:
         agent_py_path: Path to the agent.py file
         agent_directory: Name of the agent directory for logging
+        app_name: Name to give the injected App
         console: Rich console for user feedback
     """
     try:
@@ -917,10 +913,7 @@ def _inject_app_object_if_missing(
             content = content.rstrip()
             if "from google.adk.apps import App" not in content:
                 content += "\n\nfrom google.adk.apps import App\n"
-            content += (
-                "\napp = App(root_agent=root_agent, "
-                f'name="{agent_package_name(agent_directory)}")\n'
-            )
+            content += f'\napp = App(root_agent=root_agent, name="{app_name}")\n'
 
             # Write the modified content back
             agent_py_path.write_text(content, encoding="utf-8")
@@ -974,6 +967,7 @@ def _render_overlay_files(
 def _generate_yaml_agent_shim(
     agent_py_path: pathlib.Path,
     agent_directory: str,
+    app_name: str,
     console: Console,
     force: bool = False,
 ) -> None:
@@ -986,6 +980,7 @@ def _generate_yaml_agent_shim(
     Args:
         agent_py_path: Path where agent.py should be created/updated
         agent_directory: Name of the agent directory for logging
+        app_name: Name to give the App
         console: Rich console for user feedback
         force: If True, overwrite existing agent.py even if it has root_agent defined.
                Used when the user explicitly has a root_agent.yaml.
@@ -1025,7 +1020,7 @@ from google.adk.apps import App
 
 _AGENT_DIR = Path(__file__).parent
 root_agent = config_agent_utils.from_config(str(_AGENT_DIR / "root_agent.yaml"))
-app = App(root_agent=root_agent, name="{agent_package_name(agent_directory)}")
+app = App(root_agent=root_agent, name="{app_name}")
 '''
 
     try:
@@ -1228,8 +1223,10 @@ def process_template(
     bq_analytics: bool = False,
     agent_gateway: bool = False,
     agent_runtime_identity_default: str = SERVICE_ACCOUNT,
+    cloud_run_identity_default: str = SERVICE_ACCOUNT,
     agent_guidance_filename: str = "GEMINI.md",
     root_agent_name: str = "",
+    app_name: str = "",
 ) -> list[pathlib.Path] | None:
     """Process the template directory and create a new project.
 
@@ -1640,6 +1637,14 @@ def process_template(
                 ),
                 "agent_directory": agent_directory,
                 "agent_package": agent_package_name(agent_directory),
+                # A JVM agent directory is a source root, not a package, so its
+                # basename is no app name.
+                "app_name": app_name
+                or (
+                    "app"
+                    if lang_config["jvm_package_layout"]
+                    else agent_package_name(agent_directory)
+                ),
                 "agent_garden": agent_garden,
                 "agent_sample_id": agent_sample_id or "",
                 "agent_sample_publisher": agent_sample_publisher or "",
@@ -1650,9 +1655,11 @@ def process_template(
                 "bq_analytics": bq_analytics,
                 "agent_gateway": agent_gateway,
                 "agent_runtime_identity_default": agent_runtime_identity_default,
+                "cloud_run_identity_default": cloud_run_identity_default,
                 "agent_identity_enabled": _agent_identity_enabled(
                     deployment_target,
                     agent_runtime_identity_default=agent_runtime_identity_default,
+                    cloud_run_identity_default=cloud_run_identity_default,
                 ),
                 "wheel_gcs_uri": os.environ.get("WHEEL_GCS_URI", ""),
                 "agents_cli_version_pin": agents_cli_version_pin(),
@@ -1785,10 +1792,18 @@ def process_template(
                 # the empty base does not depend on.
                 if "adk" in tags:
                     if root_agent_yaml.exists():
-                        _generate_yaml_agent_shim(agent_py_path, agent_directory, console)
+                        _generate_yaml_agent_shim(
+                            agent_py_path,
+                            agent_directory,
+                            cookiecutter_config["app_name"],
+                            console,
+                        )
                     elif agent_py_path.exists():
                         _inject_app_object_if_missing(
-                            agent_py_path, agent_directory, console
+                            agent_py_path,
+                            agent_directory,
+                            cookiecutter_config["app_name"],
+                            console,
                         )
 
             # Move the generated project to the final destination
@@ -1903,7 +1918,11 @@ def process_template(
                 )
                 if final_root_agent_yaml.exists():
                     _generate_yaml_agent_shim(
-                        final_agent_py_path, agent_directory, console, force=True
+                        final_agent_py_path,
+                        agent_directory,
+                        cookiecutter_config["app_name"],
+                        console,
+                        force=True,
                     )
 
             if not keep_existing_files:
@@ -2008,10 +2027,14 @@ def _rename_package(project_dir: pathlib.Path, project_name: str) -> None:
 
 
 def _agent_identity_enabled(
-    deployment_target: str | None, *, agent_runtime_identity_default: str
+    deployment_target: str | None,
+    *,
+    agent_runtime_identity_default: str,
+    cloud_run_identity_default: str,
 ) -> bool:
     """Whether the deployed agent runs as its own Agent Identity principal."""
-    return (
-        deployment_target == "agent_runtime"
-        and agent_runtime_identity_default == AGENT_IDENTITY
-    )
+    defaults = {
+        "agent_runtime": agent_runtime_identity_default,
+        "cloud_run": cloud_run_identity_default,
+    }
+    return defaults.get(deployment_target or "") == AGENT_IDENTITY

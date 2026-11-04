@@ -18,7 +18,7 @@ resource "google_service_account" "cicd_runner_sa" {
   project      = var.cicd_runner_project_id
   depends_on   = [resource.google_project_service.cicd_services, resource.google_project_service.deploy_project_services]
 }
-{%- if not cookiecutter.agent_identity_enabled %}
+{%- if not cookiecutter.agent_identity_enabled or cookiecutter.deployment_target == 'cloud_run' %}
 # Agent service account
 resource "google_service_account" "app_sa" {
   for_each = local.deploy_project_ids

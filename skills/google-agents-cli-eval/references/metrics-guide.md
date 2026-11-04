@@ -87,6 +87,8 @@ custom_metrics:
 
 Metrics receive the eval case's `{prompt}`, `{response}`, and `{agent_data}` (and `{reference}` / `{context}` when the case populates them) — see SKILL.md's *Evaluation Configuration Schema → Agent trace field model* for details.
 
+To make a custom metric gate the run, add it to the top-level `thresholds` map with a minimum mean score in the metric's own scale (e.g. `project_response_rubric: 4` for the 1-5 judge above). Only metrics with a threshold can fail on score, and a count like `agent_turn_count` usually shouldn't have one.
+
 ### Schema reference
 
 Each entry in `custom_metrics` must conform to one of two Gemini platform evaluation metric schemas. `custom_function` or `custom_function_file` selects the code-based schema (in-process by default, `CodeExecutionMetric` with `execution: remote`); otherwise it's `LLMMetric`. An entry that carries neither, and whose `name` is a built-in metric, is a *managed metric parameterization* instead (see below).

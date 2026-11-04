@@ -1,0 +1,93 @@
+---
+// Copyright 2026 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+import '../styles/base.css';
+import Logo from '../components/Logo.astro';
+import { withBase, tabs } from '../lib/docs';
+
+interface Props { title: string; description?: string; active?: string; bodyClass?: string }
+const { title, description = 'The CLI and skills that walk your coding agent through building, evaluating, and deploying AI agents on Google Cloud.', active = '', bodyClass = '' } = Astro.props;
+const repo = 'https://github.com/google/agents-cli';
+const canonical = new URL(Astro.url.pathname, Astro.site).href;
+const ogImage = new URL(withBase('/assets/logo_sm.png'), Astro.site).href;
+---
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{title}</title>
+  <meta name="description" content={description} />
+  <link rel="canonical" href={canonical} />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content={title} />
+  <meta property="og:description" content={description} />
+  <meta property="og:url" content={canonical} />
+  <meta property="og:image" content={ogImage} />
+  <meta name="twitter:card" content="summary" />
+  <link rel="icon" href={withBase('/assets/logo_sm.png')} type="image/png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Google+Sans+Code:wght@400;500&family=Google+Sans+Flex:opsz,wdth,wght@6..144,75..100,300..800&display=swap" rel="stylesheet" />
+  <link rel="alternate" type="text/plain" href={withBase('/llms.txt')} title="llms.txt" />
+  <link rel="sitemap" href={withBase('/sitemap.xml')} />
+  <script is:inline>
+    (function () {
+      // A saved choice wins; otherwise follow the system setting.
+      var t = localStorage.getItem('agents-cli-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : '');
+      if (t) document.documentElement.dataset.theme = t;
+    })();
+  </script>
+  <slot name="head" />
+</head>
+<body class={bodyClass}>
+  <a class="sr-only skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href={withBase('/')}><Logo size={24} />agents-cli</a>
+      <nav class="nav-main" aria-label="Main">
+        {tabs.map((t) => <a href={withBase(t.href)} aria-current={active === t.label ? 'page' : undefined}><span class="slug" aria-hidden="true">/</span>{t.label}</a>)}
+      </nav>
+      <div class="header-tools">
+        <button class="search-btn" data-search-open aria-label="Search docs"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span>Search docs</span><kbd>⌘K</kbd></button>
+        <button class="icon-btn" data-theme-toggle aria-label="Dark mode" aria-pressed="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
+        <a class="icon-btn gh-link" href={repo} aria-label="Agents CLI on GitHub"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-6 0-1.2.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.7 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.1 0 4.7-2.8 5.7-5.5 6 .4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .5z"/></svg><span>GitHub</span></a>
+        <button class="icon-btn menu-btn" data-menu aria-label="Open menu" aria-expanded="false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main"><slot /></main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <div class="cols">
+        <div><a class="brand" href={withBase('/')}><Logo size={20} />agents-cli</a><p>A CLI and a set of skills for building, evaluating, and deploying agents on Google Cloud. Open source under Apache 2.0.</p></div>
+        <div><h3>Guide</h3><ul><li><a href={withBase('/guide/getting-started/')}>Getting started</a></li><li><a href={withBase('/guide/lifecycle/')}>The lifecycle</a></li><li><a href={withBase('/guide/evaluation/')}>Evaluation</a></li><li><a href={withBase('/guide/deployment/')}>Deployment</a></li><li><a href={withBase('/guide/observability/')}>Observability</a></li></ul></div>
+        <div><h3>Reference</h3><ul><li><a href={withBase('/cli/')}>CLI</a></li><li><a href={withBase('/reference/skills/')}>Skills</a></li></ul></div>
+        <div><h3>Project</h3><ul><li><a href={repo}>GitHub</a></li><li><a href={withBase('/reference/about/')}>About this project</a></li><li><a href={withBase('/llms.txt')}>llms.txt</a></li></ul></div>
+      </div>
+    </div>
+  </footer>
+
+  <div class="search-modal" data-search-modal role="dialog" aria-modal="true" aria-label="Search">
+    <div class="search-panel"><div id="search"></div></div>
+  </div>
+
+  <script>
+    import '../scripts/site.ts';
+  </script>
+</body>
+</html>

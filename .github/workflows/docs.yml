@@ -39,20 +39,25 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
+      # uv provisions Python from requires-python when it runs gen_reference.py.
       - name: Install uv
         uses: astral-sh/setup-uv@v6
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          python-version: '3.12'
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
 
-      - name: Install dependencies
-        run: cd docs && uv sync --no-sources
+      - name: Build docs site
+        run: cd docs && npm ci && npm run build
 
-      - name: Build MkDocs site
-        run: uv run --project docs mkdocs build -f docs/mkdocs.yml
+      - name: Check internal links
+        run: cd docs && npm run check-links
 
       - name: Setup Pages
         id: pages

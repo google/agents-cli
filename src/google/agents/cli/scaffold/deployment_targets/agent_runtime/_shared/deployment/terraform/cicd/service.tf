@@ -17,6 +17,8 @@ locals {
 }
 
 resource "google_vertex_ai_reasoning_engine" "app" {
+  # Only google-beta has spec.agent_card, which ignore_changes below must name.
+  provider = google-beta
   for_each = local.deploy_project_ids
 
   display_name = var.project_name
@@ -133,11 +135,13 @@ resource "google_vertex_ai_reasoning_engine" "app" {
   # source_code_spec, so the placeholder must use it too — a container_spec
   # placeholder would be left alongside it and Agent Runtime rejects the update.
   # Ignore the spec and deployment_spec so Terraform never reverts the deployed agent.
+  # agents-cli deploy also writes the A2A agent card, which Agent Registry reads.
   lifecycle {
     ignore_changes = [
       spec[0].container_spec,
       spec[0].source_code_spec,
       spec[0].deployment_spec,
+      spec[0].agent_card,
     ]
   }
 

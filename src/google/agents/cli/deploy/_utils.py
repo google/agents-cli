@@ -49,6 +49,10 @@ DEFAULT_MAX_INSTANCES = 10
 # https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/runtime/optimize-and-scale#underutilized-workers
 DEFAULT_CONCURRENCY = 8
 
+# The value template.workloadIdentityConfig.identityType takes for a Cloud Run
+# service that uses Agent Identity.
+_AGENT_IDENTITY_TYPE = "IDENTITY_TYPE_AGENT_IDENTITY"
+
 
 @dataclass(frozen=True)
 class MachineShape:
@@ -120,6 +124,14 @@ def cloud_run_service_url(*, project: str, region: str, service: str) -> str:
         f"https://{region}-run.googleapis.com/v2/projects/{project}"
         f"/locations/{region}/services/{service}"
     )
+
+
+def cloud_run_has_agent_identity(service: dict | None) -> bool:
+    """Whether a Cloud Run service is already configured with Agent Identity."""
+    if not service:
+        return False
+    workload_identity = service.get("template", {}).get("workloadIdentityConfig", {})
+    return workload_identity.get("identityType") == _AGENT_IDENTITY_TYPE
 
 
 def parse_key_value_pairs(kv_string: str | None) -> dict[str, str]:
@@ -229,6 +241,15 @@ def parse_secret_refs(secrets: Mapping[str, str]) -> dict[str, dict[str, str]]:
             secret_id, _, version = spec.rpartition(":")
         result[key] = {"secret": secret_id, "version": version}
     return result
+
+
+def secret_resource_name(*, project: str, secret: str) -> str:
+    """The Secret Manager resource name of a parsed --secrets secret."""
+    return (
+        secret
+        if secret.startswith("projects/")
+        else f"projects/{project}/secrets/{secret}"
+    )
 
 
 def print_table(table: Table) -> None:

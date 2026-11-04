@@ -25,10 +25,14 @@ import click
 from google.agents.cli._output import print_error
 from google.agents.cli._project import find_project_root
 from google.agents.cli._runner import DISABLE_OVERRIDES_ENV, run_extension_command
+from google.agents.cli.extension._refs import LATEST
 from google.agents.cli.extension._spec import ExtensionCommand
 
 if TYPE_CHECKING:
     from google.agents.cli.extension._loader import ResolvedCommand
+
+# A pinned tag re-resolves to itself, so a plain `extension update` can't fix this.
+_TO_COMPATIBLE_REF = f"--to <tag> ({LATEST} for a first-party extension)"
 
 
 def installed_override(dotted: str) -> ResolvedCommand | None:
@@ -52,7 +56,8 @@ def installed_override(dotted: str) -> ResolvedCommand | None:
         raise click.ClickException(
             f"{dotted!r} comes from extension {resolved.extension_name!r}, which "
             f"requires agents-cli {resolved.blocked_requires}.\n"
-            f"  Update it:      agents-cli extension update {resolved.extension_name}\n"
+            f"  Update it:      agents-cli extension update {resolved.extension_name} "
+            f"{_TO_COMPATIBLE_REF}\n"
             f"  Or remove it:   agents-cli extension remove {resolved.extension_name}"
         )
     return resolved
@@ -129,7 +134,7 @@ def make_blocked_command(
             "error`), because the built-in would do something different.\n\n"
             "Fix it by updating the extension, removing it, or running the "
             "built-in explicitly:\n"
-            f"  agents-cli extension update {extension_name}\n"
+            f"  agents-cli extension update {extension_name} {_TO_COMPATIBLE_REF}\n"
             f"  agents-cli extension remove {extension_name}\n"
             f"  {bypass_hint(display_path)}"
         ),
@@ -140,7 +145,8 @@ def make_blocked_command(
         raise click.ClickException(
             f"{display_path!r} comes from extension {extension_name!r}, which requires "
             f"agents-cli {requires} (running {running}).\n"
-            f"  Update it:      agents-cli extension update {extension_name}\n"
+            f"  Update it:      agents-cli extension update {extension_name} "
+            f"{_TO_COMPATIBLE_REF}\n"
             f"  Or remove it:   agents-cli extension remove {extension_name}\n"
             f"  Or bypass it:   {bypass_hint(display_path)}"
         )

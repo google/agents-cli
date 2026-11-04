@@ -22,24 +22,35 @@ import os
 import re
 import shutil
 import subprocess
-from collections.abc import Callable
-from pathlib import Path
-from typing import Any
+from collections.abc import Callable, Sequence
+from dataclasses import replace
+from pathlib import Path, PurePosixPath
+from typing import Any, cast
 
 import yaml
 from filelock import FileLock, Timeout
+from packaging.version import InvalidVersion, Version
 
+from google.agents.cli.__init__ import __version__
 from google.agents.cli._fs import delete_folder, first_copy_error, make_folders_writable
 from google.agents.cli._git import is_commit_sha, is_option_like
 from google.agents.cli._runner import run_resolved
+from google.agents.cli._symlinks import (
+    ScaffoldSymlinkSecurityError,
+    find_repo_boundary,
+    follow_symlink,
+    vet_symlinks,
+)
 from google.agents.cli.extension._paths import git_cache_dir_name, git_cache_root
-from google.agents.cli.extension._refs import ExtensionRef
+from google.agents.cli.extension._refs import LATEST, UNPINNED_REF, ExtensionRef
 from google.agents.cli.extension._spec import EXTENSION_FILE
 from google.agents.cli.scaffold.utils.fs import source_ignore_patterns
 
 # An extension name becomes a directory component under the vendoring root, so it
 # must not contain path separators or traversal — reject anything else.
 _SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+_RELEASE_TAG_RE = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+")
 
 
 def validate_extension_name(name: str) -> str:
@@ -70,6 +81,9 @@ LOCAL_SHA = "local"
 
 def _git_ignored(root: Path) -> frozenset[str]:
     """POSIX paths, relative to ``root``, that git considers ignored there.
+
+    ``root`` is the repository root a ``local@`` source's links must stay
+    inside, so the list also covers the folders those links lead to.
 
     Asked of git rather than parsed out of ``.gitignore``, which buys four
     things no pattern match of our own would get right: nested ignore files and
@@ -114,23 +128,75 @@ class _SourceExclusions:
     the hash counted something the copy leaves out, every change to it would
     stamp a mismatch and provoke a re-copy that produces a byte-identical tree —
     reporting a repair that did not happen.
+
+    Git's ignore rules are matched against real paths, relative to
+    ``gitignore_root``, so they also apply to what a symlink leads to: a path
+    reached through a link is one git has never heard of. A link whose target
+    git ignores is refused, as templates refuse a link into an ignored folder.
+
+    For a path inside ``source``, a folder at or above ``source`` does not
+    count: an extension kept in an ignored scratch folder (``tmp/ext``) is still
+    the user's to vendor. A link target outside ``source`` gets no such pass,
+    or ``tmp/ext/key.json -> ../creds.json`` would copy a file git ignores.
     """
 
-    def __init__(self, root: Path, *, use_gitignore: bool):
-        self._root = str(root)
-        # Only for a working directory. A git checkout holds tracked files and
-        # nothing else, so there is nothing ignored in it to find — and asking
-        # anyway would drop a force-added file that the commit genuinely
-        # contains.
-        self._ignored = _git_ignored(root) if use_gitignore else frozenset()
+    def __init__(self, source: Path, gitignore_root: Path | None):
+        # None for a git checkout. It holds tracked files and nothing else, so
+        # there is nothing ignored in it to find — and asking anyway would drop
+        # a force-added file that the commit genuinely contains.
+        self._root = os.path.realpath(gitignore_root) if gitignore_root else ""
+        self._ignored = _git_ignored(gitignore_root) if gitignore_root else frozenset()
+        self._source_parts: tuple[str, ...] = ()
+        if gitignore_root:
+            self._source_parts = self._relative_parts(os.path.realpath(source)) or ()
 
     def __call__(self, directory: str, names: list[str]) -> set[str]:
         excluded = source_ignore_patterns(directory, names)
         if not self._ignored:
             return excluded
-        rel = os.path.relpath(directory, self._root)
-        prefix = "" if rel == os.curdir else f"{Path(rel).as_posix()}/"
-        return excluded | {n for n in names if f"{prefix}{n}" in self._ignored}
+        real_dir = os.path.realpath(directory)
+        for name in names:
+            if name in excluded:
+                continue
+            path = os.path.join(directory, name)
+            # A link git ignores is left behind like any other ignored file,
+            # whatever it points to.
+            if self._is_git_ignored(os.path.join(real_dir, name)):
+                excluded.add(name)
+                continue
+            if not os.path.islink(path):
+                continue
+            target = os.path.realpath(path)
+            if self._is_git_ignored(target):
+                raise ScaffoldSymlinkSecurityError(
+                    f"Symlink '{path}' points to '{target}', which git ignores, so "
+                    "it is never copied. Link to a file the repository tracks instead."
+                )
+        return excluded
+
+    def _is_git_ignored(self, real_path: str) -> bool:
+        """Whether git ignores ``real_path`` or a folder above it (see the class docstring)."""
+        parts = self._relative_parts(real_path)
+        if parts is None:
+            return False
+        inside_source = parts[: len(self._source_parts)] == self._source_parts
+        first = len(self._source_parts) if inside_source else 0
+        # A wholly ignored folder is listed once, by its own name (`--directory`).
+        return any(
+            PurePosixPath(*parts[: i + 1]).as_posix() in self._ignored
+            for i in range(first, len(parts))
+        )
+
+    def _relative_parts(self, real_path: str) -> tuple[str, ...] | None:
+        """Parts of ``real_path`` relative to the gitignore root.
+
+        A path outside the root starts with ``..``, which git never lists, so it
+        matches nothing; ``follow_symlink`` refuses a link that leads there.
+        """
+        try:
+            return Path(os.path.relpath(real_path, self._root)).parts
+        except ValueError:  # On Windows, a path on another drive.
+            return None
 
 
 class ResolverError(Exception):
@@ -161,19 +227,20 @@ def expected_stamp(ref: ExtensionRef, sha: str) -> str:
     if ref.kind != "local":
         return sha
     src = _local_source_dir(ref)
-    return fingerprint(src, _SourceExclusions(src, use_gitignore=True))
+    repo_root = _local_repo_root(ref, src)
+    return fingerprint(src, _SourceExclusions(src, repo_root), repo_root)
 
 
-def fingerprint(root: Path, exclude: Callable[[str, list[str]], set[str]]) -> str:
+def fingerprint(
+    root: Path, exclude: Callable[[str, list[str]], set[str]], repo_root: Path
+) -> str:
     """Return a hash of the name and contents of every file under ``root``.
 
     Walked in sorted order and keyed on POSIX-style relative paths, so a given
     tree hashes identically across runs and platforms.
 
-    Hashes exactly what the copy would contain: symlinks are skipped (see
-    ``skip_symlinks``) and so is everything ``exclude`` drops, files included —
-    ``.env`` is a file, and hashing one the copy omits would make every edit to
-    it force a re-copy that changes nothing.
+    Hashes exactly what the copy would contain: a symlink is hashed as the files
+    it points to, and everything ``exclude`` drops is skipped.
 
     Scanned with ``os.scandir``, whose entries answer "directory or symlink?"
     from the directory read itself: one syscall per directory rather than a
@@ -181,7 +248,8 @@ def fingerprint(root: Path, exclude: Callable[[str, list[str]], set[str]]) -> st
     since a tree walked only in part hashes the same after a change inside the
     part that was missed.
 
-    Raises ResolverError when a folder or file under ``root`` cannot be read.
+    Raises ResolverError when a folder or file under ``root`` cannot be read,
+    or a symlink under it cannot be followed.
     """
     digest = hashlib.sha256()
     # (directory, its POSIX path relative to root). A stack, so a deep source
@@ -191,14 +259,18 @@ def fingerprint(root: Path, exclude: Callable[[str, list[str]], set[str]]) -> st
         while stack:
             directory, rel_dir = stack.pop()
             with os.scandir(directory) as scan:
-                entries = [entry for entry in scan if not entry.is_symlink()]
+                entries = list(scan)
             excluded = exclude(directory, [entry.name for entry in entries])
             subdirs: list[os.DirEntry[str]] = []
             files: list[os.DirEntry[str]] = []
             for entry in entries:
                 if entry.name in excluded:
                     continue
-                if entry.is_dir(follow_symlinks=False):
+                if entry.is_symlink():
+                    is_dir = follow_symlink(Path(entry.path), repo_root).is_dir()
+                else:
+                    is_dir = entry.is_dir(follow_symlinks=False)
+                if is_dir:
                     subdirs.append(entry)
                 else:
                     files.append(entry)
@@ -210,7 +282,7 @@ def fingerprint(root: Path, exclude: Callable[[str, list[str]], set[str]]) -> st
             # Reversed, so popping visits the subdirectories in sorted order.
             for entry in sorted(subdirs, key=lambda e: e.name, reverse=True):
                 stack.append((entry.path, f"{prefix}{entry.name}"))
-    except OSError as e:
+    except (OSError, ScaffoldSymlinkSecurityError) as e:
         raise ResolverError(f"could not read local extension source {root}: {e}") from e
     return digest.hexdigest()
 
@@ -226,13 +298,23 @@ def _local_source_dir(ref: ExtensionRef) -> Path:
     return sub
 
 
+def _local_repo_root(ref: ExtensionRef, sub: Path) -> Path:
+    """The folder a symlink in a ``local@`` source must stay inside.
+
+    Like a local template: the enclosing Git, Mercurial, or Jujutsu working
+    copy, or else the ``local@`` path itself.
+    """
+    # _local_source_dir has already checked that local_path is set.
+    return find_repo_boundary(sub) or cast(Path, ref.local_path)
+
+
 def _inside(root: Path, selector: str) -> Path:
     """Return ``root / selector``, or raise if it resolves outside ``root``.
 
     parse_ref keeps `..` and absolute paths out of a selector, but a symlink
     (or Windows junction) at any of its components would still carry the copy
-    out of the source: copytree follows ``src`` itself, and ``skip_symlinks``
-    only filters the entries beneath it.
+    out of the source: copytree follows ``src`` itself, and ``vet_symlinks``
+    only checks the entries beneath it.
     """
     sub = root / selector
     try:
@@ -290,18 +372,94 @@ def resolve_sha(ref: ExtensionRef) -> str:
             f"invalid ref {target!r}: pass a branch, tag, or commit SHA, "
             "which cannot start with '-'."
         )
-    result = _git("ls-remote", "--", _clone_url(ref), target)
+    # git lists an annotated tag's `^{}` commit only when asked for it by name.
+    result = _git("ls-remote", "--", _clone_url(ref), target, f"{target}^{{}}")
     if result.returncode != 0 or not result.stdout.strip():
         raise ResolverError(
-            f"could not resolve {target!r} in {ref.repo!r}; check the repo and ref."
+            f"could not resolve {target!r} in {ref.repo!r}{_git_reason(result)}; "
+            "check the repo and ref."
         )
-    sha = result.stdout.split()[0]
+    lines = [line.partition("\t") for line in result.stdout.splitlines() if line]
+    sha = next((s for s, _, name in lines if name.endswith("^{}")), lines[0][0])
     if not is_commit_sha(sha):
         raise ResolverError(
             f"git ls-remote returned {sha!r} for {target!r} in {ref.repo!r}, "
             "which is not a commit SHA."
         )
     return sha
+
+
+def pin_ref(ref: ExtensionRef) -> ExtensionRef:
+    """Pin an unpinned first-party ref or ``LATEST`` to a release tag.
+
+    The tag is the newest release no newer than the running CLI.
+    """
+    if ref.ref == LATEST and ref.kind != "first_party":
+        raise ResolverError(
+            f"{LATEST} is only for first-party extensions; pin a branch, tag, or "
+            "SHA instead."
+        )
+    # UNPINNED_REF reads back as "no ref", which pins the latest release.
+    if ref.kind == "first_party" and ref.ref == UNPINNED_REF:
+        raise ResolverError(
+            f"{UNPINNED_REF} is not supported for a first-party extension; pin main to follow "
+            f"the default branch, or {LATEST} for the latest release."
+        )
+    if ref.kind == "first_party" and ref.ref in (None, LATEST):
+        tag = _pick_release(_list_release_tags(ref), ref)
+        logging.info(
+            "Using %s, the latest release of %s for agents-cli %s.",
+            tag,
+            ref.repo,
+            __version__,
+        )
+        return replace(ref, ref=tag)
+    return ref
+
+
+def _list_release_tags(ref: ExtensionRef) -> list[str]:
+    result = _git("ls-remote", "--tags", "--", _clone_url(ref), "v*")
+    if result.returncode != 0:
+        raise ResolverError(
+            f"could not list the release tags of {ref.repo!r}{_git_reason(result)}; "
+            "check your network and git access, or pin a branch, tag, or SHA instead."
+        )
+    names = (
+        line.partition("\t")[2].removeprefix("refs/tags/")
+        for line in result.stdout.splitlines()
+    )
+    tags = [name for name in names if _RELEASE_TAG_RE.fullmatch(name)]
+    if not tags:
+        raise ResolverError(
+            f"{ref.repo!r} has no release tags; pin a branch, tag, or SHA instead."
+        )
+    return tags
+
+
+def _git_reason(result: subprocess.CompletedProcess) -> str:
+    stderr = " ".join(result.stderr.split())
+    return f" ({stderr})" if stderr else ""
+
+
+def _pick_release(tags: Sequence[str], ref: ExtensionRef) -> str:
+    # A release newer than the running CLI may need commands it doesn't have yet.
+    running = _running_release()
+    eligible = [tag for tag in tags if running is None or Version(tag) <= running]
+    if not eligible:
+        raise ResolverError(
+            f"{ref.repo!r} has no release at or below agents-cli {__version__}; "
+            "upgrade agents-cli, or pin a branch, tag, or SHA instead."
+        )
+    return max(eligible, key=Version)
+
+
+def _running_release() -> Version | None:
+    # A source build has no release to match, so it gets the newest one.
+    try:
+        running = Version(__version__)
+    except InvalidVersion:
+        return None
+    return None if running.is_devrelease else running
 
 
 def _extension_name_from_dir(extension_dir: Path, fallback: str) -> str:
@@ -320,27 +478,10 @@ def _extension_name_from_dir(extension_dir: Path, fallback: str) -> str:
     return fallback
 
 
-def skip_symlinks(directory: str, names: list[str]) -> set[str]:
-    """Names in ``directory`` that are symlinks, for ``copytree(ignore=...)``."""
-    skipped = {n for n in names if Path(directory, n).is_symlink()}
-    for name in sorted(skipped):
-        logging.warning("Skipping symlink in extension source: %s", Path(directory, name))
-    return skipped
-
-
-def _ignored_names(
-    exclude: _SourceExclusions,
-) -> Callable[[str, list[str]], set[str]]:
-    """Return the ``copytree(ignore=...)`` callback for an extension source."""
-
-    def ignore(directory: str, names: list[str]) -> set[str]:
-        return skip_symlinks(directory, names) | exclude(directory, names)
-
-    return ignore
-
-
-def _replace_tree(src: Path, dest: Path, exclude: _SourceExclusions) -> None:
-    """Replace ``dest`` with a copy of ``src``.
+def _replace_tree(
+    src: Path, dest: Path, exclude: _SourceExclusions, repo_root: Path
+) -> None:
+    """Replace ``dest`` with a copy of ``src``, following links inside ``repo_root``.
 
     Leaves ``dest`` alone unless the swap itself fails; then raises
     CopyChangedError.
@@ -352,14 +493,14 @@ def _replace_tree(src: Path, dest: Path, exclude: _SourceExclusions) -> None:
     staged = dest.parent / f".{dest.name}.incoming"
     try:
         delete_folder(staged)
-        # Never follow symlinks out of an extension: copytree would otherwise
-        # dereference `notes.md -> ~/.ssh/id_rsa` into a real file in the
-        # project, where it gets committed (CWE-59).
-        shutil.copytree(src, staged, ignore=_ignored_names(exclude))
-    except OSError as e:
+        # copytree follows every link it is not told to ignore, so each one is
+        # checked first: dereferencing `notes.md -> ~/.ssh/id_rsa` would put the
+        # key in the project, where it gets committed (CWE-59).
+        shutil.copytree(src, staged, ignore=vet_symlinks(repo_root, exclude))
+    except (OSError, ScaffoldSymlinkSecurityError) as e:
         delete_folder(staged)
-        message = f"could not copy {src} into {dest}: {first_copy_error(e)}"
-        raise ResolverError(message) from e
+        reason = first_copy_error(e) if isinstance(e, OSError) else str(e)
+        raise ResolverError(f"could not copy {src} into {dest}: {reason}") from e
     try:
         if dest.exists():
             make_folders_writable(dest)
@@ -385,6 +526,7 @@ def materialize(
     dest_root: Path,
     *,
     name: str | None = None,
+    ref_flag: str | None = None,
 ) -> tuple[str, Path]:
     """Vendor an extension directory into ``dest_root/<extension_name>``.
 
@@ -397,6 +539,8 @@ def materialize(
     regardless of what the upstream ``agents-cli-extension.yaml`` declares.  This
     prevents an extension rename upstream from silently relocating (and losing) the
     vendored copy.
+
+    ``ref_flag`` is the caller's flag for pinning a ref, named in error hints.
     """
     dest_root.mkdir(parents=True, exist_ok=True)
 
@@ -405,20 +549,22 @@ def materialize(
         spec_name = _extension_name_from_dir(sub, ref.selector or sub.name)
         resolved_name = validate_extension_name(name if name is not None else spec_name)
         extension_dir = dest_root / resolved_name
-        exclude = _SourceExclusions(sub, use_gitignore=True)
+        repo_root = _local_repo_root(ref, sub)
+        exclude = _SourceExclusions(sub, repo_root)
         # Fingerprinted before the copy, so a source edited while it is being
         # copied leaves the older stamp and the next sync redoes the copy,
         # rather than blessing a tree that is half of each.
-        stamp = fingerprint(sub, exclude)
-        _replace_tree(sub, extension_dir, exclude)
+        stamp = fingerprint(sub, exclude, repo_root)
+        _replace_tree(sub, extension_dir, exclude, repo_root)
         _write_stamp(extension_dir, stamp)
         return resolved_name, extension_dir
 
     checkout = _checkout(ref, sha)
     if ref.kind == "first_party":
-        # First-party extensions live under extensions/<selector>/ in the repo.
         sub = (
-            _inside(checkout, f"extensions/{ref.selector}") if ref.selector else checkout
+            _first_party_source(checkout, ref, sha, ref_flag)
+            if ref.selector
+            else checkout
         )
     else:
         sub = _inside(checkout, ref.selector) if ref.selector else checkout
@@ -431,7 +577,7 @@ def materialize(
     )
     resolved_name = validate_extension_name(name if name is not None else spec_name)
     extension_dir = dest_root / resolved_name
-    _replace_tree(sub, extension_dir, _SourceExclusions(sub, use_gitignore=False))
+    _replace_tree(sub, extension_dir, _SourceExclusions(sub, None), checkout)
     _write_stamp(extension_dir, sha)
     return resolved_name, extension_dir
 
@@ -515,3 +661,41 @@ def _checkout_locked(repo_dir: Path, url: str, repo: str, sha: str) -> Path:
     if checkout.returncode != 0:
         raise ResolverError(f"git checkout {sha} failed: {checkout.stderr.strip()}")
     return repo_dir
+
+
+def _first_party_source(
+    checkout: Path, ref: ExtensionRef, sha: str, ref_flag: str | None
+) -> Path:
+    """Find the extension directory for ``ref.selector`` under extensions/."""
+    sub = _inside(checkout, f"extensions/{ref.selector}")
+    if (sub / EXTENSION_FILE).exists():
+        return sub
+    template = _inside(checkout, f"extensions/{ref.selector}/template")
+    if (template / EXTENSION_FILE).exists():
+        return template
+    pin = f" --ref {ref.ref}" if ref.ref else ""
+    nested = sorted(
+        manifest.parent.relative_to(checkout / "extensions").as_posix()
+        for manifest in sub.rglob(EXTENSION_FILE)
+    )
+    if nested:
+        commands = "\n".join(
+            f"  agents-cli extension add {path.split('/', 1)[0]}#{path}{pin}"
+            for path in nested
+        )
+        raise ResolverError(
+            f"{ref.selector!r} has no {EXTENSION_FILE} in extensions/{ref.selector}/ "
+            f"or its template/ at {sha}. Install one of the extensions found under "
+            f"it instead:\n{commands}"
+        )
+    upgrade = (
+        "upgrade agents-cli for a newer release, "
+        if ref.ref and _RELEASE_TAG_RE.fullmatch(ref.ref)
+        else ""
+    )
+    example = f", for example {ref_flag} main" if ref_flag and ref.ref != "main" else ""
+    raise ResolverError(
+        f"no first-party extension {ref.selector!r} in {ref.repo} at {ref.ref or sha}. "
+        f"Check the name, {upgrade}or pin a branch, tag, or commit where it "
+        f"exists{example}."
+    )

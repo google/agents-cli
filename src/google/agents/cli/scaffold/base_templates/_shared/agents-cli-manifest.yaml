@@ -11,6 +11,10 @@ create_params:
   # the agent and you must change it in both places: telemetry reports this as
   # gen_ai.agent.name, and it is what agents-cli reports for the project.
   root_agent_name: {{cookiecutter.root_agent_name | tojson}}
+  # The {app_name} the server serves the agent under (/apps/{app_name}/...),
+  # as rendered into the server source. Change it in both places. ADK Python
+  # serves /apps/ under the agent directory name, so keep the two equal there.
+  app_name: {{cookiecutter.app_name | tojson}}
   deployment_target: {{cookiecutter.deployment_target | tojson}}
   session_type: {{(cookiecutter.session_type or "none") | tojson}}
   cicd_runner: {{cookiecutter.cicd_runner | tojson}}
@@ -21,3 +25,5 @@ create_params:
   agent_guidance_filename: {{cookiecutter.agent_guidance_filename | tojson}}
   agent_runtime:
     identity_default: {{cookiecutter.agent_runtime_identity_default | tojson}}
+  cloud_run:
+    identity_default: {{cookiecutter.cloud_run_identity_default | tojson}}

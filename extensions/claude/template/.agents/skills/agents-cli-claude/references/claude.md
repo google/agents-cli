@@ -42,12 +42,13 @@ deployment" means it is not enabled, a one-time Console step for the user. With 
 `model=` (and no `ANTHROPIC_MODEL` or settings file naming one), a turn fails before any
 model call rather than fall back to the CLI's default model.
 
-The deployed identity needs `roles/aiplatform.user`. On Cloud Run a bare
-`agents-cli deploy` runs as the default compute account, which may lack it (a 403 on
-`aiplatform.endpoints.predict`): with the user's approval, run
-`agents-cli infra single-project --apply` and deploy with
-`--service-account <name>-app@<project>.iam.gserviceaccount.com`, or grant the role. On
-Agent Runtime, `agents-cli deploy` grants it to the agent's Agent Identity.
+The deployed identity needs `roles/aiplatform.user`. New projects deploy with Agent
+Identity, and `agents-cli deploy` grants the role to the agent's Agent Identity principal.
+A Cloud Run project whose `cloud_run.identity_default` is `service_account` deploys either
+as the service account passed via `--service-account`, or as the default compute account,
+which may lack the role (a 403 on `aiplatform.endpoints.predict`): with the user's
+approval, run `agents-cli infra single-project --apply` and deploy with
+`--service-account <name>-app@<project>.iam.gserviceaccount.com`, or grant the role.
 
 Subagents often ask for an alias (`model: sonnet`). If that model isn't enabled, map
 the alias: `env={"ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-haiku-4-5"}`.
@@ -103,9 +104,11 @@ into the service, and transcripts are mirrored to its `claude_session_store` tab
 conversations survive restarts and move between instances. Deployed without `infra`
 first, the service has no database. Locally, transcripts stay on disk.
 
-An agent can pass its own `session_store` in `root_agent`; it wins over Cloud SQL. Rows
-are never deleted: schedule a `DELETE ... WHERE mtime < <cutoff ms>` if transcripts must
-expire.
+An agent can pass its own `session_store` in `root_agent`; it wins over Cloud SQL. If a
+write to the store still fails after the SDK's retries, the turn fails, and the store
+keeps the conversation without that turn: later turns, on any instance, resume as if it
+didn't happen, though its tool calls did run. Rows are never deleted: schedule a
+`DELETE ... WHERE mtime < <cutoff ms>` if transcripts must expire.
 
 At most `CLAUDE_MAX_WORKSPACES` (default 100) conversation directories are kept per
 instance; the least recently used beyond that are deleted. Without Cloud SQL an evicted

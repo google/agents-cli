@@ -25,7 +25,7 @@ playground:
 
 # Launch local development server
 local-backend:
-	npm run build && npx @google/adk-devtools api_server -h localhost --port 8000 dist/agent.js
+	npm run build && npx @google/adk-devtools api_server -h localhost --port 8000 dist
 
 # Run agent with CLI
 run:

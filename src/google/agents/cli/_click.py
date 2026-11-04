@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
+from dataclasses import dataclass
 from typing import Any
 
 import click
@@ -33,10 +34,20 @@ COMMAND_PATH_META_KEY = "agents_cli.command_path"
 # view (``--help``, or a group given no subcommand) can be told apart from a
 # run. Consumed by ``_telemetry``.
 COMMAND_INVOKED_META_KEY = "agents_cli.command_invoked"
-# Marks a recorded path segment that an extension serves: ``generate~ext`` for
-# an overridden built-in. A command an extension adds is recorded as the bare
-# marker, never by name, since the extension author chose that name.
-EXTENSION_PATH_MARKER = "~ext"
+# Separates a recorded path segment from the extension that serves it:
+# ``generate~<name>`` for a first-party extension's override, ``generate~ext``
+# for any other. A command an extension adds is recorded as ``~<extension>``,
+# never by name, since the extension author chose that name.
+EXTENSION_PATH_SEPARATOR = "~"
+_UNNAMED_EXTENSION = "ext"
+
+
+@dataclass(frozen=True)
+class _Override:
+    command: click.Command
+    extension_name: str
+    # Only a first-party extension is recorded by name.
+    first_party: bool
 
 
 class LazyGroup(click.Group):
@@ -64,7 +75,7 @@ class LazyGroup(click.Group):
         self._lazy_commands: dict[str, tuple[str, str]] = {}
         # name -> experiment label
         self._experiment_gates: dict[str, str] = {}
-        self._overrides: dict[str, click.Command] = {}
+        self._overrides: dict[str, _Override] = {}
         self._hidden: set[str] = set()
 
     def add_lazy_command(
@@ -95,6 +106,12 @@ class LazyGroup(click.Group):
         if hidden:
             self._hidden.add(name)
 
+    def add_override(
+        self, name: str, cmd: click.Command, extension_name: str, first_party: bool
+    ) -> None:
+        """Serve `name` with `cmd` from extension `extension_name`."""
+        self._overrides[name] = _Override(cmd, extension_name, first_party)
+
     @property
     def hidden_commands(self) -> frozenset[str]:
         """Names registered with `hidden=True`: invocable, but not listed."""
@@ -121,7 +138,7 @@ class LazyGroup(click.Group):
         if not self._is_visible(cmd_name):
             return None
         if cmd_name in self._overrides:
-            return self._overrides[cmd_name]
+            return self._overrides[cmd_name].command
         if cmd_name in self._lazy_commands and cmd_name not in self.commands:
             import_path, _ = self._lazy_commands[cmd_name]
             module_path, attr = import_path.split(":")
@@ -151,17 +168,23 @@ class LazyGroup(click.Group):
         Overrides only apply to built-ins and added commands never share a
         built-in's name, so an extension-served built-in name is an override.
         """
-        if cmd_name not in self._overrides:
+        override = self._overrides.get(cmd_name)
+        if override is None:
             return cmd_name
-        if cmd_name in self._lazy_commands or cmd_name in self.commands:
-            return f"{cmd_name}{EXTENSION_PATH_MARKER}"
-        return EXTENSION_PATH_MARKER
+        is_builtin = cmd_name in self._lazy_commands or cmd_name in self.commands
+        recorded_name = cmd_name if is_builtin else ""
+        extension = (
+            override.extension_name if override.first_party else _UNNAMED_EXTENSION
+        )
+        return f"{recorded_name}{EXTENSION_PATH_SEPARATOR}{extension}"
 
     def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         rows: list[tuple[str, str]] = []
         for name in self.list_commands(ctx):
             if name in self._overrides:
-                rows.append((name, self._overrides[name].get_short_help_str(limit=1000)))
+                rows.append(
+                    (name, self._overrides[name].command.get_short_help_str(limit=1000))
+                )
                 continue
             if name in self.commands:
                 # Don't truncate — Click's default of 45 would cut our docstring summaries.

@@ -83,12 +83,25 @@ resource "google_secret_manager_secret_version" "db_password" {
   secret_data_wo         = ephemeral.random_password.db_password.result
   secret_data_wo_version = 1
 }
+{%- if cookiecutter.agent_identity_enabled %}
+
+# Lets app_sa read the DB password secret.
+resource "google_secret_manager_secret_iam_member" "app_sa_db_password" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.db_password.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.app_sa.email}"
+}
+{%- endif %}
 
 {%- endif %}
 
 
 resource "google_cloud_run_v2_service" "app" {
   provider = google-beta
+{%- if cookiecutter.agent_identity_enabled %}
+  functional_type = "FUNCTIONAL_TYPE_AGENT"
+{%- endif %}
   name                = var.project_name
   location            = var.region
   project             = var.project_id
@@ -225,6 +238,12 @@ resource "google_cloud_run_v2_service" "app" {
       }
 {%- endif %}
     }
+{%- if cookiecutter.agent_identity_enabled %}
+
+    workload_identity_config {
+      identity_type = "IDENTITY_TYPE_AGENT_IDENTITY"
+    }
+{%- endif %}
 
     service_account = google_service_account.app_sa.email
     max_instance_request_concurrency = 8
@@ -252,11 +271,13 @@ resource "google_cloud_run_v2_service" "app" {
     percent = 100
   }
 
-  # This lifecycle block prevents Terraform from overwriting the container image when it's
-  # updated by Cloud Run deployments outside of Terraform (e.g., via CI/CD pipelines)
+  # Deploys replace the image outside Terraform (e.g., CI/CD pipelines), and
+  # `agents-cli deploy --agent-identity` sets the workload identity. Prevent
+  # both from being overwritten by Terraform.
   lifecycle {
     ignore_changes = [
       template[0].containers[0].image,
+      template[0].workload_identity_config,
     ]
   }
 
@@ -266,6 +287,9 @@ resource "google_cloud_run_v2_service" "app" {
 {%- if cookiecutter.session_type == "cloud_sql" %}
     google_sql_user.db_user,
     google_secret_manager_secret_version.db_password,
+{%- if cookiecutter.agent_identity_enabled %}
+    google_secret_manager_secret_iam_member.app_sa_db_password,
+{%- endif %}
 {%- endif %}
   ]
 }

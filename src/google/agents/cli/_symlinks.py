@@ -12,19 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Security vetting for symlinks found in fetched template sources.
+"""Security vetting for symlinks found in fetched template and extension sources.
 
-Isolates the CWE-59 policy: a template may share code via a symlink that stays
-within its own repository, but a link that escapes the repo, points at VCS
-metadata / an environment file, dangles, or forms a cycle is refused. The copy
-machinery in ``copy_files.py`` calls :func:`require_safe_symlink` and then
-materializes the resolved target as real files.
+Isolates the CWE-59 policy: a template or an extension may share code via a
+symlink that stays within its own repository, but a link that escapes the repo,
+points at VCS metadata / an environment file, dangles, or forms a cycle is
+refused.
 """
 
 import os
 import pathlib
+from collections.abc import Callable
 
-from .fs import is_ignored_name, is_secret_file
+from google.agents.cli.scaffold.utils.fs import is_ignored_name, is_secret_file
 
 # Backstop to the inode-based cycle guard: refuse to materialize a template
 # tree nested more deeply than this (a symlink loop, or a pathological repo).
@@ -33,7 +33,7 @@ _REPO_MARKERS = (".git", ".hg", ".jj")
 
 
 class ScaffoldSymlinkSecurityError(ValueError):
-    """A template source contains a symlink that cannot be safely materialized.
+    """A template or extension source contains a symlink that cannot be copied safely.
 
     Subclasses ``ValueError`` so ``create()``'s handler renders it as a concise
     one-line ``ClickException`` rather than a traceback.
@@ -86,17 +86,18 @@ def resolve_safe_symlink(link: pathlib.Path, clone_root: pathlib.Path) -> pathli
     if not target.is_relative_to(root):
         raise ScaffoldSymlinkSecurityError(
             f"Symlink '{link}' resolves to '{target}', which "
-            "is outside the template repository. For security reasons a symlink "
-            "may not escape the repository; copy the shared files directly into "
-            "the template instead."
+            "is outside the repository. For security reasons a symlink may not "
+            "escape the repository; copy the shared files into it instead."
         )
 
     rel_parts = target.relative_to(root).parts
-    if any(is_ignored_name(part) for part in rel_parts):
+    ignored = next((part for part in rel_parts if is_ignored_name(part)), None)
+    if ignored is not None:
         raise ScaffoldSymlinkSecurityError(
             f"Symlink '{_symlink_display(link)}' resolves into an ignored path "
-            "(version-control metadata, caches, build output, or dependencies), "
-            "which is never copied into a generated project."
+            f"('{ignored}': version-control metadata, a cache, build output, or "
+            "dependencies), which is never copied. Point the link at the source "
+            f"file instead, or move the shared file out of '{ignored}'."
         )
     if is_secret_file(target.name):
         raise ScaffoldSymlinkSecurityError(
@@ -124,6 +125,46 @@ def require_safe_symlink(
     return resolve_safe_symlink(link, clone_root)
 
 
+def follow_symlink(link: pathlib.Path, repo_root: pathlib.Path) -> pathlib.Path:
+    """Return the target of ``link``, or raise ScaffoldSymlinkSecurityError.
+
+    Vets the target with :func:`resolve_safe_symlink`, and also refuses a link to
+    a folder that holds the link itself, since copying through it would never end.
+    """
+    target = resolve_safe_symlink(link, repo_root)
+    if target.is_dir() and any(
+        parent.resolve().is_relative_to(target) for parent in link.absolute().parents
+    ):
+        raise ScaffoldSymlinkSecurityError(
+            f"Symlink '{link}' points to '{target}', a folder that contains the "
+            "link itself, so copying it would never end. Link to a folder beside "
+            "it instead."
+        )
+    return target
+
+
+def vet_symlinks(
+    repo_root: pathlib.Path,
+    exclude: Callable[[str, list[str]], set[str]] | None = None,
+) -> Callable[[str, list[str]], set[str]]:
+    """Return a ``copytree(ignore=...)`` callback that refuses unsafe links.
+
+    It returns what ``exclude`` drops, and checks every other link with
+    :func:`follow_symlink`. ``copytree`` then follows the links that passed, so
+    the copy holds their files rather than the links.
+    """
+
+    def ignore(directory: str, names: list[str]) -> set[str]:
+        excluded = exclude(directory, names) if exclude else set()
+        for name in names:
+            link = pathlib.Path(directory, name)
+            if name not in excluded and link.is_symlink():
+                follow_symlink(link, repo_root)
+        return excluded
+
+    return ignore
+
+
 def _resolve_symlink(link: pathlib.Path) -> pathlib.Path:
     """Resolve *link* to its target with no containment check."""
     try:
@@ -133,8 +174,8 @@ def _resolve_symlink(link: pathlib.Path) -> pathlib.Path:
     except (OSError, RuntimeError) as e:
         raise ScaffoldSymlinkSecurityError(
             f"Symlink '{_symlink_display(link)}' points to a missing target or "
-            "forms a loop. Copy the shared files directly into the template "
-            "instead of linking to them."
+            "forms a loop. Fix the link, or copy the shared files instead of "
+            "linking to them."
         ) from e
 
 

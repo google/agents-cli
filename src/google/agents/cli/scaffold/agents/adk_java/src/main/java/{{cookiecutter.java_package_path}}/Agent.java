@@ -19,13 +19,14 @@ import com.google.adk.agents.LlmAgent;
 import com.google.adk.tools.Annotations.Schema;
 import com.google.adk.tools.FunctionTool;
 import com.google.adk.web.AgentLoader;
-import com.google.adk.web.AgentStaticLoader;
 import com.google.adk.webservice.A2ARemoteConfiguration;
+import com.google.common.collect.ImmutableList;
 import io.a2a.spec.AgentCapabilities;
 import io.a2a.spec.AgentCard;
 import io.a2a.spec.AgentSkill;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
@@ -43,6 +44,12 @@ import org.springframework.web.bind.annotation.RestController;
 public class Agent {
 
   private static final String MODEL = "{{cookiecutter.default_model}}";
+
+  /**
+   * The {app_name} in /apps/{app_name}/... and /list-apps. It must match
+   * create_params.app_name in agents-cli-manifest.yaml.
+   */
+  public static final String APP_NAME = "{{cookiecutter.app_name}}";
 
   public static final LlmAgent ROOT_AGENT =
       LlmAgent.builder()
@@ -65,9 +72,25 @@ public class Agent {
     return ROOT_AGENT;
   }
 
+  /** Serves ROOT_AGENT under APP_NAME, so renaming the agent does not move the routes. */
   @Bean
   public AgentLoader agentLoader() {
-    return new AgentStaticLoader(ROOT_AGENT);
+    return new AgentLoader() {
+      @Override
+      public ImmutableList<String> listAgents() {
+        return ImmutableList.of(APP_NAME);
+      }
+
+      @Override
+      public BaseAgent loadAgent(String name) {
+        // An empty name means the root agent.
+        if (name == null || name.isEmpty() || name.equals(APP_NAME)) {
+          return ROOT_AGENT;
+        }
+        throw new NoSuchElementException(
+            "Cannot load agent '" + name + "' - this server serves '" + APP_NAME + "'");
+      }
+    };
   }
 
   /**

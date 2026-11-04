@@ -96,9 +96,8 @@ func main() {
 		SessionService: sessionService,
 	}
 
-	appURL := resolveAppURL()
-
 	args := os.Args[1:]
+	appURL := resolveAppURL(args)
 
 	// hasFlag reports whether the caller already passed -name / --name (in either
 	// the "-name value" or "-name=value" form). When it did, we respect that

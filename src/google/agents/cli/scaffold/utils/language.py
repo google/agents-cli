@@ -30,7 +30,6 @@ from typing import Any
 import click
 
 from google.agents.cli._experiments import resolve_experiment
-from google.agents.cli._project import agent_package_name
 
 
 def _read_python_version(root: pathlib.Path) -> str:
@@ -65,9 +64,7 @@ LANGUAGE_CONFIGS: dict[str, dict[str, Any]] = {
         "agent_in_subdirectory": False,
         "version_reader": _read_python_version,
         "api_base_path": "",
-        "a2a_base_path_factory": lambda agent_directory: (
-            f"/a2a/{agent_package_name(agent_directory)}"
-        ),
+        "a2a_base_path_factory": lambda app_name: f"/a2a/{app_name}",
         "default_agent_directory": "app",
         # Content capture off. The new OTel GenAI semconv reads this variable as
         # an enum (NO_CONTENT); the old one, still used by ADK Go, reads a boolean.
@@ -105,7 +102,7 @@ LANGUAGE_CONFIGS: dict[str, dict[str, Any]] = {
         "agent_in_subdirectory": False,
         "version_reader": None,
         "api_base_path": "",
-        "a2a_base_path_factory": lambda _agent_directory: "",
+        "a2a_base_path_factory": lambda _app_name: "",
         "default_agent_directory": "app",
         "otel_capture_message_content_default": "false",
         "base_template_suffix": "_go",
@@ -131,7 +128,8 @@ LANGUAGE_CONFIGS: dict[str, dict[str, Any]] = {
         "agent_in_subdirectory": True,  # Java uses package subdirectories
         "version_reader": None,
         "api_base_path": "",
-        "a2a_base_path_factory": None,
+        # The card is served at the root; A2A itself at ADK's fixed /a2a/remote.
+        "a2a_base_path_factory": lambda _app_name: "",
         "default_agent_directory": "src/main/java",
         "otel_capture_message_content_default": "NO_CONTENT",
         "base_template_suffix": "_java",
@@ -166,19 +164,59 @@ LANGUAGE_CONFIGS: dict[str, dict[str, Any]] = {
         "extra_template_folders": [],
         "jvm_package_layout": False,
     },
+    "kotlin": {
+        "lock_file": None,  # Gradle doesn't lock dependencies by default
+        "lock_command": ["gradle", "dependencies"],
+        "lock_command_name": "gradle dependencies",
+        "display_name": "Kotlin",
+        "picker_icon": "🟣",
+        "agent_file": "Agent.kt",
+        "agent_variable": "rootAgent",
+        "agent_in_subdirectory": True,
+        "version_reader": None,
+        "api_base_path": "",
+        "a2a_base_path_factory": None,
+        "default_agent_directory": "src/main/kotlin",
+        "otel_capture_message_content_default": "NO_CONTENT",
+        "base_template_suffix": "_kotlin",
+        "experiment": "adk_kotlin",
+        "genai_backend_env_var": "GOOGLE_GENAI_USE_VERTEXAI",
+        "supports_bq_analytics": False,
+        "ci_trigger_files": ["build.gradle.kts", "settings.gradle.kts"],
+        "gke_prestop_command": ["sleep", "10"],
+        "extra_template_folders": [],
+        "jvm_package_layout": True,
+    },
 }
 
 
+class UnsupportedLanguageError(click.ClickException):
+    """Raised when agents-cli or one of its commands doesn't support a language."""
+
+
 def get_language_config(language: str) -> dict[str, Any]:
-    """Get the configuration dict for a language.
+    """Return the config for ``language``.
 
-    Args:
-        language: Language key (e.g., 'python', 'go')
-
-    Returns:
-        The language configuration dict, or Python config as fallback
+    Raises:
+        UnsupportedLanguageError: If this agents-cli doesn't support ``language``.
     """
-    return LANGUAGE_CONFIGS.get(language, LANGUAGE_CONFIGS["python"])
+    # Values read from user files may not be strings, and a list isn't hashable.
+    if not isinstance(language, str) or language not in LANGUAGE_CONFIGS:
+        supported = sorted(lang for lang in LANGUAGE_CONFIGS if is_language_enabled(lang))
+        raise UnsupportedLanguageError(
+            f"Unsupported language {language!r}.\n"
+            f"  Supported languages: {', '.join(supported)}.\n"
+            "  A newer agents-cli may support it; upgrade with: "
+            "uv tool upgrade google-agents-cli"
+        )
+    return LANGUAGE_CONFIGS[language]
+
+
+def a2a_base_path(language: str, app_name: str) -> str | None:
+    factory: Callable[[str], str] | None = get_language_config(language).get(
+        "a2a_base_path_factory"
+    )
+    return factory(app_name) if factory is not None else None
 
 
 def is_language_enabled(language: str) -> bool:
@@ -189,10 +227,6 @@ def is_language_enabled(language: str) -> bool:
     """
     experiment = LANGUAGE_CONFIGS.get(language, {}).get("experiment")
     return not experiment or bool(resolve_experiment(experiment))
-
-
-class UnsupportedLanguageError(click.ClickException):
-    """Raised when a command has no handler for the project's language."""
 
 
 def dispatch_language(

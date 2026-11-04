@@ -53,6 +53,10 @@ jobs:
           cache: npm
           cache-dependency-path: docs/package-lock.json
 
+      # gen_reference.py imports the CLI; use the released one from PyPI, as the MkDocs build did (#335).
+      - name: Install agents-cli from PyPI
+        run: uv venv && uv pip install google-agents-cli
+
       - name: Build docs site
         run: cd docs && npm ci && npm run build
 

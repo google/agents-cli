@@ -14,24 +14,24 @@
 
 steps:
   # Build the project
-  - name: "maven:3.9-eclipse-temurin-17"
+  - name: "gradle:9.5.1-jdk17"
     id: build
-    entrypoint: mvn
-    args: ["package", "-DskipTests"]
+    entrypoint: gradle
+    args: ["assemble", "--no-daemon"]
 
   # Run unit tests
-  - name: "maven:3.9-eclipse-temurin-17"
+  - name: "gradle:9.5.1-jdk17"
     id: unit-tests
-    entrypoint: mvn
-    args: ["test", "-Dtest=**/unit/**"]
+    entrypoint: gradle
+    args: ["test", "--no-daemon", "--tests", "*.unit.*"]
     waitFor: ["build"]
 
   # Run integration tests
-  - name: "maven:3.9-eclipse-temurin-17"
+  - name: "gradle:9.5.1-jdk17"
     id: integration-tests
-    entrypoint: mvn
-    args: ["test", "-Dtest=**/e2e/integration/**"]
-    waitFor: ["build"]
+    entrypoint: gradle
+    args: ["test", "--no-daemon", "--tests", "*.e2e.integration.*"]
+    waitFor: ["unit-tests"]
     env:
       - "GOOGLE_CLOUD_PROJECT=${PROJECT_ID}"
       - "GOOGLE_CLOUD_LOCATION=global"
@@ -39,4 +39,7 @@ steps:
 
 logsBucket: gs://${PROJECT_ID}-{{cookiecutter.project_name}}-logs/build-logs
 options:
+  # /root/.gradle points into the image's ephemeral /home/gradle/.gradle volume.
+  env:
+    - "GRADLE_USER_HOME=/builder/home/.gradle"
   defaultLogsBucketBehavior: REGIONAL_USER_OWNED_BUCKET

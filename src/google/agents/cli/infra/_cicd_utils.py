@@ -21,6 +21,7 @@ import re
 import shlex
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -427,8 +428,13 @@ def run_terraform(
     var_file: str | None = None,
     extra_vars: dict[str, str] | None = None,
     env_vars: dict[str, str] | None = None,
+    after_init: Callable[[], None] | None = None,
 ) -> None:
-    """Run terraform init followed by plan or apply in a directory."""
+    """Run terraform init followed by plan or apply in a directory.
+
+    ``after_init`` runs between ``init`` and ``plan``/``apply``, once the backend
+    is configured, so it can read Terraform state (e.g. ``terraform state list``).
+    """
     tf_dir = Path(tf_dir)
     terraform_path = "terraform"
 
@@ -438,6 +444,9 @@ def run_terraform(
     if local_state:
         init_args.append("-backend=false")
     _run_terraform_step(init_args, tf_dir=tf_dir)
+
+    if after_init is not None:
+        after_init()
 
     if apply:
         # -auto-approve is safe here: the user already reviewed changes via

@@ -1,6 +1,6 @@
 # ADK Go API reference
 
-> Reflects `google.golang.org/adk/v2 v2.1.0`, the version the `adk_go` template pins. If a symbol
+> Reflects `google.golang.org/adk/v2 v2.7.1`, the version the `adk_go` template pins. If a symbol
 > here is missing, check your `go.mod` before assuming the page is wrong.
 
 ## 1. Core Concepts & Project Structure

@@ -126,6 +126,8 @@ create_params:
 - **`language`** tells the dev commands (`playground`, `run`, `lint`, `install`) which toolchain to use.
 - **`create_params`** records how the project was created. The `agents-cli scaffold upgrade` command uses it to preserve your configuration.
 
+For an ADK project agents-cli did not create, `agents-cli scaffold enhance --from-adk-project` writes this file from what it detects (name, language, agent directory, root agent name) without rendering a template or adding deployment files. Preview with `--dry-run`; pass `--name` or `--agent-directory` when detection is wrong.
+
 ### `tests/eval/datasets/basic-dataset.json`
 
 Default evaluation cases. Each case defines a user message and the session context for running it. See the [Evaluation guide](evaluation.md) for the full schema.

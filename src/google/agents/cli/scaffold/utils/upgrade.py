@@ -71,8 +71,8 @@ FILE_CATEGORIES = {
         # Go dependencies
         "go.mod",
         "go.sum",
-        # Java dependencies (ACLI config is in pom.xml properties)
-        "pom.xml",
+        # Java and Kotlin dependencies
+        "build.gradle.kts",
         # TypeScript dependencies
         "package.json",
         "package-lock.json",

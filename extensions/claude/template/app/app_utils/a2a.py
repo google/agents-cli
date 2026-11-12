@@ -43,8 +43,10 @@ from fastapi import FastAPI
 from opentelemetry import trace
 
 from app.agent import root_agent
+from app.app_utils import memory_bank
 from app.app_utils.claude import stream_turn
 from app.app_utils.replies import TurnReply, record, starts_block, text_delta
+from app.app_utils.telemetry.config import on_agent_runtime
 
 # Matches the `agents-cli run --mode a2a --app-name` default.
 _A2A_NAME = os.environ.get("A2A_NAME", "app")
@@ -92,7 +94,8 @@ class ClaudeAgentExecutor(AgentExecutor):
                     context.get_user_input(),
                     root_agent,
                     task.context_id,
-                    _caller(context),
+                    # As ADK names unauthenticated callers.
+                    _caller(context) or f"A2A_USER_{task.context_id}",
                 )
             ) as stream:
                 async for message in stream:
@@ -109,6 +112,9 @@ class ClaudeAgentExecutor(AgentExecutor):
             return
 
         await artifact.finish(_final_reply(reply, artifact.answer, structured))
+        if on_agent_runtime():
+            # Agent Runtime throttles the CPU once the response ends.
+            await memory_bank.flush()
         await updater.complete()
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:

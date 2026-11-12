@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Click helpers: lazy command loading and source-path display in --help."""
+"""Click helpers: lazy command loading, --help source paths, option sources."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import click
+from click.core import ParameterSource
 
 from google.agents.cli._experiments import resolve_experiment
 
@@ -259,3 +260,15 @@ def patch_source_in_help(cmd: Any) -> None:
     if isinstance(cmd, click.Group):
         for sub in cmd.commands.values():
             patch_source_in_help(sub)
+
+
+def is_set_on_command_line(option: str) -> bool:
+    """Whether the running command got ``option`` from the command line.
+
+    False when it came from its default (or no command is running).
+    """
+    ctx = click.get_current_context(silent=True)
+    return (
+        ctx is not None
+        and ctx.get_parameter_source(option) == ParameterSource.COMMANDLINE
+    )

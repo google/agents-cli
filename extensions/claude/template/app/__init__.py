@@ -13,7 +13,3 @@
 # limitations under the License.
 
 """Claude Agent SDK agent package."""
-
-from .agent import root_agent
-
-__all__ = ["root_agent"]

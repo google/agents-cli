@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import ast
 import logging
 import os
 import pathlib
@@ -23,6 +24,7 @@ import tomllib
 from typing import Any
 
 import click
+import yaml
 from click.core import ParameterSource
 from packaging import version as pkg_version
 from rich.prompt import IntPrompt, Prompt
@@ -30,6 +32,7 @@ from rich.prompt import IntPrompt, Prompt
 from google.agents.cli._output import Console, configure_logging
 from google.agents.cli._project import (
     DEFAULT_BASE_TEMPLATE,
+    DEFAULT_FRAMEWORK,
     ProjectConfig,
     find_project_config,
 )
@@ -42,6 +45,9 @@ from ..utils.cli_options import InteractionMode, shared_template_options
 from ..utils.generation_metadata import metadata_to_cli_args
 from ..utils.language import (
     LANGUAGE_CONFIGS,
+    NON_AGENT_DIRS,
+    DetectedProject,
+    detect_project,
     find_agent_file,
     get_agent_file_hint,
     get_language_config,
@@ -70,19 +76,6 @@ console = Console()
 # Environment variable names for saved config handling
 _ENV_USING_SAVED_CONFIG = "_ACLI_USING_SAVED_CONFIG"
 _ENV_SKIP_VERSION_LOCK = "ACLI_SKIP_VERSION_LOCK"
-
-# Directories to exclude when scanning for agent directories
-_EXCLUDED_DIRS = {
-    ".git",
-    ".github",
-    "__pycache__",
-    "node_modules",
-    ".venv",
-    "venv",
-    "build",
-    "dist",
-    ".terraform",
-}
 
 
 def _should_skip_config_value(value: Any) -> bool:
@@ -512,7 +505,7 @@ def display_agent_directory_selection(
             if (
                 item.is_dir()
                 and not item.name.startswith(".")
-                and item.name not in _EXCLUDED_DIRS
+                and item.name not in NON_AGENT_DIRS
             )
         ]
 
@@ -853,6 +846,15 @@ def _run_smart_merge(
     default=False,
 )
 @click.option(
+    "--from-adk-project",
+    is_flag=True,
+    help=(
+        "Only write agents-cli-manifest.yaml for an existing ADK project, "
+        "detecting its name, language and agent directory; renders no template"
+    ),
+    default=False,
+)
+@click.option(
     "--skip-welcome",
     is_flag=True,
     hidden=True,
@@ -880,9 +882,11 @@ def enhance(
     force: bool,
     dry_run: bool,
     prefer_new: bool,
+    from_adk_project: bool,
     agent_directory: str | None,
     skip_welcome: bool = False,
     bq_analytics: bool = False,
+    memory_bank: bool = False,
     agent_gateway: bool | None = None,
     agent_runtime_identity_default: str | None = None,
     cloud_run_identity_default: str | None = None,
@@ -906,8 +910,35 @@ def enhance(
     --base-template is separate. It names a base template this CLI ships, which
     sits underneath whatever TEMPLATE_PATH supplies.
 
+    --from-adk-project renders nothing: it only writes a minimal
+    agents-cli-manifest.yaml for an ADK project agents-cli did not create, so
+    commands like eval and info can find it. Add deployment later with
+    --deployment-target.
+
     Use --dry-run to preview changes before applying them.
     """
+
+    # Setup debug logging if enabled
+    if debug:
+        configure_logging(logging.DEBUG)
+        console.print("> Debug mode enabled")
+        logging.debug("Starting enhance command in debug mode")
+
+    if dry_run and force:
+        raise click.UsageError("--dry-run is not compatible with --force mode.")
+
+    if from_adk_project:
+        _enhance_from_adk_project(
+            ctx,
+            template_path=template_path,
+            name=name,
+            agent_directory=agent_directory,
+            region=region,
+            force=force,
+            dry_run=dry_run,
+            mode=InteractionMode(interactive=interactive, auto_approve=auto_approve),
+        )
+        return
 
     # Display welcome banner for enhance command (unless skipped by nested command)
     if not skip_welcome:
@@ -957,9 +988,6 @@ def enhance(
         or not _should_skip_config_value(v)
         for k, v in cli_override_args.items()
     )
-
-    if dry_run and force:
-        raise click.UsageError("--dry-run is not compatible with --force mode.")
 
     # Before the saved-config replay and smart-merge, which re-apply the
     # recorded template and would otherwise ignore a typed adk@ silently.
@@ -1087,12 +1115,6 @@ def enhance(
                     prefer_new=prefer_new,
                 ):
                     return
-
-    # Setup debug logging if enabled
-    if debug:
-        configure_logging(logging.DEBUG)
-        console.print("> Debug mode enabled")
-        logging.debug("Starting enhance command in debug mode")
 
     # Default cicd_runner to "skip" for non-interactive invocation
     if not interactive and not cicd_runner:
@@ -1481,6 +1503,7 @@ def enhance(
         skip_welcome=True,  # Skip welcome message since enhance shows its own
         cli_overrides=final_cli_overrides if final_cli_overrides else None,
         bq_analytics=bq_analytics,
+        memory_bank=memory_bank,
         agent_gateway=effective_create_params["agent_gateway"],
         agent_runtime_identity_default=effective_create_params[
             "agent_runtime_identity_default"
@@ -1496,12 +1519,253 @@ def enhance(
         update_acli_metadata(pathlib.Path.cwd(), {}, base_template=recorded_base)
 
 
+# Options that render a template, which --from-adk-project never does, mapped
+# to the flag shown in the error.
+_TEMPLATE_ONLY_OPTIONS = {
+    "template_path": "TEMPLATE_PATH",
+    "base_template": "--base-template",
+    "adk": "--adk",
+    "agent_garden": "--agent-garden",
+    "deployment_target": "--deployment-target",
+    "session_type": "--session-type",
+    "cicd_runner": "--cicd-runner",
+    "agent_gateway": "--agent-gateway/--no-agent-gateway",
+    "agent_runtime_identity_default": "--agent-runtime-identity-default",
+    "cloud_run_identity_default": "--cloud-run-identity-default",
+    "prototype": "--prototype",
+    "bq_analytics": "--bq-analytics",
+    "prefer_new": "--prefer-new",
+    "agent_guidance_filename": "--agent-guidance-filename",
+    "skip_checks": "--skip-checks",
+    "skip_deps": "--skip-deps",
+}
+
+
+def _enhance_from_adk_project(
+    ctx: click.Context,
+    *,
+    template_path: pathlib.Path,
+    name: str | None,
+    agent_directory: str | None,
+    region: str,
+    force: bool,
+    dry_run: bool,
+    mode: InteractionMode,
+) -> None:
+    """Write a minimal manifest for an ADK project agents-cli did not create."""
+    rejected = [
+        flag
+        for param, flag in _TEMPLATE_ONLY_OPTIONS.items()
+        if ctx.get_parameter_source(param) == ParameterSource.COMMANDLINE
+        # An explicit `.` names the current project, as the docs' examples do.
+        and not (param == "template_path" and template_path == pathlib.Path("."))
+    ]
+    if rejected:
+        raise click.UsageError(
+            f"--from-adk-project only writes agents-cli-manifest.yaml; it renders "
+            f"no template, so {', '.join(rejected)} cannot be used with it.\n"
+            "  It accepts --name, --agent-directory, --region, --dry-run, --force "
+            "and --yes/--interactive.\n"
+            "  Add deployment afterwards with: "
+            "agents-cli scaffold enhance --deployment-target <target>"
+        )
+
+    project_dir = pathlib.Path.cwd()
+    manifest_path = project_dir / "agents-cli-manifest.yaml"
+    if manifest_path.exists() and not force and not dry_run:
+        raise click.ClickException(
+            f"{manifest_path.name} already exists in '{project_dir}'.\n"
+            "  Pass --force to replace it, or run `agents-cli scaffold enhance` "
+            "without --from-adk-project to re-apply the recorded template."
+        )
+
+    detected = detect_project(
+        project_dir,
+        agent_directory=agent_directory,
+        choose_agent_directory=_prompt_agent_directory if mode.interactive else None,
+    )
+    try:
+        validate_agent_directory_name(
+            detected.agent_directory, language=detected.language
+        )
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
+    agent_file_display = detected.agent_file.relative_to(project_dir).as_posix()
+    logging.info(
+        "Detected a %s ADK project: agent in %s",
+        get_language_config(detected.language)["display_name"],
+        agent_file_display,
+    )
+
+    root_agent_name = _read_root_agent_name(detected.agent_file)
+    if root_agent_name is None:
+        logging.warning(
+            "Could not read the root agent's name from %s; it will be derived "
+            "from the project name.",
+            agent_file_display,
+        )
+    # --region has a default; only an explicit one is worth recording.
+    explicit_region = (
+        region
+        if ctx.get_parameter_source("region") == ParameterSource.COMMANDLINE
+        else None
+    )
+    manifest = _render_minimal_manifest(
+        detected,
+        name=name or _detect_project_name(project_dir, detected.language),
+        root_agent_name=root_agent_name,
+        region=explicit_region,
+    )
+
+    console.print()
+    console.print(f"[bold]{manifest_path.name}[/bold]")
+    # Not console.print: Rich wraps long lines, which would break copied YAML.
+    click.echo(manifest, nl=False)
+    console.print()
+
+    if dry_run:
+        logging.info("Dry run: nothing written.")
+        return
+
+    manifest_path.write_text(manifest, encoding="utf-8")
+    logging.info("Wrote %s", manifest_path.name)
+    console.print()
+    console.print("Next steps:")
+    console.print("  • agents-cli info")
+    console.print(
+        "  • agents-cli eval run --dataset <path/to/dataset.json>   "
+        "(needs an eval dataset; see the Evaluation guide)"
+    )
+    console.print(
+        "  • agents-cli scaffold enhance --deployment-target <target>  to add deployment"
+    )
+
+
+def _prompt_agent_directory(directories: list[str]) -> str:
+    """Ask which of several agent directories holds the root agent."""
+    console.print()
+    console.print("📁 [bold]Agent Directory Selection[/bold]")
+    console.print()
+    console.print("Several directories contain an agent. Choose the root agent:")
+    for i, directory in enumerate(directories, start=1):
+        console.print(f"  {i}. [bold]{directory}[/]")
+    console.print()
+    while True:
+        choice = IntPrompt.ask("Select agent directory", default=1)
+        if 1 <= choice <= len(directories):
+            return directories[choice - 1]
+        console.print(f"[bold red]Error:[/] Invalid selection: {choice}")
+
+
+def _read_root_agent_name(agent_file: pathlib.Path) -> str | None:
+    """The ADK name of the root agent defined in an ``agent.py``, if readable.
+
+    Reads the ``name=`` keyword of the call assigned to ``root_agent``. Anything
+    else (a root_agent.yaml, other languages, a name built at runtime, a syntax
+    error) yields None, which leaves it out of the manifest so it is derived
+    from the project name.
+    """
+    if agent_file.suffix != ".py":
+        return None
+    try:
+        source = agent_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        logging.debug("Could not read %s: %s", agent_file, e)
+        return None
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError) as e:
+        logging.debug("Could not parse %s: %s", agent_file, e)
+        return None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+            if not any(
+                isinstance(target, ast.Name) and target.id == "root_agent"
+                for target in node.targets
+            ):
+                continue
+            call = node.value
+        elif (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "root_agent"
+            and isinstance(node.value, ast.Call)
+        ):
+            call = node.value
+        else:
+            continue
+        for keyword in call.keywords:
+            if keyword.arg == "name" and isinstance(keyword.value, ast.Constant):
+                value = keyword.value.value
+                return value if isinstance(value, str) and value else None
+    return None
+
+
+def _detect_project_name(project_dir: pathlib.Path, language: str) -> str:
+    """``[project].name`` from pyproject.toml for Python, else the directory name."""
+    if language != "python":
+        return project_dir.name
+    pyproject = project_dir / "pyproject.toml"
+    if not pyproject.is_file():
+        return project_dir.name
+    try:
+        with open(pyproject, "rb") as f:
+            project = tomllib.load(f).get("project")
+    except (OSError, tomllib.TOMLDecodeError) as e:
+        logging.warning(
+            "Could not read %s (%s); using the directory name as the project name. "
+            "Pass --name to set it.",
+            pyproject,
+            e,
+        )
+        return project_dir.name
+    # The file is the user's: [project] may be missing or not a table.
+    pyproject_name = project.get("name") if isinstance(project, dict) else None
+    if isinstance(pyproject_name, str) and pyproject_name:
+        return pyproject_name
+    return project_dir.name
+
+
+def _render_minimal_manifest(
+    detected: DetectedProject,
+    *,
+    name: str,
+    root_agent_name: str | None,
+    region: str | None,
+) -> str:
+    """The ``agents-cli-manifest.yaml`` ``--from-adk-project`` writes.
+
+    No deployment target, session type or CI/CD runner is recorded: those come
+    with the files ``scaffold enhance --deployment-target ...`` renders, and
+    recording them alone would make ``deploy`` fail in confusing ways.
+    """
+    data: dict[str, Any] = {"name": name, "agent_directory": detected.agent_directory}
+    if region is not None:
+        data["region"] = region
+    data["language"] = detected.language
+    # Without it ProjectConfig falls back to adk_python, so a later
+    # `scaffold enhance --deployment-target` would render a Go project from
+    # the Python template.
+    data["base_template"] = _base_template_for_language(detected.language)
+    # Assumed from the agent file: this mode only recognises ADK layouts.
+    data["framework"] = DEFAULT_FRAMEWORK
+    if root_agent_name:
+        data["create_params"] = {"root_agent_name": root_agent_name}
+    return yaml.safe_dump(data, default_flow_style=False, sort_keys=False)
+
+
 def _template_spec(template_path: pathlib.Path) -> str:
     """TEMPLATE_PATH as typed.
 
     pathlib turns ``https://`` into ``https:/``, and ``/`` into ``\\`` on Windows.
     """
     return re.sub(r"^([a-zA-Z][\w+.-]+):/(?!/)", r"\1://", template_path.as_posix())
+
+
+def _base_template_for_language(language: str) -> str:
+    """The bundled ADK base template for ``language`` (adk_python, adk_go, ...)."""
+    suffix = get_language_config(language)["base_template_suffix"]
+    return DEFAULT_BASE_TEMPLATE if suffix is None else f"adk{suffix}"
 
 
 def _language_from_base_template(base_template: str | None) -> str | None:

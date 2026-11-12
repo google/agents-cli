@@ -24,12 +24,11 @@ import click
 
 from google.agents.cli.__init__ import __version__
 from google.agents.cli._fs import delete_folder, make_folders_writable
-from google.agents.cli._project import find_project_root
 from google.agents.cli._trust import require_confirmation
 from google.agents.cli.extension._loader import (
     RECOVERY_COMMANDS,
+    current_extension_set,
     is_out_of_range,
-    load_extension_set,
     load_extension_spec,
 )
 from google.agents.cli.extension._manifest import (
@@ -42,20 +41,23 @@ from google.agents.cli.extension._manifest import (
 )
 from google.agents.cli.extension._paths import (
     scope_root,
-    user_config_root,
     vendored_extensions_dir,
 )
 from google.agents.cli.extension._refs import (
     LATEST,
-    UNPINNED_REF,
+    PYPI_PREFIX,
+    ExtensionRef,
     RefParseError,
+    is_pypi_reference,
     parse_ref,
 )
 from google.agents.cli.extension._resolver import (
+    CopyChangedError,
     ResolverError,
     materialize,
     pin_ref,
     resolve_sha,
+    unstamp,
 )
 from google.agents.cli.extension._skills import (
     SkillError,
@@ -107,7 +109,8 @@ def _check_compat(spec: ExtensionSpec | None) -> None:
     if spec.error_on_incompatible:
         raise click.ClickException(
             f"{msg} Not installing (on_incompatible: error). "
-            "Pin a compatible ref with --ref, or upgrade the CLI."
+            "Pin a compatible ref with --ref (for pypi@, ==<version> in the "
+            "reference), or upgrade the CLI."
         )
     logging.warning("%s Installing anyway (on_incompatible: warn).", msg)
 
@@ -129,9 +132,7 @@ def _check_reserved_commands(spec: ExtensionSpec | None) -> None:
         )
 
 
-def _check_command_conflicts(
-    project_root: Path | None, spec: ExtensionSpec | None, scope: str
-) -> None:
+def _check_command_conflicts(spec: ExtensionSpec | None, scope: str) -> None:
     """Raise if the candidate claims a command *another* extension already owns.
 
     Re-adding the same name at the same scope is a replace, which is how a pin
@@ -140,7 +141,7 @@ def _check_command_conflicts(
     """
     if spec is None:
         return
-    installed = load_extension_set(project_root, user_config_root())
+    installed = current_extension_set()
     clashes = sorted(
         (contribution.name, owner.extension_name)
         for contribution in spec.commands
@@ -174,8 +175,8 @@ def _check_command_conflicts(
     "ref_override",
     default=None,
     help=(
-        "Pin a branch, tag, or SHA. For a first-party extension, "
-        f"{LATEST} pins the latest release."
+        "Pin a branch, tag, or SHA (for pypi@, write pypi@<package>==<version> "
+        f"instead). For a first-party extension, {LATEST} pins the latest release."
     ),
 )
 @require_confirmation("Install this extension?")
@@ -185,8 +186,14 @@ def cmd_add(
     ref_override: str | None,
     auto_approve: bool,
 ) -> None:
-    """Add an extension from a git reference or local path."""
+    """Add an extension from git, a local path, or PyPI."""
     scope = "user" if global_ else "project"
+    # Before parse_ref, which would reject a --ref like '>=1' as a bad version.
+    if ref_override is not None and is_pypi_reference(reference):
+        raise click.UsageError(
+            "--ref does not apply to a pypi@ extension: write the version into the "
+            f"reference, e.g. {PYPI_PREFIX}<package>==1.2.0."
+        )
     try:
         ref = parse_ref(reference, ref_override=ref_override)
     except RefParseError as e:
@@ -197,9 +204,6 @@ def cmd_add(
             "branches or tags. Drop --ref."
         )
 
-    if not confirm_trust(ref, auto_approve=auto_approve):
-        raise click.ClickException("Aborted: extension not trusted.")
-
     root = scope_root(scope)
     if root is None:
         raise click.ClickException(
@@ -207,7 +211,6 @@ def cmd_add(
             "install at project scope by default), or pass --global to install "
             "for all projects."
         )
-    project_root = root if scope == "project" else find_project_root(Path.cwd())
 
     manifest = root / EXTENSIONS_FILE
     try:
@@ -222,12 +225,16 @@ def cmd_add(
     other_scope = other_scope_extensions(scope, root)
     try:
         ref = pin_ref(ref)
-        sha = resolve_sha(ref)
-        name, extension_dir = materialize(
-            ref, sha, vendored_extensions_dir(root), ref_flag="--ref"
-        )
     except ResolverError as e:
         raise click.ClickException(str(e)) from e
+    # After pinning, so the prompt names the version that would be installed.
+    if not confirm_trust(ref, auto_approve=auto_approve):
+        raise click.ClickException("Aborted: extension not trusted.")
+    try:
+        sha = resolve_sha(ref)
+    except ResolverError as e:
+        raise click.ClickException(str(e)) from e
+    name, extension_dir = _materialize_or_fail(ref, sha, root, installed_extensions)
 
     # Every gate runs before anything is recorded, so a refused install leaves
     # no entry to roll back. The vendored copy has to exist first (the gates read
@@ -238,7 +245,7 @@ def cmd_add(
         _check_other_scope(name, scope, other_scope, spec, skills_dir)
         _check_compat(spec)
         _check_reserved_commands(spec)
-        _check_command_conflicts(project_root, spec, scope)
+        _check_command_conflicts(spec, scope)
         removed_skills = _replace_skills_or_fail(
             spec, skills_dir, name, installed_extensions | other_scope
         )
@@ -250,15 +257,10 @@ def cmd_add(
         # entry pointing at nothing, and its commands silently fall back to the
         # built-ins until the copy is back.
         if name in installed_extensions:
-            raise click.ClickException(
-                f"{e.format_message()}\n"
-                f"  {name!r} is still recorded; restore its copy with: agents-cli install"
-            ) from e
+            raise _still_recorded(e.format_message(), name) from e
         raise
 
-    entry = ExtensionEntry(
-        name=name, source=ref.raw, ref=ref.ref or UNPINNED_REF, sha=sha, scope=scope
-    )
+    entry = ExtensionEntry.for_ref(ref, name=name, sha=sha, scope=scope)
     try:
         upsert_extension_entry(manifest, entry)
     except (OSError, ExtensionListError) as e:
@@ -281,6 +283,29 @@ def cmd_add(
     click.secho(
         "Extensions are experimental; the manifest format may still change.",
         dim=True,
+    )
+
+
+def _materialize_or_fail(
+    ref: ExtensionRef, sha: str, root: Path, installed_extensions: set[str]
+) -> tuple[str, Path]:
+    try:
+        return materialize(ref, sha, vendored_extensions_dir(root), ref_flag="--ref")
+    except CopyChangedError as e:
+        name = e.extension_dir.name
+        if name in installed_extensions:
+            unstamp(e.extension_dir)
+            raise _still_recorded(str(e), name) from e
+        # Nothing records a new copy, so a half-made one would linger.
+        delete_folder(e.extension_dir)
+        raise click.ClickException(str(e)) from e
+    except ResolverError as e:
+        raise click.ClickException(str(e)) from e
+
+
+def _still_recorded(message: str, name: str) -> click.ClickException:
+    return click.ClickException(
+        f"{message}\n  {name!r} is still recorded; restore its copy with: agents-cli install"
     )
 
 

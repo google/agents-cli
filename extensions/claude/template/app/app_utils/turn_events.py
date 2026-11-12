@@ -445,3 +445,19 @@ def subagent_name(tool_input: Any) -> str:
     if isinstance(tool_input, dict) and tool_input.get("subagent_type"):
         return str(tool_input["subagent_type"])
     return "subagent"
+
+
+def system_prompt_text(system_prompt: Any) -> str:
+    """The text of a `ClaudeAgentOptions.system_prompt`, or "" when it has none.
+
+    A preset's own prompt is the CLI's, so only what it appends counts; a system
+    prompt file isn't read.
+    """
+    if isinstance(system_prompt, str):
+        return system_prompt
+    if isinstance(system_prompt, dict):
+        if system_prompt.get("type") == "preset":
+            return system_prompt.get("append", "")
+        if system_prompt.get("type") == "custom":
+            return system_prompt.get("prompt", "")
+    return ""

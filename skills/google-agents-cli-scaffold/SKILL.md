@@ -12,7 +12,7 @@ description: >
 metadata:
   author: Google
   license: Apache-2.0
-  version: 1.13.0
+  version: 1.14.0
   requires:
     bins:
       - agents-cli
@@ -135,7 +135,7 @@ agents-cli scaffold enhance . --cicd-runner github_actions
 > **`adk_python` and `adk_go` are the only built-in templates.** `adk_python` is the default, so a Go project
 > needs `--agent adk_go`. `adk` is an alias for `adk_python`.
 > Other frameworks and third-party templates ship as template repos you scaffold
-> from directly: `--agent google/agents-cli/extensions/langchain/template@v1.13.0`, with nothing installed. First-party
+> from directly: `--agent google/agents-cli/extensions/langchain/template@v1.14.0`, with nothing installed. First-party
 > templates live in `extensions/` (`langchain/template`, `claude/template`); see
 > `/google-agents-cli-workflow` → `references/extension.md` to publish your own. Capabilities
 > beyond the template — retrieval, sandboxed execution, memory, OAuth, guardrails — are

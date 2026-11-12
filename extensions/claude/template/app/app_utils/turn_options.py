@@ -19,7 +19,9 @@ from __future__ import annotations
 import dataclasses
 import functools
 import logging
+import os
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -92,6 +94,7 @@ async def turn_options(
             ),
             **cli_telemetry_env(),
             **options.env,
+            **_traffic_tag_env(options.env),
             # After options.env, so model calls always go to Gemini platform.
             "CLAUDE_CODE_USE_VERTEX": "1",
             "ANTHROPIC_API_KEY": "",
@@ -190,6 +193,26 @@ def _is_bare(options: ClaudeAgentOptions, setting_sources: list[str]) -> bool:
         and not options.plugins
         and not options.hooks
     )
+
+
+def _traffic_tag_env(env: Mapping[str, str]) -> dict[str, str]:
+    """Adds the agents-cli tag to the headers the CLI sends on model calls.
+
+    Gemini platform attributes model calls to a tool by their x-goog-api-client
+    header, and the Anthropic client sends none. Headers the agent or the
+    server already sets are kept.
+    """
+    # The CLI's own environment: the agent's env wins over the server's.
+    cli_env = {**os.environ, **env}
+    opt_out = cli_env.get("AGENTS_CLI_TELEMETRY", "").strip().lower()
+    if cli_env.get("DO_NOT_TRACK") or opt_out in ("0", "false", "no", "off"):
+        return {}
+    tag = (
+        "x-goog-api-client: "
+        f"agents-cli-app/{settings.AGENTS_CLI_VERSION}+claude-agent-sdk"
+    )
+    own = cli_env.get("ANTHROPIC_CUSTOM_HEADERS")
+    return {"ANTHROPIC_CUSTOM_HEADERS": f"{own}\n{tag}" if own else tag}
 
 
 def _log_cli_stderr(line: str) -> None:

@@ -121,26 +121,27 @@ def _lint_python(*, fix: bool, mypy: bool, skip_codespell: bool, skip_ty: bool) 
         )
 
 
+def _lint_java(*, fix: bool, mypy: bool, skip_codespell: bool, skip_ty: bool) -> None:
+    """Run Java code quality checks with Checkstyle (``gradle checkstyleMain checkstyleTest``)."""
+    # Checkstyle only reports issues, so --fix is ignored with a warning too.
+    _warn_unsupported_flags(
+        "Java", fix=fix, mypy=mypy, skip_ty=skip_ty, skip_codespell=skip_codespell
+    )
+    run(
+        ["gradle", "checkstyleMain", "checkstyleTest"],
+        check_err_msg="Checkstyle found issues",
+    )
+
+
 def _lint_go(*, fix: bool, mypy: bool, skip_codespell: bool, skip_ty: bool) -> None:
     """Run Go code quality checks with ``golangci-lint``.
 
     ``fix`` maps to ``golangci-lint run --fix``. Flags
     that don't map to the Go toolchain are ignored with a warning.
     """
-    ignored = [
-        flag
-        for flag, supplied in (
-            ("--mypy", mypy),
-            ("--skip-ty", skip_ty),
-            ("--skip-codespell", skip_codespell),
-        )
-        if supplied
-    ]
-    if ignored:
-        logging.warning(
-            "Flags %s are not supported for Go, ignoring.",
-            ", ".join(ignored),
-        )
+    _warn_unsupported_flags(
+        "Go", mypy=mypy, skip_ty=skip_ty, skip_codespell=skip_codespell
+    )
     cmd = [*_golangci_lint_invocation(), "run"]
     if fix:
         cmd.append("--fix")
@@ -166,11 +167,49 @@ def _golangci_lint_invocation() -> list[str]:
         return ["go", "run", _GOLANGCI_LINT]
 
 
+def _lint_typescript(
+    *, fix: bool, mypy: bool, skip_codespell: bool, skip_ty: bool
+) -> None:
+    """Run TypeScript code quality checks with the project's ``npm run lint`` (ESLint)."""
+    _warn_unsupported_flags(
+        "TypeScript", mypy=mypy, skip_ty=skip_ty, skip_codespell=skip_codespell
+    )
+    # The lint script runs the project's own ESLint, so sync dependencies first
+    # like `uv sync` does for Python.
+    run(["npm", "install"], check_err_msg="Failed to install dependencies")
+    cmd = ["npm", "run", "lint"]
+    if fix:
+        cmd.extend(["--", "--fix"])
+    run(cmd, check_err_msg="ESLint found issues")
+
+
+def _lint_kotlin(*, fix: bool, mypy: bool, skip_codespell: bool, skip_ty: bool) -> None:
+    """Run Kotlin code quality checks with ktlint (``gradle ktlintCheck``)."""
+    _warn_unsupported_flags(
+        "Kotlin", mypy=mypy, skip_ty=skip_ty, skip_codespell=skip_codespell
+    )
+    task = "ktlintFormat" if fix else "ktlintCheck"
+    run(["gradle", task], check_err_msg="ktlint found issues")
+
+
+def _warn_unsupported_flags(language: str, **flags: bool) -> None:
+    """Warn about supplied flags that don't apply to ``language``."""
+    ignored = [
+        f"--{name.replace('_', '-')}" for name, supplied in flags.items() if supplied
+    ]
+    if ignored:
+        logging.warning(
+            "Flags %s are not supported for %s, ignoring.",
+            ", ".join(ignored),
+            language,
+        )
+
+
 # `None` = not supported yet; dispatch_language raises a clear error.
 LANGUAGE_HANDLERS = {
     "python": _lint_python,
     "go": _lint_go,
-    "java": None,
-    "typescript": None,
-    "kotlin": None,
+    "java": _lint_java,
+    "typescript": _lint_typescript,
+    "kotlin": _lint_kotlin,
 }

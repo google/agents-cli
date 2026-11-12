@@ -32,7 +32,9 @@ if TYPE_CHECKING:
     from google.agents.cli.extension._loader import ResolvedCommand
 
 # A pinned tag re-resolves to itself, so a plain `extension update` can't fix this.
-_TO_COMPATIBLE_REF = f"--to <tag> ({LATEST} for a first-party extension)"
+_TO_COMPATIBLE_REF = (
+    f"--to <tag or version> ({LATEST} for a first-party or pypi@ extension)"
+)
 
 
 def installed_override(dotted: str) -> ResolvedCommand | None:
@@ -45,10 +47,9 @@ def installed_override(dotted: str) -> ResolvedCommand | None:
     """
     if os.environ.get(DISABLE_OVERRIDES_ENV) == "1":
         return None
-    from google.agents.cli.extension._loader import load_extension_set
-    from google.agents.cli.extension._paths import user_config_root
+    from google.agents.cli.extension._loader import current_extension_set
 
-    extension_set = load_extension_set(find_project_root(Path.cwd()), user_config_root())
+    extension_set = current_extension_set()
     resolved = extension_set.commands.get(dotted)
     if resolved is None or resolved.contribution.kind != "override":
         return None

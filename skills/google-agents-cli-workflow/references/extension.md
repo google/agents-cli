@@ -72,7 +72,7 @@ commands:
 ```bash
 agents-cli extension add <ref> [--global] [--ref <branch|tag|sha|:latest>] [--yes]
 agents-cli extension list                      # what's active, its scope, and its commands
-agents-cli extension update [<name>] [--to <branch|tag|sha|:latest>]  # advance or move the pin and replace its skills
+agents-cli extension update [<name>] [--to <branch|tag|sha|version|:latest>]  # advance or move the pin and replace its skills
 agents-cli extension remove <name> [--global]  # drop it, its vendored copy, and skills no other scope uses
 agents-cli info                                # shows active extensions + sources + conflicts
 ```
@@ -86,11 +86,20 @@ agents-cli info                                # shows active extensions + sourc
 | `https://git.example.com/acme/acli-extensions` | any git host — `https://`, `http://` or `ssh://` |
 | `git@git.example.com:acme/acli-extensions` | the same host, in scp form |
 | `local@../my-extension` | a local path (for development) |
+| `pypi@acme-extensions` | the newest release of a package on PyPI or your package index |
+| `pypi@acme-extensions==1.2.0` | a specific release of that package |
+| `pypi@acme-extensions==1.2.0#core/soc2` | select one extension from a multi-extension package |
 | `<name>` | first-party shorthand — pins the latest release tag of the `google/agents-cli` repo that is not newer than your agents-cli (for example `v1.12.0`) |
-| `--ref <branch\|tag\|sha>` | pin a branch, tag, or commit SHA |
+| `--ref <branch\|tag\|sha>` | pin a branch, tag, or commit SHA of a git reference |
 | `--ref :latest` | pin the latest release, as the shorthand does without `--ref` (first-party only) |
 
 A URL is cloned with your ambient git configuration, so whatever already authenticates you to that host (credential helper, ssh agent) applies — agents-cli neither asks for nor stores credentials.
+
+A `pypi@` reference installs an extension from a wheel:
+- The index is the first of `UV_DEFAULT_INDEX`, `UV_INDEX_URL`, `PIP_INDEX_URL` that is set, else PyPI. Credentials in the index URL go only to that host.
+- The version goes in the reference (`==<version>`); `--ref` doesn't apply.
+- Without `#<folder>`, the wheel's root extension or its only extension is used; when it holds several, the error lists the references to pick from.
+- The wheel is only read, never built, so installing runs no package code.
 
 An extension changes commands. To run a different agent framework, scaffold from that framework's template instead (`agents-cli create my-agent --agent <org>/<repo>@<tag> --deployment-target <target>`); the template carries its own `agents-cli-extension.yaml`, so nothing is installed machine-wide.
 
@@ -103,19 +112,23 @@ An extension changes commands. To run a different agent framework, scaffold from
 ### Trust
 
 - First-party extensions added via the **shorthand** form (`extension add <name>`) are trusted automatically.
-- Every other reference — an `org/repo`, a URL, a local path, and `google/agents-cli` typed in full — **prompts before install** (its commands run arbitrary code when invoked). `--yes` skips the prompt (blanket trust — use only for automation/bootstrap).
+- Every other reference — an `org/repo`, a URL, a `pypi@` package, a local path, and `google/agents-cli` typed in full — **prompts before install** (its commands run arbitrary code when invoked). `--yes` skips the prompt (blanket trust — use only for automation/bootstrap).
 
 ### Pinning and updates
 
-- `extension add` resolves the ref to an exact commit SHA and records `source` / `ref` / `sha` under `extensions:` in `agents-cli-extensions.yaml` (its own file at both scopes, so the writer can never touch your project manifest), vendoring a working copy under `extensions/`.
+- `extension add` resolves the reference to an exact pin and records it under `extensions:` in `agents-cli-extensions.yaml` (its own file at both scopes, so the writer can never touch your project manifest), vendoring a working copy under `extensions/`.
+  - A git entry records `source` / `ref` / `sha`; `sha` is the commit.
+  - A `pypi@` entry records `source` / `version` / `sha`; `source` holds the `==<version>` pin, `version` is that release, and `sha` is the wheel's sha256.
 - `agents-cli install` re-materializes any missing/stale vendored copy from the pinned SHA (verified by a stamp file) — CI and fresh checkouts get the exact reviewed code, command overrides and skills. It never advances a pin.
   - It also deletes the skills of extensions that are no longer recorded.
   - It deletes none when an extension list for that skills folder cannot be fully read, or when the project's or the user's `.agents/skills` folder is reached through a link.
   - A project whose `.agents` folder links to `~/.agents` is protected only while `install` runs in that project. `install` in another project can delete its skills from `~/.agents/skills`, and `install` in that project brings them back.
   - A skill folder with a `.agents-cli-extension` file belongs to the extension: `extension add`, `extension update` and `agents-cli install` replace it whole. To change a skill, copy its folder under a new name.
-- `extension update [name]` advances the pin to the latest commit of the **same tracked ref** (e.g. a branch), re-prompting for third-party trust, and replaces the extension's skills with the new version's. If the new skills cannot be installed, it keeps the old pin. Nothing updates in the background. A pinned tag/SHA re-resolves to itself.
-  - `--to <branch|tag|sha>` moves the named extension's pin to another ref.
-  - `--to :latest` moves a first-party extension to the latest release that is not newer than your agents-cli; without a name it moves every first-party extension and skips the rest. It records the tag, so run it again to pick up later releases.
+- `extension update [name]` re-resolves pins, re-prompting for third-party trust, and replaces the extension's skills with the new version's. If the new skills cannot be installed, it keeps the old pin. Nothing updates in the background.
+  - A git extension advances to the latest commit of the **same tracked ref** (e.g. a branch); a pinned tag/SHA re-resolves to itself.
+  - A `pypi@` extension stays on its `==<version>` pin.
+  - `--to` moves the named extension's pin: a git extension to a branch, tag, or SHA; a `pypi@` extension to a release (`--to 1.3.0` or `--to ==1.3.0`).
+  - `--to :latest` moves a first-party extension to the latest release that is not newer than your agents-cli, and a `pypi@` extension to the newest release on its index; without a name it moves every first-party and `pypi@` extension and skips the rest. It records the release it picked, so run it again to pick up later releases.
 - `extension remove <name> [--global]` drops the entry and deletes the working copy and the skills it owns. It removes from one scope per call: project before user without `--global`, user scope only with `--global`. If the home folder is a project and the extension is still installed at both scopes, `remove` keeps the shared skills until the other scope is removed too.
 
 Tracking a version:

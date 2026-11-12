@@ -25,9 +25,12 @@ from openinference.semconv.trace import SpanAttributes
 from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
 from opentelemetry.sdk.trace.sampling import Decision, Sampler, SamplingResult
 from opentelemetry.trace import NoOpTracer
+from opentelemetry.util.genai.types import TextPart
+from opentelemetry.util.genai.utils import gen_ai_json_dumps
 
 from app.app_utils.telemetry import config
 from app.app_utils.telemetry.subagent_spans import current_subagent_spans
+from app.app_utils.turn_events import system_prompt_text
 
 
 def install_instrumentation() -> None:
@@ -87,6 +90,20 @@ class AgentNameProcessor(SpanProcessor):
             span.set_attribute("gen_ai.agent.name", name)
         elif SpanAttributes.AGENT_NAME not in attributes:
             span.set_attribute("gen_ai.agent.name", self._agent_name)
+
+
+# NOTE: The OpenTelemetry GenAI conventions are adding memory operations (a
+# search_memory span with gen_ai.memory.records). Once a released version defines
+# them, record recalled memories that way.
+def system_prompt_attributes(system_prompt: Any) -> dict[str, str]:
+    """The turn span's record of the system prompt the model got, as ADK's.
+
+    Empty unless content capture is on: the prompt can hold the user's memories.
+    """
+    text = system_prompt_text(system_prompt)
+    if not text or not config.capture_content():
+        return {}
+    return {"gen_ai.system_instructions": gen_ai_json_dumps([TextPart(content=text)])}
 
 
 def _trace_config() -> TraceConfig:

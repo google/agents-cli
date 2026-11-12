@@ -34,19 +34,19 @@ make load-test DURATION=60 USERS=20 RAMP=5
 - `USERS`: Number of concurrent users (default: 10)
 - `RAMP`: Ramp-up rate in users per second (default: 2)
 
-### Alternative: Direct Maven Command
+### Alternative: Direct Gradle Command
 
-You can also run the load test directly with Maven:
+You can also run the load test directly with Gradle:
 
 ```bash
-mvn test-compile failsafe:integration-test failsafe:verify \
-  -Dstaging.url=http://127.0.0.1:8080 \
-  -Dload.duration=30 \
-  -Dload.users=10 \
-  -Dload.ramp=2
+gradle loadTest \
+  -Pstaging.url=http://127.0.0.1:8080 \
+  -Pload.duration=30 \
+  -Pload.users=10 \
+  -Pload.ramp=2
 ```
 
-**Note:** This approach compiles test classes and runs only failsafe goals (skips surefire/unit tests entirely).
+**Note:** The `loadTest` task runs only the load tests; `gradle test` skips them.
 
 ## Remote Load Testing (Targeting Cloud Run)
 

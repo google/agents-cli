@@ -13,25 +13,25 @@
 # limitations under the License.
 
 # Build stage
-FROM maven:3.9-eclipse-temurin-17 AS builder
+FROM gradle:9.5.1-jdk17 AS build
 
-WORKDIR /app
+# Store the cache outside the image's /home/gradle/.gradle VOLUME so Docker
+# keeps downloaded JARs in the layer.
+ENV GRADLE_USER_HOME=/cache/gradle
 
-# Copy pom.xml first for dependency caching
-COPY pom.xml ./
-RUN mvn dependency:go-offline -B
+WORKDIR /build
 
-# Copy source and build
+COPY settings.gradle.kts build.gradle.kts ./
+RUN gradle installDist --no-daemon --quiet
 COPY src ./src
-RUN mvn package -DskipTests -B
+RUN gradle installDist --no-daemon --quiet
 
 # Runtime stage
 FROM eclipse-temurin:17-jre
 
 WORKDIR /app
 
-# Copy the shaded JAR from builder
-COPY --from=builder /app/target/app.jar app.jar
+COPY --from=build /build/build/install/{{cookiecutter.project_name}}/lib ./lib
 
 ARG COMMIT_SHA=""
 ENV COMMIT_SHA=${COMMIT_SHA}
@@ -64,4 +64,4 @@ EXPOSE 8080
 
 # Cloud Run sets PORT env var
 # ADK web server supports API and Web UI
-ENTRYPOINT ["java", "-jar", "app.jar"]
+ENTRYPOINT ["java", "-cp", "lib/*", "{{cookiecutter.java_package}}.Main"]

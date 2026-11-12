@@ -46,6 +46,7 @@ from a2a.utils.constants import (
 )
 from google.protobuf.json_format import MessageToDict
 
+from google.agents.cli import _local_auth_check
 from google.agents.cli._adk_client import (
     DEFAULT_WS_PATH,
     create_session,
@@ -53,6 +54,7 @@ from google.agents.cli._adk_client import (
     run_sse,
     stream_live_events,
 )
+from google.agents.cli._auth_hints import with_auth_hint
 from google.agents.cli._modes import (
     MODE_A2A,
     MODE_ADK,
@@ -77,6 +79,7 @@ from google.agents.cli.run._a2a_pinning import (
     create_pinned_client,
     origin_of,
 )
+from google.agents.cli.run._error_text import clean_error_text
 from google.agents.cli.run._local_server import (
     SERVER_LOG_PATH,
     api_base_path,
@@ -114,6 +117,9 @@ class _SseEventResult(NamedTuple):
     rendered: bool
     # Text of the partial events printed since the last final one.
     streamed: str
+    # The last errorMessage printed, so the fatal frame that repeats it isn't
+    # printed again.
+    shown_error: str
 
 
 def _resolve_dispatch_target(
@@ -157,11 +163,13 @@ def _resolve_dispatch_target(
     chdir_project_root()
     cfg = read_project_config()
     require_agent_directory(cfg)
+    agent_dir = Path.cwd() / cfg.agent_directory
     server = ensure_server(
         Path.cwd(),
         cfg.agent_directory,
         language=cfg.language,
         otel_to_cloud=otel_to_cloud,
+        before_start=lambda: _local_auth_check.warn_if_model_auth_broken(agent_dir),
     )
     if server.started:
         _print_local_server_banner(server.port, server.pid, keep_running=start_server)
@@ -595,6 +603,8 @@ def _print_sse_event(
     verbose: bool,
     artifacts: list[str],
     streamed: str,
+    *,
+    shown_error: str,
 ) -> _SseEventResult:
     """Process and print a single SSE/NDJSON/Live event.
 
@@ -610,7 +620,14 @@ def _print_sse_event(
     if fatal_error:
         if last_author is not None:
             click.echo()  # end the partially streamed line before the error
-        raise click.ClickException(f"Agent run failed: {fatal_error}")
+        fatal_error = clean_error_text(str(fatal_error))
+        # ADK sends the errorMessage event first, then this frame as
+        # "<ErrorType>: <errorMessage>".
+        if shown_error and (
+            fatal_error == shown_error or fatal_error.endswith(f": {shown_error}")
+        ):
+            raise click.ClickException("Agent run failed with the error above.")
+        raise click.ClickException(with_auth_hint(f"Agent run failed: {fatal_error}"))
 
     rendered = False
     content = event.get("content")
@@ -653,13 +670,17 @@ def _print_sse_event(
     error_code = event.get("errorCode") or event.get("error_code")
     if error_message or error_code:
         code = f" [{error_code}]" if error_code else ""
-        click.secho(f"\n[error{code}]: {error_message or 'unknown error'}", fg="red")
+        text = clean_error_text(str(error_message)) if error_message else "unknown error"
+        click.secho(with_auth_hint(f"\n[error{code}]: {text}"), fg="red")
+        # A bare errorCode (e.g. MAX_TOKENS) says nothing a fatal frame could repeat.
+        if error_message:
+            shown_error = text
         rendered = True
 
     if verbose:
         click.echo()
         click.secho(json.dumps(event, indent=2), dim=True)
-    return _SseEventResult(last_author, rendered, streamed)
+    return _SseEventResult(last_author, rendered, streamed, shown_error)
 
 
 def _create_adk_session(base_url: str, app_name: str, headers: dict) -> str:
@@ -725,6 +746,7 @@ def _query_adk_live(
 
     last_author = None
     streamed = ""
+    shown_error = ""
     artifacts: list[str] = []
     # Separate from last_author: an author-less content frame prints without
     # updating it, so it can't gate the "no output" note.
@@ -741,8 +763,8 @@ def _query_adk_live(
             if event is None:
                 continue  # turn boundary; a single turn has just the one
             event = _without_inline_audio(event)
-            last_author, printed, streamed = _print_sse_event(
-                event, last_author, verbose, artifacts, streamed
+            last_author, printed, streamed, shown_error = _print_sse_event(
+                event, last_author, verbose, artifacts, streamed, shown_error=shown_error
             )
             rendered = printed or rendered
     except ConnectionClosedError as exc:
@@ -750,7 +772,7 @@ def _query_adk_live(
         close = exc.rcvd
         code = close.code if close is not None else "unknown"
         reason = (close.reason if close is not None else "").strip()
-        detail = f" {reason}" if reason else ""
+        detail = f" {with_auth_hint(reason)}" if reason else ""
         # Only our own server writes that log; a --url one logs elsewhere.
         hint = f"\n  Full traceback in {SERVER_LOG_PATH}." if local_server else ""
         raise click.ClickException(
@@ -804,6 +826,7 @@ def _query_adk_sse(
 
     last_author = None
     streamed = ""
+    shown_error = ""
     artifacts: list[str] = []
     rendered_any = False
     user_message = {"role": "user", "parts": parts}
@@ -816,8 +839,8 @@ def _query_adk_sse(
             headers=headers,
             user_id=_CLI_USER_ID,
         ):
-            last_author, rendered, streamed = _print_sse_event(
-                event, last_author, verbose, artifacts, streamed
+            last_author, rendered, streamed, shown_error = _print_sse_event(
+                event, last_author, verbose, artifacts, streamed, shown_error=shown_error
             )
             rendered_any = rendered_any or rendered
     except requests.HTTPError as exc:
@@ -935,6 +958,7 @@ def _query_legacy_agent_runtime_sse(
             )
         last_author = None
         streamed = ""
+        shown_error = ""
         artifacts: list[str] = []
         rendered_any = False
         for line in resp.iter_lines(decode_unicode=True):
@@ -944,8 +968,8 @@ def _query_legacy_agent_runtime_sse(
                 event = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            last_author, rendered, streamed = _print_sse_event(
-                event, last_author, verbose, artifacts, streamed
+            last_author, rendered, streamed, shown_error = _print_sse_event(
+                event, last_author, verbose, artifacts, streamed, shown_error=shown_error
             )
             rendered_any = rendered_any or rendered
 
@@ -1151,7 +1175,7 @@ async def _query_a2a_async(
 
             reason = _a2a_failure_reason(status) if status is not None else None
             if reason and not failure_shown:
-                click.secho(f"\n[error]: {reason}", fg="red")
+                click.secho(with_auth_hint(f"\n[error]: {reason}"), fg="red")
                 rendered_any = failure_shown = True
 
             if verbose:

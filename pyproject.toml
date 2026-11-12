@@ -1,0 +1,199 @@
+[project]
+name = "google-agents-cli"
+version = "1.14.0"
+description = "Agents CLI — Agent Development Lifecycle toolchain for ADK"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Google LLC", email = "agents-cli-dev-pypi@google.com" }]
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+  "click>=8.1.8,<9",
+  "PyYAML>=6.0.2,<7",
+  "cookiecutter>=2.6.0,<3",
+  "jinja2>=3.1.0,<4",
+  # Not the [evaluation] extra: it adds scikit-learn, scipy and litellm, which
+  # the CLI never imports. These are the parts agentplatform._genai.evals needs.
+  # tests/unittests/cli/test_eval_deps.py fails if the SDK starts needing more.
+  "google-cloud-aiplatform>=2.2.0,<3",
+  "pandas>=1.0.0,<4",
+  "tqdm>=4.23.0,<5",
+  "google-cloud-resource-manager>=1.12.0,<2",
+  "google-auth[pyopenssl]>=2.47.0,<3",
+  # pyOpenSSL 26.2 forbids mutating a used SSL Context; urllib3 does it per
+  # connection under google-auth's mTLS shim (urllib3#5107). Lift when fixed.
+  "pyopenssl<26.2",
+  "rich>=13.7.0,<16",
+  "backoff>=2.2.1,<3",
+  "requests>=2.31.0,<3",
+  "websockets>=13.0,<17",
+  "a2a-sdk>=1.0,<2",
+  # Pin the a2a-sdk (>=5.29.5) .. aiplatform (<7) window so pip won't chase
+  # protobuf 7 and backtrack into old google-api-core (protobuf<5).
+  "protobuf>=5.29.5,<7",
+  "tomlkit>=0.13.0,<1",
+  "psutil>=5.9.0,<8",
+  "python-dotenv>=1.0.0,<2",
+  "pathspec>=0.12.1,<2",
+  "filelock>=4.2.1,<5",
+  "packaging>=24,<27",
+  # 2.10+: earlier versions emit `enum` beside `const`, which the schema sync test sees.
+  "pydantic>=2.10,<3",
+  # Agent Command Center server (`agents-cli command-center`).
+  "starlette>=1.0,<2",
+  "uvicorn>=0.34,<1",
+  "httpx>=0.28,<1",
+]
+
+[project.urls]
+homepage = "https://github.com/google/agents-cli"
+issues = "https://github.com/google/agents-cli/issues"
+documentation = "https://google.github.io/agents-cli/"
+releasenotes = "https://github.com/google/agents-cli/blob/main/RELEASE_NOTES.md"
+
+[project.scripts]
+agents-cli = "google.agents.cli.main:main"
+google-agents-cli = "google.agents.cli.main:main"
+
+[build-system]
+requires = ["flit_core>=3.8,<4"]
+build-backend = "flit_core.buildapi"
+
+[tool.flit.module]
+name = "google.agents.cli"
+
+[tool.flit.sdist]
+include = [
+  "src/google/agents/cli/scaffold/agents/",
+  "src/google/agents/cli/scaffold/base_templates/",
+  "src/google/agents/cli/scaffold/deployment_targets/",
+  "src/google/agents/cli/scaffold/resources/",
+  "src/google/agents/cli/scaffold/sample_data/",
+]
+
+[project.optional-dependencies]
+lint = [
+    "ruff>=0.15,<0.16",
+    "ty>=0.0.38,<0.1",
+    "codespell>=2.4,<3",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-s -v --ignore=tests/integration --ignore=tests/cicd"
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(asctime)s - %(levelname)s - %(message)s"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2,<10",
+    "pytest-mock>=3.15.1,<4",
+    "pytest-rerunfailures>=15.0,<17",
+    "pytest-xdist>=3.6.1,<4",
+    "pytest-cov>=4.1.0,<8",
+    "jsonschema>=4.20,<5",
+    # google-genai's httpx fallback breaks across event loops (e2e SDK query test).
+    "aiohttp>=3.14,<4",
+]
+
+[tool.ruff]
+line-length = 90
+target-version = "py311"
+include = [
+  "src/google/agents/cli/**/*.py",
+  "tests/**/*.py",
+  "tools/**/*.py",
+  # First-party extensions ship real code; lint them like the rest.
+  "extensions/**/*.py",
+  # The lift report builder and the eval tools.
+  "evals/report/**/*.py",
+  "evals/tools/**/*.py",
+  "evals/harbor/**/*.py",
+  "evals/tests/**/*.py",
+  "evals/tasks/**/*.py",
+]
+exclude = [
+    "src/google/agents/cli/scaffold/agents",
+    "src/google/agents/cli/scaffold/base_templates",
+    "src/google/agents/cli/scaffold/deployment_targets",
+    # Generated-project sources, linted by the project's own config (a
+    # different line length, and no `google` namespace on disk), not this one.
+    "extensions/*/template",
+    "src/google/agents/cli/skills/data",
+    "tests/cicd/scripts",
+]
+
+[tool.ruff.lint]
+preview = true
+select = [
+    "E",   # pycodestyle
+    "F",   # pyflakes
+    "W",   # pycodestyle warnings
+    "I",   # isort
+    "C",   # flake8-comprehensions
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "RUF", # ruff specific rules
+    "TID251", # flake8-tidy-imports (banned-api)
+    "PLW1514", # unspecified-encoding (require encoding in open calls)
+    "PLR0917", # too-many-positional-arguments
+]
+ignore = ["E501", "C901", "RUF001", "UP036", "RUF067", "RUF069"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["PLR0917"]
+"evals/tests/**/*.py" = ["PLR0917"]
+# The only module allowed to import private Agent Platform SDK modules; keep in
+# sync with ALLOWED_PRIVATE_IMPORT_FILES in tools/ci/check_private_imports.py.
+"src/google/agents/cli/_sdk_compat.py" = ["TID251"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"rich.console.Console" = { msg = "Use `google.agents.cli._output.Console` instead to ensure project-wide defaults (soft_wrap=True) are applied." }
+"agentplatform.Client" = { msg = "Use `google.agents.cli._agent_platform.AgentPlatformClient` instead, so the client retries throttled requests." }
+"agentplatform._genai" = { msg = "Private SDK module that can change without notice. Use `types` from `google.agents.cli._agent_platform_types` for SDK types, and add any other private SDK use to `google.agents.cli._sdk_compat`." }
+
+[tool.ruff.lint.pylint]
+max-positional-args = 5
+
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "frontend"]
+
+[tool.ty]
+# ty is Astral's Rust-based type checker (same team as ruff/uv)
+# See: https://docs.astral.sh/ty/
+
+[tool.ty.environment]
+python-version = "3.11"
+
+[tool.ty.src]
+# Exclude agent templates and cicd scripts from type checking
+exclude = [
+    "src/google/agents/cli/scaffold/agents/**",
+    "src/google/agents/cli/scaffold/base_templates/**",
+    "src/google/agents/cli/scaffold/deployment_targets/**",
+    "src/google/agents/cli/skills/data/**",
+    "tests/cicd/scripts/**",
+]
+
+[tool.ty.rules]
+# Ignore missing third-party type stubs
+unresolved-import = "ignore"
+
+[[tool.ty.overrides]]
+# Relax type checking for test files (pytest fixtures with yield have complex types)
+include = ["tests/**"]
+[tool.ty.overrides.rules]
+invalid-return-type = "ignore"
+
+[tool.codespell]
+ignore-words-list = "rouge,afterall"
+skip = "./locust_env/*,uv.lock,.venv,venv,**/*.ipynb,**/package-lock.json"
+

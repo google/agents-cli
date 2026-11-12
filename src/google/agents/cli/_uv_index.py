@@ -25,7 +25,8 @@ re-resolve that lock against the mirror, turning a deployable project into one
 whose remote build cannot download its dependencies. The helpers here keep those
 commands on the same public index the scaffold uses, unless the project pins its
 own default index or the user chose an index or config explicitly for this
-shell, and detect non-PyPI indexes in ``uv.lock`` for ``install``'s warning.
+shell, and detect non-PyPI indexes in ``uv.lock`` for ``install``'s warning
+and the deploy pre-flight check.
 
 One case is only detected, not prevented: when the project declares extra
 indexes of its own, a machine-wide extra index can still win for packages it
@@ -43,7 +44,7 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 PUBLIC_INDEX_URL = "https://pypi.org/simple"
-_PUBLIC_INDEX_HOST = "pypi.org"
+_PUBLIC_INDEX_HOSTS = frozenset({"pypi.org", "files.pythonhosted.org"})
 
 # An index or config file chosen in the environment (UV_CONFIG_FILE,
 # UV_NO_CONFIG) is an explicit choice for this shell or CI job, unlike a
@@ -54,6 +55,9 @@ _EXPLICIT_EXTRA_INDEX_ENV_VARS = ("UV_INDEX", "UV_EXTRA_INDEX_URL")
 _FALSY_ENV_VALUES = frozenset({"", "0", "false", "no", "off"})
 
 RELOCK_PUBLIC_COMMAND = f"uv lock --default-index {PUBLIC_INDEX_URL}"
+PIN_PUBLIC_INDEX_SNIPPET = (
+    f'[[tool.uv.index]]\nname = "pypi"\nurl = "{PUBLIC_INDEX_URL}"\ndefault = true'
+)
 
 
 def load_toml(path: Path) -> dict[str, Any] | None:
@@ -76,7 +80,7 @@ def normalize_index_url(url: str) -> str:
 
 def is_public_index(url: str) -> bool:
     """Whether ``url`` is public PyPI, which every remote builder can reach."""
-    return (urlsplit(url).hostname or "").lower() == _PUBLIC_INDEX_HOST
+    return (urlsplit(url).hostname or "").lower() in _PUBLIC_INDEX_HOSTS
 
 
 def is_remote_index(url: str) -> bool:
@@ -171,6 +175,12 @@ def _pins_default_index(settings: dict[str, Any]) -> bool:
 def project_index_urls(root: Path) -> set[str]:
     """Normalized URLs of every index the project declares itself."""
     return _settings_index_urls(_project_uv_settings(root))
+
+
+def project_pins_default_index(root: Path) -> bool:
+    """Whether the project sets its own default index (``[[tool.uv.index]]``
+    with ``default = true``, or the legacy ``index-url``)."""
+    return _pins_default_index(_project_uv_settings(root))
 
 
 def user_index_urls() -> set[str]:

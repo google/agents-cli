@@ -43,6 +43,7 @@ from app.app_utils.turn_events import (
     ToolCallStarted,
     TurnEnded,
     TurnResult,
+    system_prompt_text,
 )
 
 MAX_CONTENT_LENGTH = 500 * 1024
@@ -60,7 +61,10 @@ class AgentEventsRecorder:
         session_id: str,
         user_id: str,
         model: str | None,
+        # The system prompt the model gets, recalled memories included.
         system_prompt: Any,
+        # The agent's own system prompt.
+        instruction: Any,
         remote_agents: dict[str, str] | None = None,
         local_servers: set[str] | None = None,
     ) -> None:
@@ -70,7 +74,7 @@ class AgentEventsRecorder:
         self.session_id = session_id
         self.user_id = user_id
         self.model = model
-        self.system_prompt = system_prompt if isinstance(system_prompt, str) else None
+        self.system_prompt = system_prompt_text(system_prompt)
         self.remote_agents = remote_agents or {}
         self.local_servers = local_servers or set()
         self.invocation_id = f"e-{uuid.uuid4()}"
@@ -101,8 +105,8 @@ class AgentEventsRecorder:
             self.agent_span,
             self.invocation_span,
             # Where v_agent_starting reads the instruction.
-            content={"text_summary": self.system_prompt}
-            if self.system_prompt
+            content={"text_summary": text}
+            if (text := system_prompt_text(instruction))
             else None,
             attributes={"model": model} if model else None,
         )

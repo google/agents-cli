@@ -19,6 +19,7 @@ import logging
 import subprocess
 import sys
 from collections.abc import Mapping
+from dataclasses import replace
 
 import backoff
 import click
@@ -49,6 +50,7 @@ from google.agents.cli.deploy._utils import (
     MachineShape,
     cloud_run_has_agent_identity,
     cloud_run_service_url,
+    drop_default_env_var_removals,
     parse_secret_refs,
     print_table,
     redact_command,
@@ -122,13 +124,7 @@ def deploy_cloud_run(
         service_name=service_name,
         env_vars=env_var_changes.updates,
     )
-    # Cloud Run merges secrets, so an empty --secrets (a clear on Agent Runtime)
-    # sends nothing.
-    secret_args = (
-        _cloud_run_secret_args(secret_changes.updates, env_var_map)
-        if secret_changes.updates
-        else []
-    )
+    secret_args = _cloud_run_secret_args(secret_changes, env_var_map)
     dry_run_validation_report, service_exists = None, None
     already_agent_identity = False
     if dry_run:
@@ -205,7 +201,7 @@ def deploy_cloud_run(
             agent_identity=bool(agent_identity),
         )
     )
-    args.extend(_cloud_run_env_var_args(env_var_map))
+    args.extend(_cloud_run_env_var_args(env_var_map, env_var_changes))
     args.extend(secret_args)
     args.extend(_cloud_run_label_args(label_changes))
 
@@ -620,20 +616,21 @@ def _cloud_run_app_url(
     return f"https://{service_name}-{project_number}.{region}.run.app"
 
 
-def _cloud_run_env_var_args(env_var_map: dict[str, str]) -> list[str]:
-    """``--update-env-vars`` for the runtime env vars."""
-    return ["--update-env-vars", ",".join(f"{k}={v}" for k, v in env_var_map.items())]
+def _cloud_run_env_var_args(
+    env_var_map: dict[str, str], env_var_changes: KeyValueChanges
+) -> list[str]:
+    """Env var flags for gcloud: the runtime env vars plus any clear or removals."""
+    removals = drop_default_env_var_removals(env_var_changes.removals, env_var_map.keys())
+    return _gcloud_key_value_args(
+        "env-vars", replace(env_var_changes, updates=env_var_map, removals=removals)
+    )
 
 
 def _cloud_run_secret_args(
-    secrets: Mapping[str, str], env_var_map: dict[str, str]
+    secret_changes: KeyValueChanges, env_var_map: dict[str, str]
 ) -> list[str]:
-    """``--update-secrets`` for ENV=SECRET[:VERSION] pairs (version defaults to latest).
-
-    Uses --update-secrets (merge) to match the --update-env-vars semantics,
-    rather than --set-secrets, which would drop any not listed here.
-    """
-    parsed_secrets = parse_secret_refs(secrets)
+    """Secret flags for gcloud; a secret's version defaults to latest."""
+    parsed_secrets = parse_secret_refs(secret_changes.updates)
     overlap = parsed_secrets.keys() & env_var_map.keys()
     if overlap:
         raise click.ClickException(
@@ -641,11 +638,27 @@ def _cloud_run_secret_args(
             "environment variable and a secret. Cloud Run requires each key "
             "to be one or the other — rename it or drop it from --env-vars."
         )
-    secret_str = ",".join(
-        f"{env}={spec['secret']}:{spec['version']}"
-        for env, spec in parsed_secrets.items()
-    )
-    return ["--update-secrets", secret_str]
+    refs = {
+        env: f"{spec['secret']}:{spec['version']}" for env, spec in parsed_secrets.items()
+    }
+    return _gcloud_key_value_args("secrets", replace(secret_changes, updates=refs))
+
+
+def _gcloud_key_value_args(name: str, changes: KeyValueChanges) -> list[str]:
+    """gcloud's --set-, --clear-, --remove- and --update-<name> flags.
+
+    gcloud doesn't allow --clear-<name> with --update-<name>, so a clear with
+    updates sends them with --set-<name>.
+    """
+    pairs = ",".join(f"{k}={v}" for k, v in changes.updates.items())
+    if changes.clear:
+        return [f"--set-{name}", pairs] if pairs else [f"--clear-{name}"]
+    args = []
+    if changes.removals:
+        args.extend([f"--remove-{name}", ",".join(changes.removals)])
+    if pairs:
+        args.extend([f"--update-{name}", pairs])
+    return args
 
 
 def _cloud_run_label_args(label_changes: KeyValueChanges) -> list[str]:

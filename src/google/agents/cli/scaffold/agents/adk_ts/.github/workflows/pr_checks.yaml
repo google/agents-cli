@@ -20,10 +20,10 @@ on:
       - main
     paths:
       - '{{cookiecutter.agent_directory}}/**'
-      - 'tests/**'
       - 'deployment/**'
-      - 'package.json'
-      - 'package-lock.json'
+{%- for path in cookiecutter.ci_trigger_files %}
+      - '{{ path }}'
+{%- endfor %}
 
 jobs:
   test:

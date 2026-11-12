@@ -27,7 +27,6 @@ import os
 import sys
 import time
 import traceback
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import click
@@ -35,7 +34,7 @@ import click
 from google.agents.cli import _telemetry
 from google.agents.cli.__init__ import __version__
 from google.agents.cli._click import LazyGroup, patch_source_in_help
-from google.agents.cli._project import find_project_root, is_project_moved
+from google.agents.cli._project import is_project_moved
 from google.agents.cli._runner import DISABLE_OVERRIDES_ENV
 
 # Type-only: nothing under `extension.` may be imported at module scope. A run
@@ -90,12 +89,13 @@ class _MainGroup(LazyGroup):
         if os.environ.get(DISABLE_OVERRIDES_ENV) == "1":
             return
 
-        from google.agents.cli.extension._loader import load_extension_set
-        from google.agents.cli.extension._paths import user_config_root
+        from google.agents.cli._output import configure_logging
+        from google.agents.cli.extension._loader import current_extension_set
 
-        project_root = find_project_root(Path.cwd())
-        user_root = user_config_root()
-        extension_set = load_extension_set(project_root, user_root)
+        # Command lookup runs before main()'s callback configures logging; a warning
+        # logged with no handler installed gets logging's default one, doubling later lines.
+        configure_logging()
+        extension_set = current_extension_set()
 
         # Surface any extension whose declared `requires.agents_cli` range excludes
         # the running CLI. In "error" mode the loader keeps the claim and marks

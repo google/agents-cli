@@ -9,8 +9,8 @@ The dev commands dispatch on the project's `language`, recorded in the manifest.
 
 | `agents-cli` command | Python | Go |
 |---|---|---|
-| `agents-cli playground` | `uv run adk web . --port 8080` | `go run . web --port 8080 api -path_prefix / webui --api_server_address=` |
-| `agents-cli playground --port 9000` | `uv run adk web . --port 9000` | `go run . web --port 9000 api -path_prefix / webui --api_server_address=` |
+| `agents-cli playground` | `uv run adk web . --host 127.0.0.1 --port 8080` | `go run . web --host 127.0.0.1 --port 8080 api -path_prefix / webui --api_server_address=` |
+| `agents-cli playground --port 9000` | `uv run adk web . --host 127.0.0.1 --port 9000` | `go run . web --host 127.0.0.1 --port 9000 api -path_prefix / webui --api_server_address=` |
 | `agents-cli run "prompt"` | Starts a local server, queries it, then shuts it down (unless using `--start-server`) | starts the Go server above, queries it, then shuts it down |
 | `agents-cli run --url URL --mode MODE "prompt"` | HTTP requests to URL (`/run_sse` for adk, A2A protocol for a2a) | the run client is language-agnostic — identical requests |
 | `agents-cli lint` | `uv run ruff check .` + `ruff format . --check` + `ty check .` + codespell (skip via `--skip-ty` / `--skip-codespell`) | `golangci-lint run` |

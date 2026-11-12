@@ -33,6 +33,11 @@ settings:
     # aiohttp 3.13.4, but under-declares aiohttp>=3.10.11. Floor it so remote templates
     # whose uv.lock pins an older aiohttp don't break the streaming path.
     - "aiohttp>=3.13.4"
+    # FastAPI 0.142.0 continues the incoming trace context in its request spans.
+    # Cloud Run (and so Agent Runtime) forwards most requests as unsampled, and
+    # ADK's TracerProvider uses the default parent-based sampler, so those
+    # requests' spans are all dropped.
+    - "fastapi<0.142.0"
   # Dependencies for [project.optional-dependencies] groups, keyed by group.
   # Kept out of `extra_dependencies` so a plain `uv sync` stays lean.
   extra_optional_dependencies:

@@ -514,10 +514,21 @@ def complete_operation(
 def read_remote_agent_runtime_id() -> str | None:
     """Read the remote_agent_runtime_id from METADATA_FILE."""
     value = _read_metadata().get("remote_agent_runtime_id")
+    if value is None:
+        return None
+    # The file is user-editable, so the value may not be a string at all.
+    if not isinstance(value, str):
+        logging.warning(
+            "Ignoring remote_agent_runtime_id in %s: expected a string, got %s.",
+            METADATA_FILE,
+            type(value).__name__,
+        )
+        return None
     # Older scaffolds shipped the literal string ``"None"`` as a placeholder, so
     # treat that (and blank values) as "no id recorded" — otherwise a first deploy
     # would try to update an engine literally named ``None`` and fail with a 404
     # instead of creating a new one.
-    if isinstance(value, str) and value.strip().lower() in ("", "none", "null"):
+    value = value.strip()
+    if value.lower() in ("", "none", "null"):
         return None
     return value

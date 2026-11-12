@@ -3,6 +3,39 @@
 All notable changes to this project will be documented in this file.
 
 
+## [1.14.0] - 2026-11-12
+
+- **`agents-cli deploy` runs pre-flight checks before source builds.**
+  - Before uploading, it checks for issues that would break the remote build and explains each one: a `uv.lock` pointing at a package index the builder can't reach, a missing or stale lock, build inputs excluded by `.gcloudignore` or `.gitignore`, path dependencies outside the upload, or a base image Python that doesn't match `requires-python`.
+  - `--skip-preflight` skips the checks.
+  - `deploy --dry-run` exits 1 on pre-flight errors. Scripts and CI jobs that run it may need an update.
+  - https://github.com/google/agents-cli/issues/95
+- `agents-cli deploy` adds `--remove-env-vars KEY,...`, `--clear-env-vars`, `--remove-secrets KEY,...` and `--clear-secrets` for Cloud Run and Agent Runtime.
+  - A key that is in the project `.env` can't be removed (delete it from `.env` instead), and env vars agents-cli sets itself (such as `AGENT_VERSION`) are set again on every deploy.
+  - `--clear-secrets` also removes secrets set outside agents-cli (such as by Terraform) and secrets mounted as volumes.
+  - https://github.com/google/agents-cli/issues/60
+- `agents-cli deploy` shows the error reason and help links when an Agent Runtime request fails.
+- `agents-cli extension add pypi@<package>[==<version>][#<folder>]` installs an extension from a wheel on PyPI, or on the index set in `UV_DEFAULT_INDEX`, `UV_INDEX_URL` or `PIP_INDEX_URL`, pinned to the wheel's sha256. `agents-cli extension update <name> --to <version>` or `--to :latest` moves the pin.
+- `agents-cli scaffold enhance --from-adk-project` writes a minimal `agents-cli-manifest.yaml` for an existing ADK project without rendering a template, so `eval`, `info` and `playground` can find it. Use `--dry-run` to preview and `--force` to replace an existing manifest.
+- `agents-cli scaffold create -a claude --memory-bank` scaffolds a Claude agent with long-term memory in Vertex AI Memory Bank, which works the way ADK's does. The agent recalls the user's memories at the start of each turn, learns from each finished turn, and can call a `search_memory` tool. Other agents reject the flag; ADK agents can follow the `cross-session-memory` recipe.
+  - Memory is per user. For A2A callers without authentication, it lasts one conversation, as in ADK.
+  - With `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` on, Claude agents record the system prompt the model got, recalled memories included, as `gen_ai.system_instructions` on the turn span.
+- Claude Agent SDK projects send `x-goog-api-client: agents-cli-app/<version>+claude-agent-sdk` on model calls, so Google can count usage from agents-cli projects. Set `DO_NOT_TRACK=1` or `AGENTS_CLI_TELEMETRY=0` to turn it off; your own `ANTHROPIC_CUSTOM_HEADERS` are always sent. Existing projects are unchanged until they adopt the new template code.
+- `agents-cli login --status`, `login -i` and `setup` warn when Google Cloud credentials work but agents can't call Gemini yet, and say how to fix it.
+- `agents-cli login` with the Gemini API key option prints the `.env` changes a generated project needs to use the key, instead of reporting "Continuing without authentication".
+- `agents-cli create` explains which Google Cloud setup step failed.
+- `agents-cli run` and `agents-cli playground` check the agent's Google Cloud credentials before starting it.
+  - Model errors from `agents-cli run`, such as permission denied, disabled API, billing disabled, quota, or an invalid API key, include a one-line fix.
+- `agents-cli run` prints the local-server banner and a failed run's error once, and shows auth errors as plain text instead of Python object reprs.
+- `agents-cli infra single-project` stops with `terraform import` instructions when an existing Agent Runtime engine is missing from Terraform state, instead of creating a duplicate. On a new project the first run may log "Skipping the Agent Runtime import check" until Terraform enables the Vertex AI API.
+  - https://github.com/google/agents-cli/issues/2
+- `google-agents-cli` no longer installs scikit-learn, scipy, litellm, jsonschema or ruamel.yaml, which roughly halves its install size. Eval commands work as before.
+- New ADK Python projects pin FastAPI below 0.142.0, so traces from agents on Agent Runtime and Cloud Run are no longer dropped for requests the platform forwards as unsampled.
+- New Go projects use ADK Go v2.7.1.
+  - For Go projects on ADK Go v2.5.0 or later, `agents-cli playground` honors `--host` and binds `127.0.0.1` by default, the same as Python projects. Pass `--host 0.0.0.0` to reach it from another machine. Older projects keep binding all interfaces.
+  - Action needed: when you run `agents-cli scaffold upgrade` on a Go project and keep your own `Dockerfile`, add `"--host", "0.0.0.0"` after `"web"` in its `ENTRYPOINT`. ADK Go v2.5.0 and later listen only on localhost by default, so the container would otherwise get no traffic.
+- The `setup.md` prompt no longer stops after install to ask for a new session. The coding agent reads the installed workflow skill and continues.
+
 ## [1.13.0] - 2026-11-04
 
 - **Cloud Run deployments support Agent Identity.**

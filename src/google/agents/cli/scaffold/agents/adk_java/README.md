@@ -6,12 +6,14 @@ A Java agent built with Google's Agent Development Kit (ADK).
 
 ```
 {{cookiecutter.project_name}}/
-├── pom.xml                  # Maven project file
+├── build.gradle.kts         # Gradle build file
+├── settings.gradle.kts      # Gradle project settings
 ├── src/
 │   ├── main/
 │   │   ├── java/{{cookiecutter.java_package_path}}/
 │   │   │   ├── Main.java    # Application entry point
-│   │   │   └── Agent.java   # Agent implementation
+│   │   │   ├── Agent.java   # Agent implementation
+│   │   │   └── A2AController.java # A2A agent card and endpoint
 │   │   └── resources/
 │   │       └── application.properties
 │   └── test/java/{{cookiecutter.java_package_path}}/
@@ -34,7 +36,7 @@ A Java agent built with Google's Agent Development Kit (ADK).
 ## Requirements
 
 - Java 17 or later
-- Maven 3.9 or later
+- Gradle 9.5 or later
 - Google Cloud SDK (`gcloud`)
 - A Google Cloud project with Gemini platform enabled
 
@@ -61,10 +63,10 @@ A Java agent built with Google's Agent Development Kit (ADK).
 
 | Command | Description |
 |---------|-------------|
-| `make install` | Download Maven dependencies |
+| `make install` | Download Gradle dependencies |
 | `make playground` | Launch local development environment with web UI |
 | `make test` | Run unit and e2e integration tests |
-| `make build` | Build JAR file |
+| `make build` | Build the application |
 | `make clean` | Clean build artifacts |
 | `make lint` | Run code quality checks |
 | `make local-backend` | Start server on port 8080 |

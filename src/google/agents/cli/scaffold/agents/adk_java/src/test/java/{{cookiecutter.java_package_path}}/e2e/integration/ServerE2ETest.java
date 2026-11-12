@@ -19,17 +19,16 @@ import {{cookiecutter.java_package}}.Agent;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
-import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.client.RestClient;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -47,8 +46,12 @@ class ServerE2ETest {
   @LocalServerPort
   private int port;
 
-  @Autowired
-  private TestRestTemplate restTemplate;
+  private RestClient client;
+
+  @BeforeEach
+  void setUp() {
+    client = RestClient.create("http://localhost:" + port);
+  }
 
   /**
    * Tests that the agent card endpoint returns valid JSON with required fields.
@@ -56,8 +59,8 @@ class ServerE2ETest {
   @Test
   @SuppressWarnings("unchecked")
   void testAgentCardEndpoint() {
-    String url = "http://localhost:" + port + "/.well-known/agent-card.json";
-    ResponseEntity<Map> response = restTemplate.getForEntity(url, Map.class);
+    ResponseEntity<Map> response =
+        client.get().uri("/.well-known/agent-card.json").retrieve().toEntity(Map.class);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
 
@@ -96,8 +99,6 @@ class ServerE2ETest {
   @Test
   @SuppressWarnings("unchecked")
   void testA2AMessageSend() {
-    String url = "http://localhost:" + port + "/a2a/remote/v1/message:send";
-
     // Create JSON-RPC request with proper A2A message format
     String messageId = UUID.randomUUID().toString();
     Map<String, Object> message = Map.of(
@@ -116,11 +117,7 @@ class ServerE2ETest {
         )
     );
 
-    HttpHeaders headers = new HttpHeaders();
-    headers.setContentType(MediaType.APPLICATION_JSON);
-    HttpEntity<Map<String, Object>> entity = new HttpEntity<>(request, headers);
-
-    ResponseEntity<Map> response = restTemplate.postForEntity(url, entity, Map.class);
+    ResponseEntity<Map> response = postA2A(request);
 
     // The endpoint should respond successfully
     assertNotNull(response);
@@ -129,13 +126,66 @@ class ServerE2ETest {
   }
 
   /**
+   * Tests that tasks/get fetches the task created by message/send and that the session is shared
+   * with the ADK web server.
+   */
+  @Test
+  @SuppressWarnings("unchecked")
+  void testGetTaskAndSharedSession() {
+    Map<String, Object> message = Map.of(
+        "kind", "message",
+        "messageId", UUID.randomUUID().toString(),
+        "role", "user",
+        "parts", List.of(Map.of("kind", "text", "text", "Hello"))
+    );
+
+    ResponseEntity<Map> sendResponse = postA2A(Map.of(
+        "jsonrpc", "2.0",
+        "id", UUID.randomUUID().toString(),
+        "method", "message/send",
+        "params", Map.of("message", message)
+    ));
+    assertEquals(HttpStatus.OK, sendResponse.getStatusCode());
+
+    Map<String, Object> sendBody = sendResponse.getBody();
+    assertNotNull(sendBody);
+    Map<String, Object> createdTask = (Map<String, Object>) sendBody.get("result");
+    assertNotNull(createdTask);
+    String taskId = (String) createdTask.get("id");
+    String contextId = (String) createdTask.get("contextId");
+    assertNotNull(taskId);
+    assertNotNull(contextId);
+
+    ResponseEntity<Map> getResponse = postA2A(Map.of(
+        "jsonrpc", "2.0",
+        "id", UUID.randomUUID().toString(),
+        "method", "tasks/get",
+        "params", Map.of("id", taskId)
+    ));
+    assertEquals(HttpStatus.OK, getResponse.getStatusCode());
+    Map<String, Object> getBody = getResponse.getBody();
+    assertNotNull(getBody);
+    Map<String, Object> fetchedTask = (Map<String, Object>) getBody.get("result");
+    assertNotNull(fetchedTask);
+    assertEquals(taskId, fetchedTask.get("id"));
+
+    ResponseEntity<Map> sessionResponse = client.get()
+        .uri(
+            "/apps/{app}/users/{user}/sessions/{session}",
+            Agent.APP_NAME,
+            "A2A_USER_" + contextId,
+            contextId)
+        .retrieve()
+        .toEntity(Map.class);
+    assertEquals(HttpStatus.OK, sessionResponse.getStatusCode());
+  }
+
+  /**
    * Tests A2A error handling for invalid JSON-RPC method.
    */
   @Test
   @SuppressWarnings("unchecked")
   void testA2AErrorHandling() {
-    String url = "http://localhost:" + port + "/a2a/remote/v1/message:send";
-
     // Create an invalid JSON-RPC request with unknown method
     Map<String, Object> request = Map.of(
         "jsonrpc", "2.0",
@@ -144,11 +194,7 @@ class ServerE2ETest {
         "params", Map.of()
     );
 
-    HttpHeaders headers = new HttpHeaders();
-    headers.setContentType(MediaType.APPLICATION_JSON);
-    HttpEntity<Map<String, Object>> entity = new HttpEntity<>(request, headers);
-
-    ResponseEntity<Map> response = restTemplate.postForEntity(url, entity, Map.class);
+    ResponseEntity<Map> response = postA2A(request);
 
     // Invalid method should return a response (either error status or JSON-RPC error)
     assertNotNull(response);
@@ -157,5 +203,16 @@ class ServerE2ETest {
       // JSON-RPC error format - this is expected
       assertNotNull(body.get("error"));
     }
+  }
+
+  private ResponseEntity<Map> postA2A(Map<String, Object> request) {
+    return client.post()
+        .uri("/a2a/remote/v1/message:send")
+        .contentType(MediaType.APPLICATION_JSON)
+        .body(request)
+        .retrieve()
+        // Hand error statuses back to the test instead of throwing.
+        .onStatus(HttpStatusCode::isError, (req, res) -> {})
+        .toEntity(Map.class);
   }
 }

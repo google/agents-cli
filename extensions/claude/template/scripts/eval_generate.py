@@ -298,7 +298,10 @@ def main() -> int:
         return 2
 
     import anyio
+    from dotenv import load_dotenv
 
+    # .env first: app.agent's tool lists depend on flags such as MEMORY_BANK_ENABLED.
+    load_dotenv()
     from app.agent import root_agent
     from app.app_utils.claude import run_turn
     from app.app_utils.settings import AGENT_NAME

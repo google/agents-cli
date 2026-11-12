@@ -20,7 +20,7 @@ In another terminal:
 make load-test
 ```
 
-This runs a load test with 5 concurrent users, 2 requests each against `http://localhost:8000`.
+This runs a load test with 5 concurrent users, 2 requests each against `http://127.0.0.1:8080`.
 
 ## Remote Load Testing (Cloud Run)
 

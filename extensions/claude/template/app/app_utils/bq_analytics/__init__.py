@@ -74,8 +74,14 @@ def start_turn(
     conversation_id: str,
     user_id: str | None,
     agent_name: Callable[[str | None], str],
+    *,
+    instruction: Any,
 ) -> AgentEventsRecorder | None:
-    """A recorder for one turn run with `options`, or None when analytics is off."""
+    """A recorder for one turn run with `options`, or None when analytics is off.
+
+    Args:
+        instruction: The agent's own system prompt, without recalled memories.
+    """
     out = writer()
     if out is None:
         return None
@@ -101,6 +107,7 @@ def start_turn(
         user_id=user_id or f"A2A_USER_{conversation_id}",
         model=options.model,
         system_prompt=options.system_prompt,
+        instruction=instruction,
         remote_agents=remote,
         local_servers=local,
     )

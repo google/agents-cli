@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import click
 
+from google.agents.cli.extension._pypi import PypiError, index_label
 from google.agents.cli.extension._refs import ExtensionRef
 
 
@@ -31,8 +32,19 @@ def confirm_trust(ref: ExtensionRef, *, auto_approve: bool) -> bool:
         return True
     click.echo()
     click.secho(
-        f"  Extension source {ref.raw!r} is not verified. It can run arbitrary code "
-        "on your machine when its commands are invoked.",
+        f"  Extension source {ref.raw!r}{_origin(ref)} is not verified. It can run "
+        "arbitrary code on your machine when its commands are invoked.",
         fg="yellow",
     )
     return click.confirm("  Install and trust this extension?", default=False)
+
+
+def _origin(ref: ExtensionRef) -> str:
+    """Where the code comes from, beyond what ``ref.raw`` already says."""
+    if ref.kind != "pypi":
+        return f" at {ref.ref}" if ref.ref else ""
+    try:
+        return f" from {index_label()}"
+    except PypiError:
+        # Resolving it reports the problem; the prompt can do without it.
+        return ""

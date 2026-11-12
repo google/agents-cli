@@ -57,7 +57,10 @@ def main() -> int:
 
     import anyio
     from claude_agent_sdk import ClaudeSDKError
+    from dotenv import load_dotenv
 
+    # .env first: app.agent's tool lists depend on flags such as MEMORY_BANK_ENABLED.
+    load_dotenv()
     from app.agent import root_agent
     from app.app_utils.claude import AgentError, run_turn
 

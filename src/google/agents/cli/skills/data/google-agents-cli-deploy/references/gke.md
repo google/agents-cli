@@ -12,7 +12,7 @@ Scaffolded projects include a `Dockerfile` at the project root — same as Cloud
 
 ## Kubernetes Resources (Terraform-Managed)
 
-All Kubernetes resources are managed by Terraform in `deployment/terraform/cicd/service.tf` (staging/prod) and `deployment/terraform/single-project/service.tf` (single-project). CI/CD pipelines only update the container image via `kubectl set image`.
+All Kubernetes resources are managed by Terraform in `deployment/terraform/cicd/service.tf` (staging/prod) and `deployment/terraform/single-project/service.tf` (single-project). CI/CD pipelines run `agents-cli deploy --image`, which skips Terraform and updates the image and env vars with `kubectl`, so env vars it sets stay until the next `terraform apply`. A deploy without `--image` runs a targeted `terraform apply` first, which resets the env vars to Terraform's; keep lasting ones in `.env` or Terraform.
 
 | Resource | Purpose |
 |----------|---------|

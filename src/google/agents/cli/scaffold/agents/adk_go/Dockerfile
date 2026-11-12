@@ -69,14 +69,15 @@ EXPOSE 8080
 
 # The api launcher is mounted with `-path_prefix /` to serve the app at root, instead of under `/api`.
 # appinfo already defaults to `/`, so it needs no explicit flag.
+# The web launcher binds 127.0.0.1 by default, which traffic into the container cannot reach.
 {%- if cookiecutter.deployment_target == 'gke' %}
 # GKE does not inject a PORT env var, so bind the ADK launcher to 8080 explicitly.
-ENTRYPOINT ["/agent", "web", "--port", "8080", "api", "-path_prefix", "/", "a2a", "webui", "appinfo"]
+ENTRYPOINT ["/agent", "web", "--host", "0.0.0.0", "--port", "8080", "api", "-path_prefix", "/", "a2a", "webui", "appinfo"]
 {%- elif cookiecutter.deployment_target == 'agent_runtime' %}
 # Include extra agentengine launcher for compatibility with playground.
 # For Agent Runtime port must be exactly 8080.
-ENTRYPOINT ["/agent", "web", "--port", "8080", "agentengine", "api", "-path_prefix", "/", "a2a", "appinfo"]
+ENTRYPOINT ["/agent", "web", "--host", "0.0.0.0", "--port", "8080", "agentengine", "api", "-path_prefix", "/", "a2a", "appinfo"]
 {%- else %}
 # Cloud Run sets PORT env var which ADK launcher reads automatically.
-ENTRYPOINT ["/agent", "web", "api", "-path_prefix", "/", "a2a", "webui", "appinfo"]
+ENTRYPOINT ["/agent", "web", "--host", "0.0.0.0", "api", "-path_prefix", "/", "a2a", "webui", "appinfo"]
 {%- endif %}

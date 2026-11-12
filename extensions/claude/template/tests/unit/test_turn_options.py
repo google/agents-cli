@@ -284,6 +284,51 @@ class TestTurnOptions:
         assert options.env["ANTHROPIC_API_KEY"] == ""
         assert options.env["ANTHROPIC_AUTH_TOKEN"] == ""
 
+    def test_model_calls_are_tagged_as_agents_cli_traffic(self):
+        env = _options_for(ClaudeAgentOptions(), "c").env
+        assert env["ANTHROPIC_CUSTOM_HEADERS"] == (
+            "x-goog-api-client: "
+            f"agents-cli-app/{settings.AGENTS_CLI_VERSION}+claude-agent-sdk"
+        )
+
+    @pytest.mark.parametrize("from_agent", [True, False])
+    def test_the_tag_keeps_custom_headers(self, monkeypatch, from_agent):
+        own = "X-Team: search"
+        if from_agent:
+            options = ClaudeAgentOptions(env={"ANTHROPIC_CUSTOM_HEADERS": own})
+        else:
+            monkeypatch.setenv("ANTHROPIC_CUSTOM_HEADERS", own)
+            options = ClaudeAgentOptions()
+        headers = _options_for(options, "c").env["ANTHROPIC_CUSTOM_HEADERS"]
+        assert headers.splitlines()[0] == own
+        assert headers.splitlines()[1].startswith("x-goog-api-client: agents-cli-app/")
+
+    @pytest.mark.parametrize(
+        ("var", "value"),
+        [
+            ("DO_NOT_TRACK", "1"),
+            ("AGENTS_CLI_TELEMETRY", "0"),
+            ("AGENTS_CLI_TELEMETRY", "Off"),
+        ],
+    )
+    @pytest.mark.parametrize("from_agent", [True, False])
+    def test_opting_out_of_telemetry_drops_the_tag(
+        self, monkeypatch, var, value, from_agent
+    ):
+        if from_agent:
+            options = ClaudeAgentOptions(env={var: value})
+        else:
+            monkeypatch.setenv(var, value)
+            options = ClaudeAgentOptions()
+        assert "ANTHROPIC_CUSTOM_HEADERS" not in _options_for(options, "c").env
+
+    def test_opting_out_keeps_custom_headers(self, monkeypatch):
+        # The opt-out only drops the tag; the agent's own headers still go out.
+        monkeypatch.setenv("AGENTS_CLI_TELEMETRY", "0")
+        options = ClaudeAgentOptions(env={"ANTHROPIC_CUSTOM_HEADERS": "X-Team: search"})
+        env = _options_for(options, "c").env
+        assert env["ANTHROPIC_CUSTOM_HEADERS"] == "X-Team: search"
+
     def test_cloud_sql_env_gives_one_postgres_store_per_process(self, monkeypatch):
         from app.app_utils.session_store import PostgresSessionStore
 

@@ -19,7 +19,7 @@ steps:
       [
         "build",
         "-t",
-        "$_REGION-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO_NAME/$_CONTAINER_NAME{%- if cookiecutter.deployment_target == 'gke' %}:$SHORT_SHA{%- endif %}",
+        "$_REGION-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO_NAME/$_CONTAINER_NAME:$SHORT_SHA",
         "--build-arg",
         "COMMIT_SHA=$COMMIT_SHA",
         ".",
@@ -28,24 +28,29 @@ steps:
     args:
       [
         "push",
-        "$_REGION-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO_NAME/$_CONTAINER_NAME{%- if cookiecutter.deployment_target == 'gke' %}:$SHORT_SHA{%- endif %}",
+        "$_REGION-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO_NAME/$_CONTAINER_NAME:$SHORT_SHA",
       ]
 
 {%- if cookiecutter.deployment_target == 'cloud_run' %}
   # Deploy to Staging
   - name: "gcr.io/cloud-builders/gcloud"
     id: deploy-staging
-    entrypoint: gcloud
+    entrypoint: /bin/bash
     args:
-      - "run"
-      - "deploy"
-      - "{{cookiecutter.project_name}}"
-      - "--image"
-      - "$_REGION-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO_NAME/$_CONTAINER_NAME"
-      - "--region"
-      - "${_REGION}"
-      - "--project"
-      - "${_STAGING_PROJECT_ID}"
+      - "-c"
+      - |
+        curl -LsSf https://astral.sh/uv/0.11.7/install.sh | sh
+        export PATH="$$HOME/.local/bin:$$PATH"
+        {%- if cookiecutter.wheel_gcs_uri %}
+        gsutil cp {{ cookiecutter.wheel_gcs_uri }} /tmp/
+        uvx --from /tmp/{{ cookiecutter.wheel_gcs_uri.split('/')[-1] }} google-agents-cli deploy \
+        {%- else %}
+        uvx google-agents-cli{{ cookiecutter.agents_cli_version_pin }} deploy \
+        {%- endif %}
+          --project ${_STAGING_PROJECT_ID} \
+          --region ${_REGION} \
+          --image $_REGION-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO_NAME/$_CONTAINER_NAME:$SHORT_SHA \
+          --update-env-vars="OTEL_RESOURCE_ATTRIBUTES=service.version=$COMMIT_SHA"
 
   # Fetch Staging Service URL
   - name: "gcr.io/cloud-builders/gcloud"
@@ -163,5 +168,8 @@ substitutions:
 
 logsBucket: gs://${PROJECT_ID}-{{cookiecutter.project_name}}-logs/build-logs
 options:
+  env:
+    - 'UV_PYTHON=3.12'
+    - 'CI=true'
   substitutionOption: ALLOW_LOOSE
   defaultLogsBucketBehavior: REGIONAL_USER_OWNED_BUCKET

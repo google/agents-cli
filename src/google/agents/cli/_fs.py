@@ -21,7 +21,7 @@ import logging
 import os
 import shutil
 import stat
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 
 def delete_folder(folder: Path) -> None:
@@ -93,3 +93,15 @@ def first_copy_error(error: OSError) -> str:
         ):
             return str(failures[0][2])
     return str(error)
+
+
+def stays_inside(path: str) -> bool:
+    """Whether ``path``, joined onto a folder, names something below that folder."""
+    posix = PurePosixPath(path)
+    return (
+        bool(posix.parts)
+        and "\\" not in path
+        and not posix.is_absolute()
+        and not PureWindowsPath(path).drive
+        and ".." not in posix.parts
+    )

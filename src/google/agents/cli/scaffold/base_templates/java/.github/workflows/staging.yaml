@@ -19,10 +19,11 @@ on:
     branches:
       - main
     paths:
-      - 'src/**'
+      - '{{cookiecutter.agent_directory}}/**'
       - 'deployment/**'
-      - 'pom.xml'
-      - 'Dockerfile'
+{%- for path in cookiecutter.ci_trigger_files %}
+      - '{{ path }}'
+{%- endfor %}
 
 jobs:
   deploy_and_test_staging:
@@ -34,6 +35,16 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+{%- if cookiecutter.deployment_target == 'cloud_run' %}
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.0.0
+{%- endif %}
 
       - id: 'auth'
         name: 'Authenticate to Google Cloud'
@@ -55,18 +66,24 @@ jobs:
 
       - name: Build and Push Docker Image
         run: |
-          docker build -t {% raw %}${{ vars.REGION }}{% endraw %}-docker.pkg.dev/{% raw %}${{ vars.CICD_PROJECT_ID }}{% endraw %}/{% raw %}${{ vars.ARTIFACT_REGISTRY_REPO_NAME }}{% endraw %}/{% raw %}${{ vars.CONTAINER_NAME }}{% endraw %}{%- if cookiecutter.deployment_target == 'gke' %}:{% raw %}${{ github.sha }}{% endraw %}{%- endif %} \
+          docker build -t {% raw %}${{ vars.REGION }}{% endraw %}-docker.pkg.dev/{% raw %}${{ vars.CICD_PROJECT_ID }}{% endraw %}/{% raw %}${{ vars.ARTIFACT_REGISTRY_REPO_NAME }}{% endraw %}/{% raw %}${{ vars.CONTAINER_NAME }}{% endraw %}:{% raw %}${{ github.sha }}{% endraw %} \
             --build-arg COMMIT_SHA={% raw %}${{ github.sha }}{% endraw %} \
             .
-          docker push {% raw %}${{ vars.REGION }}{% endraw %}-docker.pkg.dev/{% raw %}${{ vars.CICD_PROJECT_ID }}{% endraw %}/{% raw %}${{ vars.ARTIFACT_REGISTRY_REPO_NAME }}{% endraw %}/{% raw %}${{ vars.CONTAINER_NAME }}{% endraw %}{%- if cookiecutter.deployment_target == 'gke' %}:{% raw %}${{ github.sha }}{% endraw %}{%- endif %}
+          docker push {% raw %}${{ vars.REGION }}{% endraw %}-docker.pkg.dev/{% raw %}${{ vars.CICD_PROJECT_ID }}{% endraw %}/{% raw %}${{ vars.ARTIFACT_REGISTRY_REPO_NAME }}{% endraw %}/{% raw %}${{ vars.CONTAINER_NAME }}{% endraw %}:{% raw %}${{ github.sha }}{% endraw %}
 
 {%- if cookiecutter.deployment_target == 'cloud_run' %}
       - name: Deploy to Cloud Run (Staging)
         run: |
-          gcloud run deploy {{cookiecutter.project_name}} \
-            --image {% raw %}${{ vars.REGION }}{% endraw %}-docker.pkg.dev/{% raw %}${{ vars.CICD_PROJECT_ID }}{% endraw %}/{% raw %}${{ vars.ARTIFACT_REGISTRY_REPO_NAME }}{% endraw %}/{% raw %}${{ vars.CONTAINER_NAME }}{% endraw %} \
+          {%- if cookiecutter.wheel_gcs_uri %}
+          gsutil cp {{ cookiecutter.wheel_gcs_uri }} /tmp/
+          uvx --from /tmp/{{ cookiecutter.wheel_gcs_uri.split('/')[-1] }} google-agents-cli deploy \
+          {%- else %}
+          uvx google-agents-cli{{ cookiecutter.agents_cli_version_pin }} deploy \
+          {%- endif %}
+            --project {% raw %}${{ vars.STAGING_PROJECT_ID }}{% endraw %} \
             --region {% raw %}${{ vars.REGION }}{% endraw %} \
-            --project {% raw %}${{ vars.STAGING_PROJECT_ID }}{% endraw %}
+            --image {% raw %}${{ vars.REGION }}{% endraw %}-docker.pkg.dev/{% raw %}${{ vars.CICD_PROJECT_ID }}{% endraw %}/{% raw %}${{ vars.ARTIFACT_REGISTRY_REPO_NAME }}{% endraw %}/{% raw %}${{ vars.CONTAINER_NAME }}{% endraw %}:{% raw %}${{ github.sha }}{% endraw %} \
+            --update-env-vars="OTEL_RESOURCE_ATTRIBUTES=service.version={% raw %}${{ github.sha }}{% endraw %}"
 
       - name: Get Staging URL
         id: staging-url
@@ -106,7 +123,11 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: maven
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.1'
 
 {%- if cookiecutter.deployment_target == 'cloud_run' %}
       - name: Get ID Token
@@ -118,22 +139,22 @@ jobs:
 
       - name: Run Load Tests
         run: |
-          mvn test -Dtest="**/e2e/load_test/**" \
-            -Dstaging.url={% raw %}${{ steps.staging-url.outputs.url }}{% endraw %} \
-            -Dload.duration=30 \
-            -Dload.users=10 \
-            -Dload.ramp=2
+          gradle loadTest \
+            -Pstaging.url={% raw %}${{ steps.staging-url.outputs.url }}{% endraw %} \
+            -Pload.duration=30 \
+            -Pload.users=10 \
+            -Pload.ramp=2
         env:
           _ID_TOKEN: {% raw %}${{ steps.id-token.outputs.token }}{% endraw %}
           _STAGING_URL: {% raw %}${{ steps.staging-url.outputs.url }}{% endraw %}
 {%- elif cookiecutter.deployment_target == 'gke' %}
       - name: Run Load Tests
         run: |
-          mvn test -Dtest="**/e2e/load_test/**" \
-            -Dstaging.url=http://127.0.0.1:8080 \
-            -Dload.duration=30 \
-            -Dload.users=10 \
-            -Dload.ramp=2
+          gradle loadTest \
+            -Pstaging.url=http://127.0.0.1:8080 \
+            -Pload.duration=30 \
+            -Pload.users=10 \
+            -Pload.ramp=2
           LOAD_TEST_EXIT_CODE=$?
           kill {% raw %}${{ steps.port-forward.outputs.pf_pid }}{% endraw %} || true
           exit $LOAD_TEST_EXIT_CODE

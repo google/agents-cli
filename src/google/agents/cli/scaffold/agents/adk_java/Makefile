@@ -21,9 +21,9 @@ endif
 # Installation & Setup
 # ==============================================================================
 
-# Download Maven dependencies
+# Download dependencies and compile the project
 install:
-	mvn dependency:resolve
+	gradle classes -q
 
 # ==============================================================================
 # Playground Targets
@@ -39,7 +39,7 @@ playground:
 	@echo "| ADK Web: http://localhost:8080/dev-ui                                       |"
 	@echo "| Try asking: What's the weather in San Francisco?                            |"
 	@echo "==============================================================================="
-	mvn compile exec:java -Dlogging.level.root=WARN -Dlogging.level.com.google.adk=INFO
+	gradle -q run --args="--logging.level.root=WARN --logging.level.com.google.adk=INFO"
 
 # ==============================================================================
 # Local Development Commands
@@ -47,7 +47,7 @@ playground:
 
 # Launch local development server (matches Cloud Run)
 local-backend:
-	mvn compile exec:java -Dlogging.level.root=WARN -Dlogging.level.com.google.adk=INFO
+	gradle -q run --args="--logging.level.root=WARN --logging.level.com.google.adk=INFO"
 
 # ==============================================================================
 # Backend Deployment Targets
@@ -124,30 +124,30 @@ setup-dev-env:
 
 # Run unit and e2e tests
 test:
-	mvn test
+	gradle test
 
 # Run load tests
 # Usage: make load-test [URL=http://127.0.0.1:8080] [DURATION=30] [USERS=10] [RAMP=2]
 # Local:  make load-test
 # Remote: make load-test URL=https://your-service.run.app
 load-test:
-	mvn test-compile failsafe:integration-test failsafe:verify \
-		-Dstaging.url=$(or $(URL),http://127.0.0.1:8080) \
-		-Dload.duration=$(or $(DURATION),30) \
-		-Dload.users=$(or $(USERS),10) \
-		-Dload.ramp=$(or $(RAMP),2)
+	gradle loadTest \
+		-Pstaging.url=$(or $(URL),http://127.0.0.1:8080) \
+		-Pload.duration=$(or $(DURATION),30) \
+		-Pload.users=$(or $(USERS),10) \
+		-Pload.ramp=$(or $(RAMP),2)
 
 # Run code quality checks
 lint:
-	mvn checkstyle:check
+	gradle -q checkstyleMain checkstyleTest
 
 # Build the project
 build:
-	mvn package -DskipTests
+	gradle -q installDist
 
 # Clean build artifacts
 clean:
-	mvn clean
+	gradle -q clean
 
 # ==============================================================================
 # A2A Protocol Inspector

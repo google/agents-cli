@@ -21,6 +21,7 @@ from pathlib import Path
 import click
 
 from google.agents.cli import _tools
+from google.agents.cli._fs import delete_folder
 from google.agents.cli._project import (
     chdir_project_root,
     find_project_root,
@@ -39,12 +40,12 @@ from google.agents.cli.scaffold.utils.language import dispatch_language
 @click.option(
     "--clean",
     is_flag=True,
-    help="Clean and fix the uv virtual environment. (For example, if the project folder is moved or renamed).",
+    help="Delete installed dependencies or build output first (.venv, node_modules, Gradle build/), for example after moving or renaming the project folder. Ignored for Go projects.",
 )
 @click.option(
     "--locked",
     is_flag=True,
-    help="Assert that uv.lock is up to date with pyproject.toml; fail instead of updating it.",
+    help="Fail instead of updating the lock file (uv.lock, go.sum, package-lock.json). Ignored for Gradle projects, which have no lock file.",
 )
 def cmd_install(clean: bool, locked: bool):
     """Install project dependencies."""
@@ -117,13 +118,54 @@ def _install_go(*, clean: bool, locked: bool) -> None:
     run(["go", "mod", "tidy"], check_err_msg="Failed to install dependencies")
 
 
+def _install_gradle(*, clean: bool, locked: bool) -> None:
+    """Resolve Java/Kotlin dependencies by compiling the main and test sources.
+
+    Gradle projects have no lock file by default, so ``locked`` is ignored with a
+    warning. ``clean`` runs ``gradle clean`` first.
+    """
+    if locked:
+        logging.warning(
+            "--locked does not apply: Gradle projects have no lock file, ignoring."
+        )
+    tasks = ["clean", "testClasses"] if clean else ["testClasses"]
+    # No --quiet: Gradle's progress shows a long first download isn't stuck.
+    run(
+        ["gradle", *tasks],
+        check_err_msg="Failed to resolve dependencies or compile the project",
+    )
+
+
+def _install_typescript(*, clean: bool, locked: bool) -> None:
+    """Install npm dependencies.
+
+    ``npm install`` updates package-lock.json after package.json changes.
+    ``locked`` runs ``npm ci`` instead, which fails on a stale lock rather than
+    updating it. ``clean`` deletes node_modules first.
+    """
+    if clean:
+        # Resolve npm first, so a missing npm doesn't cost the user node_modules.
+        _tools.require_tool("npm")
+        delete_folder(Path("node_modules"))
+    if locked:
+        run(
+            ["npm", "ci"],
+            check_err_msg=(
+                "Failed to install dependencies; if package-lock.json is out of "
+                "date, rerun without --locked to update it"
+            ),
+        )
+        return
+    run(["npm", "install"], check_err_msg="Failed to install dependencies")
+
+
 # `None` = not supported yet; dispatch_language raises a clear error.
 LANGUAGE_HANDLERS = {
     "python": _install_python,
     "go": _install_go,
-    "java": None,
-    "typescript": None,
-    "kotlin": None,
+    "java": _install_gradle,
+    "typescript": _install_typescript,
+    "kotlin": _install_gradle,
 }
 
 

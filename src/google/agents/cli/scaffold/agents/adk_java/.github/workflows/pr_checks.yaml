@@ -19,9 +19,11 @@ on:
     branches:
       - main
     paths:
-      - 'src/**'
+      - '{{cookiecutter.agent_directory}}/**'
       - 'deployment/**'
-      - 'pom.xml'
+{%- for path in cookiecutter.ci_trigger_files %}
+      - '{{ path }}'
+{%- endfor %}
 
 jobs:
   test:
@@ -47,16 +49,20 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: maven
 
-      - name: Build with Maven
-        run: mvn package -DskipTests
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.1'
+
+      - name: Build
+        run: gradle assemble
 
       - name: Run unit tests
-        run: mvn test -Dtest="**/unit/**"
+        run: gradle test --tests "*.unit.*"
 
       - name: Run integration tests
-        run: mvn test -Dtest="**/e2e/integration/**"
+        run: gradle test --tests "*.e2e.integration.*"
         env:
           GOOGLE_CLOUD_PROJECT: {% raw %}${{ vars.CICD_PROJECT_ID }}{% endraw %}
           GOOGLE_CLOUD_LOCATION: global

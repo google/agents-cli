@@ -37,8 +37,7 @@ from google.agents.cli._skills_check import (
     find_parent_workspace_skills,
     get_installed_skills,
 )
-from google.agents.cli.extension._loader import ExtensionSet, load_extension_set
-from google.agents.cli.extension._paths import user_config_root
+from google.agents.cli.extension._loader import ExtensionSet, current_extension_set
 
 _CLI_INSTALL_PATH = str(Path(_cli_pkg.__file__).parent)
 
@@ -130,7 +129,7 @@ def cmd_info(as_json: bool) -> None:
     )
     os_info = platform.platform()
     telemetry_enabled = _telemetry.is_telemetry_enabled()
-    extension_set = load_extension_set(project_root, user_config_root())
+    extension_set = current_extension_set()
     if project_root is None:
         if as_json:
             payload: dict[str, Any] = {

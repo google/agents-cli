@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -186,47 +187,78 @@ class TestGenerateTraces:
         assert failures == [(1, "RuntimeError: Reached maximum number of turns (1)")]
 
 
+_ROOT_AGENT = SimpleNamespace(mcp_servers={}, tools=None, system_prompt=None, agents=None)
+
+
+@pytest.fixture
+def project(monkeypatch, tmp_path) -> Path:
+    """Stub the project's `app` package and pass a one-case dataset; returns the output."""
+
+    async def run_turn(prompt, options, conversation_id):  # noqa: RUF029
+        return SimpleNamespace(
+            text=f"reply to {prompt}", tool_calls=[], subagent_calls=[]
+        )
+
+    project_modules = {
+        "app": ModuleType("app"),
+        "app.app_utils": ModuleType("app.app_utils"),
+        "app.agent": ModuleType("app.agent"),
+        "app.app_utils.claude": ModuleType("app.app_utils.claude"),
+        "app.app_utils.settings": ModuleType("app.app_utils.settings"),
+        # The template's own .env is unrendered: keep it out of the test process.
+        "dotenv": ModuleType("dotenv"),
+    }
+    project_modules["app.agent"].root_agent = _ROOT_AGENT
+    project_modules["app.app_utils.claude"].run_turn = run_turn
+    project_modules["app.app_utils.settings"].AGENT_NAME = "bookshop_agent"
+    project_modules["dotenv"].load_dotenv = lambda: None
+    for name, module in project_modules.items():
+        monkeypatch.setitem(sys.modules, name, module)
+    dataset = tmp_path / "dataset.json"
+    dataset.write_text(
+        json.dumps({"eval_cases": [{"agent_data": {"turns": [_user_turn("hi")]}}]})
+    )
+    output = tmp_path / "traces.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["eval_generate.py", "--dataset", str(dataset), "--output", str(output)],
+    )
+    return output
+
+
 class TestMain:
-    def test_traces_are_authored_by_the_agent_name_setting(
-        self, mod, monkeypatch, tmp_path
-    ):
+    def test_traces_are_authored_by_the_agent_name_setting(self, mod, project):
         """The author matches the spans' gen_ai.agent.name and BigQuery's agent."""
-
-        async def run_turn(prompt, options, conversation_id):  # noqa: RUF029
-            return SimpleNamespace(
-                text=f"reply to {prompt}", tool_calls=[], subagent_calls=[]
-            )
-
-        project_modules = {
-            "app": ModuleType("app"),
-            "app.app_utils": ModuleType("app.app_utils"),
-            "app.agent": ModuleType("app.agent"),
-            "app.app_utils.claude": ModuleType("app.app_utils.claude"),
-            "app.app_utils.settings": ModuleType("app.app_utils.settings"),
-        }
-        project_modules["app.agent"].root_agent = SimpleNamespace(
-            mcp_servers={}, tools=None, system_prompt=None, agents=None
-        )
-        project_modules["app.app_utils.claude"].run_turn = run_turn
-        project_modules["app.app_utils.settings"].AGENT_NAME = "bookshop_agent"
-        for name, module in project_modules.items():
-            monkeypatch.setitem(sys.modules, name, module)
-        dataset = tmp_path / "dataset.json"
-        dataset.write_text(
-            json.dumps({"eval_cases": [{"agent_data": {"turns": [_user_turn("hi")]}}]})
-        )
-        output = tmp_path / "traces.json"
-        monkeypatch.setattr(
-            sys,
-            "argv",
-            ["eval_generate.py", "--dataset", str(dataset), "--output", str(output)],
-        )
-
         assert mod.main() == 0
 
-        [case] = json.loads(output.read_text())["eval_cases"]
+        [case] = json.loads(project.read_text())["eval_cases"]
         events = case["agent_data"]["turns"][0]["events"]
         assert [e["author"] for e in events] == ["user", "bookshop_agent"]
+
+    def test_agent_is_built_after_dotenv_is_loaded(self, mod, project, monkeypatch):
+        """Its tool lists depend on flags in .env, such as MEMORY_BANK_ENABLED."""
+        monkeypatch.delenv("MEMORY_BANK_ENABLED", raising=False)
+        monkeypatch.setattr(
+            sys.modules["dotenv"],
+            "load_dotenv",
+            lambda: monkeypatch.setenv("MEMORY_BANK_ENABLED", "true"),
+        )
+        built_with = []
+
+        def build(name):
+            if name != "root_agent":
+                raise AttributeError(name)
+            built_with.append(os.environ.get("MEMORY_BANK_ENABLED"))
+            return _ROOT_AGENT
+
+        agent = ModuleType("app.agent")
+        # Builds root_agent on import, as app/agent.py does.
+        agent.__getattr__ = build
+        monkeypatch.setitem(sys.modules, "app.agent", agent)
+
+        assert mod.main() == 0
+        assert built_with == ["true"]
 
     def test_url_is_refused(self, mod, monkeypatch, capsys):
         """A served Claude agent speaks A2A, not the built-in's /run_sse."""

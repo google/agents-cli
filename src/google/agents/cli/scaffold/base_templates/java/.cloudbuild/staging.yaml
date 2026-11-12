@@ -19,7 +19,7 @@ steps:
       [
         "build",
         "-t",
-        "$_REGION-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO_NAME/$_CONTAINER_NAME{%- if cookiecutter.deployment_target == 'gke' %}:$SHORT_SHA{%- endif %}",
+        "$_REGION-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO_NAME/$_CONTAINER_NAME:$SHORT_SHA",
         "--build-arg",
         "COMMIT_SHA=$COMMIT_SHA",
         ".",
@@ -28,24 +28,29 @@ steps:
     args:
       [
         "push",
-        "$_REGION-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO_NAME/$_CONTAINER_NAME{%- if cookiecutter.deployment_target == 'gke' %}:$SHORT_SHA{%- endif %}",
+        "$_REGION-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO_NAME/$_CONTAINER_NAME:$SHORT_SHA",
       ]
 
 {%- if cookiecutter.deployment_target == 'cloud_run' %}
   # Deploy to Staging
   - name: "gcr.io/cloud-builders/gcloud"
     id: deploy-staging
-    entrypoint: gcloud
+    entrypoint: /bin/bash
     args:
-      - "run"
-      - "deploy"
-      - "{{cookiecutter.project_name}}"
-      - "--image"
-      - "$_REGION-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO_NAME/$_CONTAINER_NAME"
-      - "--region"
-      - "${_REGION}"
-      - "--project"
-      - "${_STAGING_PROJECT_ID}"
+      - "-c"
+      - |
+        curl -LsSf https://astral.sh/uv/0.11.7/install.sh | sh
+        export PATH="$$HOME/.local/bin:$$PATH"
+        {%- if cookiecutter.wheel_gcs_uri %}
+        gsutil cp {{ cookiecutter.wheel_gcs_uri }} /tmp/
+        uvx --from /tmp/{{ cookiecutter.wheel_gcs_uri.split('/')[-1] }} google-agents-cli deploy \
+        {%- else %}
+        uvx google-agents-cli{{ cookiecutter.agents_cli_version_pin }} deploy \
+        {%- endif %}
+          --project ${_STAGING_PROJECT_ID} \
+          --region ${_REGION} \
+          --image $_REGION-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO_NAME/$_CONTAINER_NAME:$SHORT_SHA \
+          --update-env-vars="OTEL_RESOURCE_ATTRIBUTES=service.version=$COMMIT_SHA"
 
   # Fetch Staging Service URL
   - name: "gcr.io/cloud-builders/gcloud"
@@ -66,8 +71,8 @@ steps:
       - |
         echo $(gcloud auth print-identity-token -q) > id_token.txt
 
-  # Load Testing (Maven failsafe)
-  - name: "maven:3.9-eclipse-temurin-17"
+  # Load Testing
+  - name: "gradle:9.5.1-jdk17"
     id: load_test
     entrypoint: /bin/bash
     args:
@@ -75,11 +80,11 @@ steps:
       - |
         export _ID_TOKEN=$(cat id_token.txt)
         export _STAGING_URL=$(cat staging_url.txt)
-        mvn test -Dtest="**/e2e/load_test/**" \
-          -Dstaging.url=$$_STAGING_URL \
-          -Dload.duration=30 \
-          -Dload.users=10 \
-          -Dload.ramp=2
+        gradle loadTest --no-daemon \
+          -Pstaging.url=$$_STAGING_URL \
+          -Pload.duration=30 \
+          -Pload.users=10 \
+          -Pload.ramp=2
 {%- elif cookiecutter.deployment_target == 'gke' %}
   # Deploy to GKE Staging
   - name: "gcr.io/cloud-builders/gcloud"
@@ -95,22 +100,30 @@ steps:
         [ -n "$$EXTERNAL_IP" ] && kubectl set env deployment/{{cookiecutter.project_name}} APP_URL=http://$$EXTERNAL_IP:8080 -n {{cookiecutter.project_name}}
         kubectl rollout status deployment/{{cookiecutter.project_name}} -n {{cookiecutter.project_name}} --timeout=300s
 
-  # Load Testing (Maven failsafe)
+  # Load Testing
   - name: "gcr.io/cloud-builders/gcloud"
     id: load_test
     entrypoint: /bin/bash
     args:
       - "-c"
       - |
+        # The service's load balancer is internal, so the test reaches it through
+        # a kubectl port-forward. This image has kubectl but no JDK 17 or Gradle.
+        mkdir -p /opt/jdk
+        curl -fsSL --retry 3 https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jdk/hotspot/normal/eclipse | tar -C /opt/jdk -xz --strip-components=1
+        curl -fsSL --retry 3 -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-9.5.1-bin.zip
+        python3 -m zipfile -e /tmp/gradle.zip /opt
+        chmod +x /opt/gradle-9.5.1/bin/gradle
+        export JAVA_HOME=/opt/jdk PATH="/opt/gradle-9.5.1/bin:$$PATH"
         gcloud container clusters get-credentials ${_GKE_CLUSTER_NAME} --region ${_REGION} --project ${_STAGING_PROJECT_ID}
         kubectl port-forward svc/{{cookiecutter.project_name}} 8080:8080 -n {{cookiecutter.project_name}} &
         PF_PID=$$!
         sleep 5
-        mvn test -Dtest="**/e2e/load_test/**" \
-          -Dstaging.url=http://127.0.0.1:8080 \
-          -Dload.duration=30 \
-          -Dload.users=10 \
-          -Dload.ramp=2
+        gradle loadTest --no-daemon \
+          -Pstaging.url=http://127.0.0.1:8080 \
+          -Pload.duration=30 \
+          -Pload.users=10 \
+          -Pload.ramp=2
         _LOAD_TEST_EXIT_CODE=$$?
         kill $$PF_PID || true
         exit $$_LOAD_TEST_EXIT_CODE
@@ -150,5 +163,8 @@ substitutions:
 
 logsBucket: gs://${PROJECT_ID}-{{cookiecutter.project_name}}-logs/build-logs
 options:
+  env:
+    - 'UV_PYTHON=3.12'
+    - 'CI=true'
   substitutionOption: ALLOW_LOOSE
   defaultLogsBucketBehavior: REGIONAL_USER_OWNED_BUCKET

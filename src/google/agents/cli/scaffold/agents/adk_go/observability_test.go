@@ -154,7 +154,7 @@ func TestTelemetryAttributes(t *testing.T) {
 
 	got := map[attribute.Key]string{}
 	for _, kv := range telemetryAttributes(serviceName, project) {
-		got[kv.Key] = kv.Value.Emit()
+		got[kv.Key] = kv.Value.String()
 	}
 
 	// gcp.project_id and cloud.account.id must both carry the project ID so

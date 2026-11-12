@@ -24,8 +24,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.app_utils import bq_analytics
-from app.app_utils.a2a import add_a2a_routes
-from app.app_utils.reasoning_engine import add_reasoning_engine_routes
 from app.app_utils.telemetry import (
     FASTAPI_TELEMETRY,
     FlushTelemetryMiddleware,
@@ -37,6 +35,10 @@ setup_telemetry()
 
 @asynccontextmanager
 async def lifespan(app_instance: FastAPI) -> AsyncIterator[None]:
+    # Imported here so app.agent sees the .env that setup_telemetry() loaded.
+    from app.app_utils.a2a import add_a2a_routes
+    from app.app_utils.reasoning_engine import add_reasoning_engine_routes
+
     add_a2a_routes(app_instance)
     add_reasoning_engine_routes(app_instance)
     # Create the BigQuery Agent Analytics table up front, and flush rows on shutdown.

@@ -112,6 +112,15 @@ def shared_template_options(f: Callable) -> Callable:
         help="Include BigQuery Agent Analytics Plugin for observability",
         default=False,
     )(f)
+    f = click.option(
+        "--memory-bank",
+        is_flag=True,
+        help=(
+            "Give the agent long-term memory of each user in Memory Bank "
+            "(templates that support it, e.g. the Claude Agent SDK template)"
+        ),
+        default=False,
+    )(f)
     # None means "not specified" -- use the current value.
     f = click.option(
         "--agent-gateway/--no-agent-gateway",

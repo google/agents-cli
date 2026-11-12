@@ -24,9 +24,10 @@ from pathlib import Path
 import yaml
 
 from google.agents.cli.__init__ import __version__
+from google.agents.cli._project import find_project_root
 from google.agents.cli.extension._compat import is_compatible
 from google.agents.cli.extension._manifest import EXTENSIONS_FILE
-from google.agents.cli.extension._paths import vendored_extensions_dir
+from google.agents.cli.extension._paths import user_config_root, vendored_extensions_dir
 from google.agents.cli.extension._refs import RefParseError, parse_ref
 from google.agents.cli.extension._resolver import ResolverError, validate_extension_name
 from google.agents.cli.extension._spec import (
@@ -36,6 +37,10 @@ from google.agents.cli.extension._spec import (
     ExtensionSpecError,
     parse_extension_spec,
 )
+
+# Loaded extension sets per (project root, user root), so startup and the command
+# share one load and one warning. Stale once the extension files change.
+_extension_sets: dict[tuple[Path | None, Path | None], ExtensionSet] = {}
 
 # Commands no extension may override, ever. Some are how a user removes or
 # repairs an extension, so letting one own them means a broken extension can own
@@ -182,6 +187,17 @@ def load_extension_spec(root: Path) -> ExtensionSpec | None:
     if data is not None and not isinstance(data, dict):
         raise ExtensionSpecError(f"expected a mapping, found {type(data).__name__}")
     return parse_extension_spec(data or {}, root=root, default_name=root.name)
+
+
+def current_extension_set() -> ExtensionSet:
+    key = (find_project_root(Path.cwd()), user_config_root())
+    if key not in _extension_sets:
+        _extension_sets[key] = load_extension_set(*key)
+    return _extension_sets[key]
+
+
+def _clear_cache() -> None:
+    _extension_sets.clear()
 
 
 def load_extension_set(project_root: Path | None, user_root: Path | None) -> ExtensionSet:
@@ -336,7 +352,7 @@ def _scope_specs(
 
 
 def _is_first_party(source: str | None) -> bool:
-    """Whether `source` is a repository in the `google` GitHub org."""
+    """Whether `source` is a `google` GitHub org repo or a verified package."""
     if source is None:
         return False
     try:

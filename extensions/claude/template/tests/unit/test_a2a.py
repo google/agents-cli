@@ -21,7 +21,7 @@ import json
 import logging
 import threading
 import uuid
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from claude_agent_sdk.types import (
@@ -368,3 +368,65 @@ class _TraceOfRecords(logging.Handler):
     def emit(self, record):
         context = trace.get_current_span().get_span_context()
         self.trace_ids[record.getMessage()] = context.trace_id
+
+
+def _send_message(app: FastAPI) -> None:
+    response = TestClient(app).post(
+        "/a2a/app",
+        json={
+            "jsonrpc": "2.0",
+            "id": "1",
+            "method": "message/send",
+            "params": {
+                "message": {
+                    "messageId": uuid.uuid4().hex,
+                    "role": "user",
+                    "parts": [{"kind": "text", "text": "hi"}],
+                }
+            },
+        },
+    )
+    assert response.status_code == 200
+
+
+def test_an_unauthenticated_caller_is_named_after_the_conversation():
+    """As ADK names them, so sessions and memories have a user."""
+    seen = []
+
+    async def fake_stream_turn(prompt, options, conversation_id, user_id=None):
+        seen.append((conversation_id, user_id))
+        return
+        yield
+
+    with patch.object(a2a, "stream_turn", fake_stream_turn):
+        app = FastAPI(telemetry=FASTAPI_TELEMETRY)
+        a2a.add_a2a_routes(app)
+        _send_message(app)
+
+    [(conversation_id, user_id)] = seen
+    assert user_id == f"A2A_USER_{conversation_id}"
+
+
+@pytest.mark.parametrize("engine_id, waits", [("123", True), (None, False)])
+def test_on_agent_runtime_a_turn_waits_for_its_memory_ingest(
+    monkeypatch, engine_id, waits
+):
+    """Agent Runtime throttles the CPU once the response ends."""
+    if engine_id:
+        monkeypatch.setenv("GOOGLE_CLOUD_AGENT_ENGINE_ID", engine_id)
+    else:
+        monkeypatch.delenv("GOOGLE_CLOUD_AGENT_ENGINE_ID", raising=False)
+
+    async def fake_stream_turn(prompt, options, conversation_id, user_id=None):
+        yield _text("Hello.")
+
+    flush = AsyncMock()
+    with (
+        patch.object(a2a, "stream_turn", fake_stream_turn),
+        patch.object(a2a.memory_bank, "flush", flush),
+    ):
+        app = FastAPI(telemetry=FASTAPI_TELEMETRY)
+        a2a.add_a2a_routes(app)
+        _send_message(app)
+
+    assert flush.await_count == (1 if waits else 0)

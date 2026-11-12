@@ -28,7 +28,7 @@ def extension_group():
 
     \b
     Subcommands:
-      add     Add an extension from a git reference or local path
+      add     Add an extension from git, a local path, or PyPI
       list    List active extensions and the commands they contribute
       update  Advance extension pins and replace their skills
       remove  Remove an installed extension
@@ -38,7 +38,7 @@ def extension_group():
 extension_group.add_lazy_command(
     "add",
     "google.agents.cli.extension.cmd_extension_add:cmd_add",
-    "Add an extension from a git reference or local path.",
+    "Add an extension from git, a local path, or PyPI.",
 )
 extension_group.add_lazy_command(
     "list",

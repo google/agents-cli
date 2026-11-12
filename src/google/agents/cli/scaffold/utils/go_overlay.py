@@ -128,6 +128,27 @@ def check_adk_go_version(
         )
 
 
+def adk_go_version_at_least(go_mod: pathlib.Path, minimum: str) -> bool:
+    """Whether go.mod's direct ADK Go requirement is ``minimum`` or newer.
+
+    False when go.mod is missing, names no ADK Go version, or names one that
+    doesn't parse, so callers fall back to what older ADK Go supports. Only the
+    ``require`` line is read; a ``replace`` directive pointing ADK Go at a local
+    checkout or fork is not followed.
+    """
+    try:
+        found = _adk_go_version_from_go_mod(go_mod.read_text(encoding="utf-8"))
+    except OSError:
+        return False
+    if found is None:
+        return False
+    try:
+        return _GoVersion.parse(found.version) >= _GoVersion.parse(minimum)
+    except ValueError:
+        logging.debug("Could not parse ADK Go version %s in %s", found.version, go_mod)
+        return False
+
+
 def applies_to(language: str | None, *, overlay_is_project: bool) -> bool:
     # A project overlaid onto itself (local@.) already has its own server and module.
     return language == "go" and not overlay_is_project

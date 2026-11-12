@@ -20,3 +20,6 @@ from __future__ import annotations
 # renders the skills, docs, eval goldens or extension templates, so their copies
 # of the model id are updated by hand alongside this one.
 DEFAULT_MODEL = "gemini-3.8-flash"
+
+# Written to the generated .env when no GCP project could be resolved.
+GCP_PROJECT_PLACEHOLDER = "your-gcp-project-id"

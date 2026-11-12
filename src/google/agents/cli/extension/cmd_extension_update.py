@@ -49,7 +49,9 @@ from google.agents.cli.extension._refs import (
     UNPINNED_REF,
     ExtensionRef,
     RefParseError,
+    is_pypi_reference,
     parse_ref,
+    strip_pin,
 )
 from google.agents.cli.extension._resolver import (
     LOCAL_SHA,
@@ -74,7 +76,8 @@ from google.agents.cli.extension._skills import (
 from google.agents.cli.extension._spec import ExtensionSpec, ExtensionSpecError
 from google.agents.cli.extension._trust import confirm_trust
 
-_Outcome: TypeAlias = Literal["updated", "skipped", "retry"]
+# "unchanged": updated to the pin it already had.
+_Outcome: TypeAlias = Literal["updated", "unchanged", "skipped", "retry"]
 _OldCopy: TypeAlias = Literal["kept", "lost", "none"]
 
 _BOTH_SCOPES_REASON = (
@@ -110,14 +113,22 @@ class _ScopeRun:
     updated: list[str]
 
 
+@dataclass(frozen=True)
+class _Updated:
+    name: str
+    scope: str
+    pin_changed: bool
+
+
 @click.command("update")
 @click.argument("name", required=False)
 @click.option(
     "--to",
     default=None,
     help=(
-        "Re-pin NAME to this branch, tag, or SHA. For first-party extensions, "
-        f"{LATEST} pins the latest release, and works without NAME."
+        "Re-pin NAME to this branch, tag, or SHA, or for a pypi@ extension to "
+        f"this version. For first-party and pypi@ extensions, {LATEST} pins the "
+        "latest release, and works without NAME."
     ),
 )
 @require_confirmation("Update extension(s) and replace their skills?")
@@ -130,12 +141,14 @@ def cmd_update(
 
     Updates all if NAME omitted.
     """
+    if to is not None and not strip_pin(to):
+        raise click.UsageError(f"--to needs a branch, tag, SHA, version, or {LATEST}.")
     if to is not None and to != LATEST and name is None:
         raise click.UsageError(
             f"--to {to} needs an extension NAME; only --to {LATEST} "
             "applies to every extension."
         )
-    updated: list[tuple[str, str]] = []
+    updated: list[_Updated] = []
     skipped: list[str] = []
     scope_roots = list(installed_scope_roots())
     at_both_scopes = _names_at_both_scopes(scope_roots)
@@ -149,7 +162,7 @@ def cmd_update(
                 auto_approve=auto_approve,
                 backup_dir=backups / scope,
                 at_both_scopes=at_both_scopes,
-                updated_earlier=tuple(updated_name for updated_name, _ in updated),
+                updated_earlier=tuple(u.name for u in updated),
             )
             updated.extend(scope_updated)
             skipped.extend(scope_skipped)
@@ -157,11 +170,16 @@ def cmd_update(
         raise click.ClickException(
             f"No extension named {name!r} found." if name else "No extensions to update."
         )
-    if updated:
-        updated_list = ", ".join(
-            f"{updated_name}{label}" for updated_name, label in updated
-        )
-        click.secho(f"Updated: {updated_list}.", fg="green")
+    changed = [
+        f"{u.name}{_scope_suffix(u.scope, u.name, at_both_scopes)}"
+        for u in updated
+        if u.pin_changed
+    ]
+    if changed:
+        logging.info("Updated: %s.", ", ".join(changed))
+    # A batch update skips by design, so only a named one fails.
+    if name and skipped:
+        raise click.ClickException(f"Could not update {name!r}; see the warnings above.")
 
 
 def _names_at_both_scopes(scope_roots: list[tuple[str, Path]]) -> frozenset[str]:
@@ -194,11 +212,8 @@ def _update_scope(
     backup_dir: Path,
     at_both_scopes: frozenset[str],
     updated_earlier: tuple[str, ...],
-) -> tuple[list[tuple[str, str]], list[str]]:
-    """Update the scope's matching entries, retrying one whose skill owner runs later.
-
-    Returns the updated names with their scope labels, and the skipped names.
-    """
+) -> tuple[list[_Updated], list[str]]:
+    """Update the scope's matching entries, retrying one whose skill owner runs later."""
     entries = read_extension_entries(root / EXTENSIONS_FILE)
     other_scope = frozenset(other_scope_extensions(scope, root))
     run = _ScopeRun(
@@ -217,6 +232,7 @@ def _update_scope(
         updated_earlier=updated_earlier,
         updated=[],
     )
+    done: list[_Updated] = []
     skipped: list[str] = []
     while run.pending:
         entry = run.pending.popleft()
@@ -224,14 +240,12 @@ def _update_scope(
         if outcome == "retry":
             run.retried.add(entry.name)
             run.pending.append(entry)
-        elif outcome == "updated":
-            run.updated.append(entry.name)
-        else:
+        elif outcome == "skipped":
             skipped.append(entry.name)
-    labeled = [
-        (updated_name, _scope_label(run, updated_name)) for updated_name in run.updated
-    ]
-    return labeled, skipped
+        else:
+            run.updated.append(entry.name)
+            done.append(_Updated(entry.name, run.scope, pin_changed=outcome == "updated"))
+    return done, skipped
 
 
 def _update_entry(run: _ScopeRun, entry: ExtensionEntry) -> _Outcome:
@@ -255,7 +269,7 @@ def _update_entry(run: _ScopeRun, entry: ExtensionEntry) -> _Outcome:
         return "skipped"
     extension_dir = vendored_extensions_dir(run.root) / entry.name
     try:
-        backup = _back_up_local_copy(ref, extension_dir, run.backup_dir)
+        backup = _back_up_copy(ref, extension_dir, run.backup_dir)
     except OSError as e:
         _report_skipped(
             run,
@@ -278,11 +292,15 @@ def _parse_entry_ref(run: _ScopeRun, entry: ExtensionEntry) -> ExtensionRef | No
         validate_extension_name(entry.name)
         ref = parse_ref(
             entry.source,
-            ref_override=run.to or (None if entry.ref == UNPINNED_REF else entry.ref),
+            ref_override=run.to or _recorded_ref(entry),
         )
-        if run.updates_all and run.to == LATEST and ref.kind != "first_party":
+        if (
+            run.updates_all
+            and run.to == LATEST
+            and ref.kind not in ("first_party", "pypi")
+        ):
             logging.info(
-                "Kept %r: --to %s moves first-party extensions only.",
+                "Kept %r: --to %s moves first-party and pypi@ extensions only.",
                 entry.name,
                 LATEST,
             )
@@ -298,6 +316,15 @@ def _parse_entry_ref(run: _ScopeRun, entry: ExtensionEntry) -> ExtensionRef | No
         return None
 
 
+def _recorded_ref(entry: ExtensionEntry) -> str | None:
+    if entry.ref == UNPINNED_REF:
+        return None
+    # A pypi@ source with an == pin wins over a stale `ref:`.
+    if is_pypi_reference(entry.source) and parse_ref(entry.source).ref is not None:
+        return None
+    return entry.ref
+
+
 def _has_installed_skills(run: _ScopeRun, name: str) -> bool:
     try:
         return bool(installed_skill_names(run.skills_dir, name))
@@ -307,17 +334,22 @@ def _has_installed_skills(run: _ScopeRun, name: str) -> bool:
         return True
 
 
-def _back_up_local_copy(
+def _back_up_copy(
     ref: ExtensionRef, extension_dir: Path, backup_dir: Path
 ) -> Path | None:
-    """Copy a `local@` extension's vendored copy aside before it is replaced.
+    """Copy a `local@` or `pypi@` extension's vendored copy aside before it is replaced.
 
     A git pin can be materialized again from its SHA. A local source has no
-    history, so copying it again would bring back the refused version.
+    history, so copying it again would bring back the refused version. An index
+    can stop serving a pinned wheel.
     A symlinked folder is skipped: update cannot replace it, so it never needs
     restoring.
     """
-    if ref.kind != "local" or extension_dir.is_symlink() or not extension_dir.is_dir():
+    if (
+        ref.kind not in ("local", "pypi")
+        or extension_dir.is_symlink()
+        or not extension_dir.is_dir()
+    ):
         return None
     backup = backup_dir / extension_dir.name
     if backup.exists():
@@ -348,8 +380,12 @@ def _report_skipped(
 
 
 def _scope_label(run: _ScopeRun, name: str) -> str:
+    return _scope_suffix(run.scope, name, run.at_both_scopes)
+
+
+def _scope_suffix(scope: str, name: str, at_both_scopes: frozenset[str]) -> str:
     # A name listed at both scopes gets one line per scope.
-    return f" ({run.scope} scope)" if name in run.at_both_scopes else ""
+    return f" ({scope} scope)" if name in at_both_scopes else ""
 
 
 def _old_copy_status(
@@ -627,13 +663,7 @@ def _record_update(
     # Even when no skill changed, a skill folder deleted by hand leaves a dead link.
     if run.skills_dir.is_dir():
         link_skills_for_antigravity_if_global(run.skills_dir)
-    new_entry = ExtensionEntry(
-        name=entry.name,
-        source=entry.source,
-        ref=ref.ref or UNPINNED_REF,
-        sha=new_sha,
-        scope=run.scope,
-    )
+    new_entry = ExtensionEntry.for_ref(ref, name=entry.name, sha=new_sha, scope=run.scope)
     try:
         upsert_extension_entry(run.root / EXTENSIONS_FILE, new_entry)
     except (OSError, ExtensionListError) as e:
@@ -647,7 +677,7 @@ def _record_update(
             entry.name,
         )
         return "skipped"
-    _report_new_pin(run, entry, new_entry)
+    changed = _report_new_pin(run, entry, new_entry)
     if new_spec is not None and is_out_of_range(new_spec):
         logging.warning(
             "Updated %r to a version requiring agents-cli %s (running %s).",
@@ -656,19 +686,40 @@ def _record_update(
             __version__,
         )
     report_skill_changes(new_spec, entry.name, run.skills_dir, removed_skills)
-    return "updated"
+    return "updated" if changed else "unchanged"
 
 
 def _report_new_pin(
     run: _ScopeRun, entry: ExtensionEntry, new_entry: ExtensionEntry
-) -> None:
+) -> bool:
+    """Log how the pin moved, and return whether it changed."""
     label = _scope_label(run, entry.name)
     if new_entry.sha == LOCAL_SHA:
         logging.info("Updated %r%s: copied %s again.", entry.name, label, entry.source)
-        return
-    new_pin = f"{new_entry.ref} ({new_entry.sha[:7]})"
-    if (entry.ref, entry.sha) == (new_entry.ref, new_entry.sha):
-        logging.info("%r%s has no new commit; still at %s.", entry.name, label, new_pin)
+        return True
+    old_pin, new_pin = _pin_label(entry), _pin_label(new_entry)
+    if entry.sha == new_entry.sha and old_pin == new_pin:
+        # A pypi@ entry pins a release version; a git entry, a commit.
+        unchanged = (
+            "is already at" if new_entry.ref is None else "has no new commit; still at"
+        )
+        logging.info("%r%s %s %s.", entry.name, label, unchanged, new_pin)
+        return False
+    if new_entry.version and new_entry.version == (entry.version or entry.ref):
+        logging.warning(
+            "Updated %r%s: the index now serves a different wheel for %s "
+            "(sha256 %s → %s); check that you trust it.",
+            entry.name,
+            label,
+            new_entry.version,
+            entry.sha[:7],
+            new_entry.sha[:7],
+        )
     else:
-        old_pin = f"{entry.ref} ({entry.sha[:7]})"
         logging.info("Updated %r%s: %s → %s.", entry.name, label, old_pin, new_pin)
+    return True
+
+
+def _pin_label(entry: ExtensionEntry) -> str:
+    pin = entry.ref or entry.version or entry.source
+    return f"{pin} ({entry.sha[:7]})"

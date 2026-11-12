@@ -19,9 +19,10 @@ import shlex
 from pathlib import Path
 
 import click
-from click.core import ParameterSource
 from rich.panel import Panel
 
+from google.agents.cli import _local_auth_check
+from google.agents.cli._click import is_set_on_command_line
 from google.agents.cli._output import Console
 from google.agents.cli._project import (
     agents_root,
@@ -32,14 +33,26 @@ from google.agents.cli._project import (
 from google.agents.cli._runner import run
 from google.agents.cli._tools import is_windows
 from google.agents.cli._uv_index import uv_index_env
+from google.agents.cli.scaffold.utils import go_overlay
 from google.agents.cli.scaffold.utils.language import dispatch_language
 
 _console = Console()
 
+# ADK Go's web launcher takes -host, defaulting to 127.0.0.1, from this version on.
+_ADK_GO_HOST_FLAG_SINCE = "v2.5.0"
+
 
 @click.command("playground")
 @click.option("--port", default=8080, help="Port for the playground server.")
-@click.option("--host", default="127.0.0.1", help="Host the server binds to.")
+@click.option(
+    "--host",
+    default="127.0.0.1",
+    help=(
+        "Host the server binds to. Use 0.0.0.0 to reach the playground from another "
+        "machine or from outside a container; Go projects need ADK Go "
+        f"{_ADK_GO_HOST_FLAG_SINCE} or later."
+    ),
+)
 @click.option(
     "--reload_agents/--no-reload_agents",
     default=True,
@@ -56,6 +69,7 @@ def cmd_playground(port, host, reload_agents, otel_to_cloud):
     chdir_project_root()
     cfg = read_project_config()
     require_agent_directory(cfg)
+    _local_auth_check.warn_if_model_auth_broken(Path.cwd() / cfg.agent_directory)
     # Use 127.0.0.1 instead of localhost to avoid IPv6 resolution issues on Windows.
     browser_host = "127.0.0.1" if host == "0.0.0.0" else host
 
@@ -112,34 +126,38 @@ def _build_python_playground(
     return url, args
 
 
-def _user_set(option: str) -> bool:
-    """Whether ``option`` came from the command line rather than its default."""
-    ctx = click.get_current_context(silent=True)
-    return (
-        ctx is not None
-        and ctx.get_parameter_source(option) == ParameterSource.COMMANDLINE
-    )
-
-
 def _build_go_playground(
-    *, port: int, reload_agents: bool, otel_to_cloud: bool, **_
+    *,
+    browser_host: str,
+    host: str,
+    port: int,
+    reload_agents: bool,
+    otel_to_cloud: bool,
+    **_,
 ) -> tuple[str, list[str]]:
     """Build the (banner URL, command) for a Go (adk-go web) playground.
 
     ADK Go serves the web UI under /ui/ and mounts the ADK REST API at root (/).
     """
-    # `adk-go web` always binds ":port" (all interfaces) and has no reload, so
-    # warn only when the user actually asked for what we're about to drop.
-    if _user_set("host"):
+    args = ["go", "run", ".", "web"]
+    url_host = "127.0.0.1"
+    if go_overlay.adk_go_version_at_least(Path.cwd() / "go.mod", _ADK_GO_HOST_FLAG_SINCE):
+        args += ["--host", host]
+        url_host = browser_host
+    elif is_set_on_command_line("host"):
+        # Older `adk-go web` always binds ":port" (all interfaces) and rejects
+        # -host, so warn only when the user actually asked for what we drop.
         logging.warning(
-            "--host is not supported by `adk-go web`, which always binds all "
-            "interfaces; ignoring it."
+            "--host needs ADK Go %s or later; this project's `adk-go web` always "
+            "binds all interfaces, so ignoring it.",
+            _ADK_GO_HOST_FLAG_SINCE,
         )
-    if reload_agents and _user_set("reload_agents"):
+    # `adk-go web` has no reload.
+    if reload_agents and is_set_on_command_line("reload_agents"):
         logging.warning("--reload_agents is not supported by `adk-go web`; ignoring it.")
 
-    url = f"http://127.0.0.1:{port}/ui/"
-    args = ["go", "run", ".", "web", "--port", str(port)]
+    url = f"http://{url_host}:{port}/ui/"
+    args += ["--port", str(port)]
     if otel_to_cloud:
         args.append("--otel_to_cloud")
     args += [

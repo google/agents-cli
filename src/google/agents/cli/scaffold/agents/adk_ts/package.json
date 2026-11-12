@@ -6,7 +6,7 @@
   "main": "{{cookiecutter.agent_directory}}/agent.ts",
   "scripts": {
     "build": "tsc",
-    "dev": "tsc && npx @google/adk-devtools web -h localhost dist",
+    "dev": "tsc && npx @google/adk-devtools web dist --host 127.0.0.1 --port 8080",
     "run": "tsc && npx @google/adk-devtools run dist/{{cookiecutter.app_name}}/agent.js",
     "test": "tsc && vitest run",
     "lint": "eslint .",
@@ -33,5 +33,14 @@
     "protobufjs": "^7.6.5",
     "qs": "^6.16.1",
     "minimatch": "^11.0.1"
+  },
+  "allowScripts": {
+    "better-sqlite3": false,
+    "esbuild": true,
+    "@google/genai": false,
+    "cpu-features": false,
+    "fsevents": false,
+    "protobufjs": false,
+    "ssh2": false
   }
 }

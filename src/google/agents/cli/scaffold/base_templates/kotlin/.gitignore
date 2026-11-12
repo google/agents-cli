@@ -1,0 +1,56 @@
+# Gradle
+.gradle/
+build/
+.kotlin/
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.project
+.classpath
+*.swp
+*.swo
+
+# Environment files
+.env
+.env.local
+!.env.example
+
+# Build artifacts
+dist/
+*.class
+*.jar
+*.war
+*.ear
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+{% if 'adk' in cookiecutter.tags %}
+# ADK
+.adk/
+
+{% endif -%}
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test results
+test-results/
+
+# Credentials and private keys
+*.pem
+*-key.json
+credentials*.json
+
+deployment_metadata.json.lock
+
+# Files `scaffold enhance` moved aside from a repo it adopted.
+/.agents-cli-original/

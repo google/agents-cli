@@ -18,7 +18,7 @@ example_question: "Hello!"
 settings:
   language: "java"
   requires_session: false
-  deployment_targets: ["agent_runtime", "cloud_run", "gke", "none"]
+  deployment_targets: ["cloud_run", "gke", "none"]
   extra_dependencies: []
   tags: ["empty"]
   frontend_type: "None"

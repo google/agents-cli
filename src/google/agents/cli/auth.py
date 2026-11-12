@@ -81,8 +81,13 @@ def _api_key_instructions(var_name):
 
 _adc_credentials = None
 
-# Signs in gcloud and ADC with one browser login.
+# Signs in gcloud and ADC with one browser login. agents-cli calls Google Cloud
+# through both, so every sign-in hint suggests this command.
 _GCLOUD_LOGIN_CMD = ("gcloud", "auth", "login", "--update-adc")
+GCLOUD_LOGIN = shlex.join(_GCLOUD_LOGIN_CMD)
+# Prints a URL to open on another machine instead of launching a local browser.
+# https://cloud.google.com/sdk/gcloud/reference/auth/login
+_GCLOUD_HEADLESS_LOGIN_CMD = (*_GCLOUD_LOGIN_CMD, "--no-launch-browser")
 
 _QUOTA_PROJECT_WARNING_PREFIX = (
     "Your application has authenticated using end user credentials"
@@ -167,7 +172,7 @@ def _setup_google_cloud_adc():
         click.echo("  After installing, run:")
         click.echo()
         click.secho(
-            f"    {shlex.join(_GCLOUD_LOGIN_CMD)}",
+            f"    {GCLOUD_LOGIN}",
             bold=True,
         )
         click.echo()
@@ -178,19 +183,22 @@ def _setup_google_cloud_adc():
     click.echo(
         "  This will open a browser window to authenticate with your Google account."
     )
+    click.echo("  Answer 'n' if this machine has no browser (for example over SSH).")
     click.echo()
 
     if not click.confirm(
-        f"  Run '{shlex.join(_GCLOUD_LOGIN_CMD)}' now",
+        f"  Run '{GCLOUD_LOGIN}' now",
         default=True,
     ):
         click.echo()
         click.echo("  Run this command manually when ready:")
         click.echo()
         click.secho(
-            f"    {shlex.join(_GCLOUD_LOGIN_CMD)}",
+            f"    {GCLOUD_LOGIN}",
             bold=True,
         )
+        click.echo()
+        _print_headless_login_hint()
         return None
 
     click.echo()
@@ -207,19 +215,21 @@ def _setup_google_cloud_adc():
                 "  gcloud login did not complete successfully.",
                 fg="red",
             )
+            _print_headless_login_hint()
             return None
     except subprocess.TimeoutExpired:
         click.secho(
             "  Authentication timed out. Run the command manually.",
             fg="red",
         )
+        _print_headless_login_hint()
         return None
     except Exception as e:
         click.secho(f"  Failed to run gcloud: {e}", fg="red")
         return None
 
     # Verify ADC is now available
-    if not _check_valid_adc():
+    if not _check_valid_adc(report_problems=True):
         click.secho(
             "  Authentication completed but credentials could not be verified.",
             fg="red",
@@ -227,6 +237,15 @@ def _setup_google_cloud_adc():
         return None
 
     return {"project": _get_adc_project(), "account": _get_gcloud_account()}
+
+
+def _print_headless_login_hint():
+    click.echo(
+        "  No browser on this machine (for example over SSH)? Run this instead and"
+    )
+    click.echo("  open the printed URL on another machine:")
+    click.echo()
+    click.secho(f"    {shlex.join(_GCLOUD_HEADLESS_LOGIN_CMD)}", bold=True)
 
 
 def _get_gcloud_account():
@@ -251,12 +270,12 @@ def _get_gcloud_account():
 def _setup_gemini_api_key():
     """Guide the user through Gemini API key setup.
 
-    Checks for GEMINI_API_KEY env var. If not set, opens AI Studio
-    in the browser and prompts the user to paste a key. Persists
-    the key by appending to the user's shell profile.
+    Checks for GEMINI_API_KEY env var. If not set, opens AI Studio in the
+    browser and prints the shell and project `.env` changes the user (or
+    their coding agent) must make. The key is never read or stored.
 
     Returns:
-        Dict on success, or None if cancelled.
+        Dict if GEMINI_API_KEY is already set, otherwise None.
     """
     api_key = os.environ.get("GEMINI_API_KEY")
     if api_key:
@@ -280,8 +299,33 @@ def _setup_gemini_api_key():
     click.echo()
 
     _api_key_instructions("GEMINI_API_KEY")
+    _gemini_dotenv_instructions()
 
     return None
+
+
+def _gemini_dotenv_instructions():
+    """Print the `.env` edits that switch a generated project to the Gemini API.
+
+    Generated projects default to Gemini platform (Vertex) in `.env`, and that
+    flag wins over GEMINI_API_KEY, so exporting the key alone is not enough.
+    """
+    click.secho("  To use the API key in an agents-cli project:", bold=True)
+    click.echo()
+    click.echo("  Edit the .env file in the project root (no other files need changes):")
+    click.echo()
+    click.echo("    1. Set the API key:")
+    click.secho("         GEMINI_API_KEY=YOUR_API_KEY", bold=True)
+    click.echo("    2. Turn off Gemini platform mode. Python projects:")
+    click.secho("         GOOGLE_GENAI_USE_ENTERPRISE=false", bold=True)
+    click.echo("       Go, Java, TypeScript and Kotlin projects:")
+    click.secho("         GOOGLE_GENAI_USE_VERTEXAI=false", bold=True)
+    click.echo("    3. GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION are not needed")
+    click.echo("       for local runs in this mode; you can comment them out.")
+    click.echo()
+    click.echo("  A coding agent can make these .env edits for you. Keep .env out of")
+    click.echo("  version control.")
+    click.echo()
 
 
 # ── Express Mode ────────────────────────────────────────────────────
@@ -395,6 +439,12 @@ def run_auth_step(show_header=True):
             click.secho(f"  Authenticated as {display}", fg="green")
         else:
             click.secho("  Credentials saved", fg="green")
+    elif choice == 2:
+        click.secho(
+            "  Finish the Gemini API key setup with the steps above, then run"
+            " 'agents-cli login --status' to confirm.",
+            fg="yellow",
+        )
     else:
         click.secho(
             "  Continuing without authentication. Run 'agents-cli login' later.",
@@ -408,8 +458,15 @@ def run_auth_step(show_header=True):
 # ── Shared Helpers ──────────────────────────────────────────────────
 
 
-def is_authenticated():
+def is_authenticated(*, report_problems: bool = True):
     """Check if valid credentials exist by inspecting env vars and ADC.
+
+    With valid ADC, also checks that they can call the Gemini platform (a
+    network call) and warns if not, e.g. when no project is set.
+
+    Args:
+        report_problems: Log why ADC is unusable or can't reach the Gemini
+            platform. Pass False to re-check status without repeating that.
 
     Returns:
         Tuple of (bool, str_or_None) — authenticated status and
@@ -424,17 +481,19 @@ def is_authenticated():
         return True, "Express Mode (GOOGLE_API_KEY)"
 
     # Check ADC validity
-    if not _check_valid_adc():
+    if not _check_valid_adc(report_problems=report_problems):
         return False, None
 
     # Get project and account for display
     project = _get_adc_project()
     account = _get_gcloud_account()
     display = f"{account or 'Google Cloud'}{f' for project {project}' if project else ''} (Application Default Credentials)"
+    if report_problems:
+        _warn_if_vertex_unreachable()
     return True, display
 
 
-def _check_valid_adc():
+def _check_valid_adc(*, report_problems: bool):
     # google.auth.default() doesn't actually validate credentials
     # until you try to refresh them. That refresh can be extremely slow
     # if credentials are missing or invalid, so we use the gcloud version
@@ -444,19 +503,34 @@ def _check_valid_adc():
             ["gcloud", "auth", "application-default", "print-access-token", "--quiet"],
             check=True,
             capture_output=True,
+            encoding="utf-8",
+            errors="replace",
         )
         return True
     except ToolNotFoundError:
         # If gcloud is not installed, fallback to the slower google.auth.default() means of checking
-        try:
-            from google.auth.transport.requests import Request as GoogleAuthRequest
+        import google.auth.exceptions
+        from google.auth.transport.requests import Request as GoogleAuthRequest
 
+        try:
             credentials, _ = default_credentials()
             credentials.refresh(GoogleAuthRequest())
             return True
-        except Exception:
+        except google.auth.exceptions.DefaultCredentialsError as e:
+            # Nothing is set up yet, and every caller already says so.
+            logging.debug("No Application Default Credentials: %s", e)
             return False
-    except subprocess.CalledProcessError:
+        except Exception as e:
+            if report_problems:
+                logging.info("Application Default Credentials are not usable: %s", e)
+            return False
+    except subprocess.CalledProcessError as e:
+        reason = (e.stderr or "").strip()
+        if "default credentials were not found" in reason.lower():
+            # Same as above; its doc link also suggests a different login command.
+            logging.debug("gcloud reported: %s", reason)
+        elif reason and report_problems:
+            logging.info("gcloud reported: %s", reason)
         return False
 
 
@@ -467,6 +541,19 @@ def _get_adc_project():
         return project
     except Exception:
         return None
+
+
+def _warn_if_vertex_unreachable():
+    """Warn when ADC is valid but can't call the Gemini platform yet."""
+    # Lazy: gcp pulls in requests and imports this module back.
+    from google.agents.cli.scaffold.utils.gcp import verify_credentials_and_vertex
+
+    try:
+        verify_credentials_and_vertex()
+    except Exception as e:
+        # It raises a bare Exception whose message says what to fix; signing in
+        # still succeeded, so report it without failing the command.
+        logging.warning("%s", e)
 
 
 # ── Token Helpers ──────────────────────────────────────────────────

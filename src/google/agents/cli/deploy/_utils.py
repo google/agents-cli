@@ -16,9 +16,10 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import shlex
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -225,6 +226,25 @@ class KeyValueChanges:
             resolved.pop(key, None)
         resolved.update(self.updates)
         return resolved
+
+
+def drop_default_env_var_removals(
+    remove_env_vars: tuple[str, ...], set_by_deploy: Collection[str]
+) -> tuple[str, ...]:
+    """Return ``remove_env_vars`` without the keys this deploy sets, warning for each.
+
+    APP_URL is always kept, including when this deploy couldn't look it up.
+    """
+    set_by_deploy = {*set_by_deploy, "APP_URL"}
+    for key in remove_env_vars:
+        if key in set_by_deploy:
+            logging.warning(
+                "Ignoring --remove-env-vars %s: this deploy sets it anyway. "
+                "Pass --env-vars %s=VALUE to change its value instead.",
+                key,
+                key,
+            )
+    return tuple(key for key in remove_env_vars if key not in set_by_deploy)
 
 
 def parse_secret_refs(secrets: Mapping[str, str]) -> dict[str, dict[str, str]]:

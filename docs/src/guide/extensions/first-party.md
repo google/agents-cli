@@ -25,7 +25,7 @@ The LangChain template runs a [LangChain](https://python.langchain.com) agent th
 
 ```bash
 agents-cli create my-agent \
-    --agent google/agents-cli/extensions/langchain/template@v1.13.0 \
+    --agent google/agents-cli/extensions/langchain/template@v1.14.0 \
     -d cloud_run
 cd my-agent && agents-cli install
 ```
@@ -71,7 +71,7 @@ AGENTS_CLI_DISABLE_OVERRIDES=1 agents-cli run --url https://<service-url> --mode
 ### Full journey
 
 ```bash
-agents-cli create my-agent --agent google/agents-cli/extensions/langchain/template@v1.13.0 -d cloud_run
+agents-cli create my-agent --agent google/agents-cli/extensions/langchain/template@v1.14.0 -d cloud_run
 cd my-agent && agents-cli install
 agents-cli run "what's the weather in San Francisco?"       # in-process graph
 agents-cli eval generate --dataset tests/eval/datasets/basic-dataset.json -o tests/eval/output/
@@ -112,13 +112,13 @@ The template's contract is `app/agent.py` exporting `root_agent`, a `ClaudeAgent
 
 ```bash
 cd my-claude-agent
-agents-cli scaffold enhance google/agents-cli/extensions/claude/template@v1.13.0 -d cloud_run
+agents-cli scaffold enhance google/agents-cli/extensions/claude/template@v1.14.0 -d cloud_run
 ```
 
 The `enhance` command writes the template as `create` would: the server, a sample `app/agent.py`, `pyproject.toml`, Dockerfile, deployment files, tests and `agents-cli-extension.yaml`. Each of your files it replaces moves to `.agents-cli-original/` at the same path; your other files stay where they are. Then port your agent into `app/agent.py`, add your dependencies with `uv add`, carry over what you need from `.agents-cli-original/` and delete it. To start from scratch instead:
 
 ```bash
-agents-cli create my-agent --agent google/agents-cli/extensions/claude/template@v1.13.0 -d cloud_run
+agents-cli create my-agent --agent google/agents-cli/extensions/claude/template@v1.14.0 -d cloud_run
 ```
 
 ### What it overrides
@@ -165,7 +165,7 @@ agents-cli run --url https://<location>-aiplatform.googleapis.com/v1/projects/<p
 
 ```bash
 cd my-claude-agent
-agents-cli scaffold enhance google/agents-cli/extensions/claude/template@v1.13.0 -d cloud_run
+agents-cli scaffold enhance google/agents-cli/extensions/claude/template@v1.14.0 -d cloud_run
 agents-cli install
 agents-cli run "what's the weather in San Francisco?"       # in-process
 agents-cli eval generate --dataset tests/eval/datasets/basic-dataset.json -o tests/eval/output/

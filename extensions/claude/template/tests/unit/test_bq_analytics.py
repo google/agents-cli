@@ -130,6 +130,7 @@ def _record(messages: list, **kwargs) -> list[dict]:
         user_id="A2A_USER_conv-1",
         model="claude-haiku-4-5",
         system_prompt="You report the weather.",
+        instruction="You report the weather.",
         **kwargs,
     )
     _play(parser, recorder, messages)
@@ -191,6 +192,48 @@ def test_a_tool_turn_writes_adks_rows_in_adks_order():
     assert json.loads(rows[11]["attributes"])["session_cost_usd"] == 0.01
 
 
+@pytest.mark.parametrize(
+    ("system_prompt", "logged"),
+    [
+        pytest.param("Be brief.", "Be brief.", id="string"),
+        pytest.param(
+            {"type": "custom", "prompt": "Be brief."}, "Be brief.", id="custom"
+        ),
+        # The preset's own prompt is the CLI's.
+        pytest.param(
+            {"type": "preset", "preset": "claude_code", "append": "Be brief."},
+            "Be brief.",
+            id="preset_with_append",
+        ),
+        pytest.param({"type": "preset", "preset": "claude_code"}, None, id="preset"),
+        pytest.param({"type": "file", "path": "prompt.md"}, None, id="file"),
+        pytest.param(None, None, id="none"),
+    ],
+)
+def test_the_request_and_agent_starting_rows_have_the_system_prompts_text(
+    system_prompt, logged
+):
+    out = FakeWriter()
+    parser = TurnParser("a")
+    recorder = AgentEventsRecorder(
+        out,
+        prompt="hi",
+        agent_name=parser.agent_name,
+        session_id="s",
+        user_id="u",
+        model=None,
+        system_prompt=system_prompt,
+        instruction=system_prompt,
+    )
+    _play(parser, recorder, _tool_turn("Bash"))
+
+    request = next(r for r in out.rows if r["event_type"] == "LLM_REQUEST")
+    assert _content(request).get("system_prompt") == logged
+    starting = next(r for r in out.rows if r["event_type"] == "AGENT_STARTING")
+    summary = _content(starting)["text_summary"] if starting["content"] else None
+    assert summary == logged
+
+
 def test_rows_join_the_turns_span_once_it_is_current():
     """The instrumentor's span is current only after query() yields."""
     out = FakeWriter()
@@ -203,6 +246,7 @@ def test_rows_join_the_turns_span_once_it_is_current():
         user_id="u",
         model=None,
         system_prompt=None,
+        instruction=None,
     )
     tracer = TracerProvider().get_tracer("test")
     with tracer.start_as_current_span("request") as request:
@@ -236,6 +280,7 @@ def test_failures_become_error_rows():
         user_id="u",
         model=None,
         system_prompt=None,
+        instruction=None,
     )
     _play(parser, recorder, [], error=RuntimeError("model not available"))
     assert _types(out.rows)[-2:] == ["AGENT_ERROR", "INVOCATION_ERROR"]
@@ -486,6 +531,7 @@ def test_a_turn_stopped_at_an_error_result_records_the_result():
         user_id="u",
         model=None,
         system_prompt=None,
+        instruction=None,
     )
     # run_turn stopped reading at the result.
     _play(
@@ -786,7 +832,7 @@ def test_the_agents_own_tools_are_local(client_cls, fresh_writer, monkeypatch):
     for name in ("mcp__weather__get_weather", "mcp__docs__search"):
         parser = TurnParser(agent_name())
         recorder = bq_analytics.start_turn(
-            "hi", options, "conv-1", "conv-1", None, parser.agent_name
+            "hi", options, "conv-1", "conv-1", None, parser.agent_name, instruction=None
         )
         assert recorder is not None
         _play(parser, recorder, _tool_turn(name))
@@ -816,7 +862,7 @@ def test_a_remote_agent_servers_tool_is_an_a2a_call(
 
     parser = TurnParser(agent_name())
     recorder = bq_analytics.start_turn(
-        "hi", options, "conv-1", "conv-1", None, parser.agent_name
+        "hi", options, "conv-1", "conv-1", None, parser.agent_name, instruction=None
     )
     assert recorder is not None
     _play(parser, recorder, _tool_turn("mcp__billing__ask"))
@@ -856,7 +902,13 @@ def test_rows_name_the_agent_after_the_setting(client_cls, fresh_writer, monkeyp
 
     parser = TurnParser(agent_name())
     recorder = bq_analytics.start_turn(
-        "hi", ClaudeAgentOptions(), "conv-1", "conv-1", None, parser.agent_name
+        "hi",
+        ClaudeAgentOptions(),
+        "conv-1",
+        "conv-1",
+        None,
+        parser.agent_name,
+        instruction=None,
     )
     assert recorder is not None
     _play(parser, recorder, _tool_turn("mcp__weather__get_weather"))

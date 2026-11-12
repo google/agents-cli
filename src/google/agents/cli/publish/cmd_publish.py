@@ -43,7 +43,7 @@ from google.agents.cli._remote import (
     build_remote_headers,
     fetch_agent_card,
 )
-from google.agents.cli.auth import get_access_token
+from google.agents.cli.auth import GCLOUD_LOGIN, get_access_token
 from google.agents.cli.scaffold.utils.gcp import (
     get_user_agent,
     get_x_goog_api_client_header,
@@ -188,10 +188,7 @@ def fetch_agent_card_from_url(url: str) -> dict | None:
     except requests.HTTPError as e:
         is_auth_error = e.response is not None and e.response.status_code in (401, 403)
         hint = (
-            (
-                " Authentication failed. Ensure you are logged in with "
-                "'gcloud auth application-default login'."
-            )
+            (f" Authentication failed. Ensure you are logged in with '{GCLOUD_LOGIN}'.")
             if is_auth_error
             else ""
         )

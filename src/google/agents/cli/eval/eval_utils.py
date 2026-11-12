@@ -33,6 +33,7 @@ import yaml
 from google.agents.cli import _sdk_compat
 from google.agents.cli._agent_platform_types import types as vertex_types
 from google.agents.cli._output import Console
+from google.agents.cli._project import find_nearest_dotenv
 
 Execution = Literal["local", "remote"]
 
@@ -53,12 +54,9 @@ def load_eval_dotenv(start_dir: Path) -> None:
     """
     from dotenv import load_dotenv
 
-    start = start_dir.resolve()
-    for folder in (start, *start.parents):
-        candidate = folder / ".env"
-        if candidate.is_file():
-            load_dotenv(candidate, override=False)
-            return
+    dotenv_path = find_nearest_dotenv(start_dir)
+    if dotenv_path is not None:
+        load_dotenv(dotenv_path, override=False)
 
 
 def resolve_eval_region(region: str | None) -> str:

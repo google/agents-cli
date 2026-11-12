@@ -25,11 +25,13 @@ import logging
 import pathlib
 import tomllib
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 import click
 
 from google.agents.cli._experiments import resolve_experiment
+from google.agents.cli._fs import stays_inside
 
 
 def _read_python_version(root: pathlib.Path) -> str:
@@ -118,9 +120,9 @@ LANGUAGE_CONFIGS: dict[str, dict[str, Any]] = {
         "jvm_package_layout": False,
     },
     "java": {
-        "lock_file": None,  # Maven doesn't have a separate lock file
-        "lock_command": ["mvn", "dependency:resolve"],
-        "lock_command_name": "mvn dependency:resolve",
+        "lock_file": None,  # Gradle doesn't lock dependencies by default
+        "lock_command": ["gradle", "dependencies"],
+        "lock_command_name": "gradle dependencies",
         "display_name": "Java",
         "picker_icon": "☕",
         "agent_file": "Agent.java",
@@ -136,7 +138,13 @@ LANGUAGE_CONFIGS: dict[str, dict[str, Any]] = {
         "experiment": "adk_java",
         "genai_backend_env_var": "GOOGLE_GENAI_USE_VERTEXAI",
         "supports_bq_analytics": False,
-        "ci_trigger_files": [],
+        # src/main/resources and src/test sit outside the agent directory.
+        "ci_trigger_files": [
+            "src/**",
+            "build.gradle.kts",
+            "settings.gradle.kts",
+            "Dockerfile",
+        ],
         "gke_prestop_command": ["sleep", "10"],
         "extra_template_folders": ["src/test"],
         "jvm_package_layout": True,
@@ -159,7 +167,13 @@ LANGUAGE_CONFIGS: dict[str, dict[str, Any]] = {
         "experiment": "adk_typescript",
         "genai_backend_env_var": "GOOGLE_GENAI_USE_VERTEXAI",
         "supports_bq_analytics": False,
-        "ci_trigger_files": [],
+        "ci_trigger_files": [
+            "tests/**",
+            "package.json",
+            "package-lock.json",
+            "tsconfig.json",
+            "Dockerfile",
+        ],
         "gke_prestop_command": ["sleep", "10"],
         "extra_template_folders": [],
         "jvm_package_layout": False,
@@ -182,9 +196,14 @@ LANGUAGE_CONFIGS: dict[str, dict[str, Any]] = {
         "experiment": "adk_kotlin",
         "genai_backend_env_var": "GOOGLE_GENAI_USE_VERTEXAI",
         "supports_bq_analytics": False,
-        "ci_trigger_files": ["build.gradle.kts", "settings.gradle.kts"],
+        "ci_trigger_files": [
+            "src/test/**",
+            "build.gradle.kts",
+            "settings.gradle.kts",
+            "Dockerfile",
+        ],
         "gke_prestop_command": ["sleep", "10"],
-        "extra_template_folders": [],
+        "extra_template_folders": ["src/test"],
         "jvm_package_layout": True,
     },
 }
@@ -365,6 +384,211 @@ def _locate_language_agent_file(
     # Standard case: agent file directly in agent directory
     agent_file = agent_folder / agent_file_name
     return agent_file if agent_file.exists() else None
+
+
+# =============================================================================
+# Project detection (projects agents-cli did not create)
+# =============================================================================
+
+# Directories that never hold agent code, skipped when scanning or listing
+# candidate agent directories.
+NON_AGENT_DIRS = {
+    ".git",
+    ".github",
+    "__pycache__",
+    "node_modules",
+    ".venv",
+    "venv",
+    "build",
+    "dist",
+    ".terraform",
+}
+
+# Files at the project root that identify a language's project, consulted only
+# when no language-specific agent file settles it (a root_agent.yaml agent).
+_LANGUAGE_MARKER_FILES: dict[str, tuple[str, ...]] = {
+    "python": ("pyproject.toml", "requirements.txt"),
+    "go": ("go.mod",),
+    "java": ("pom.xml",),
+    "typescript": ("package.json",),
+    "kotlin": ("build.gradle.kts", "build.gradle"),
+}
+
+
+class ProjectDetectionError(click.ClickException):
+    """Raised when a project's language or agent directory can't be told apart."""
+
+
+@dataclass(frozen=True)
+class DetectedProject:
+    """What ``detect_project`` found in a project without a manifest."""
+
+    language: str
+    # Relative to the project root, as the manifest records it.
+    agent_directory: str
+    # The agent file the directory was recognised by.
+    agent_file: pathlib.Path
+
+
+def detect_project(
+    project_dir: pathlib.Path,
+    *,
+    agent_directory: str | None = None,
+    choose_agent_directory: Callable[[list[str]], str] | None = None,
+) -> DetectedProject:
+    """Find the language and agent directory of a project without a manifest.
+
+    Scans the top-level directories (and each language's default agent
+    directory) for a language's ``agent_file`` or a ``root_agent.yaml``. Stops
+    with an error whenever the answer isn't unambiguous: two languages' agent
+    files, several agent directories without a way to choose, or none at all.
+
+    Args:
+        project_dir: The project root.
+        agent_directory: Skips directory detection. Must be a relative path
+            inside ``project_dir`` holding an agent file.
+        choose_agent_directory: Called with the sorted candidates when more than
+            one directory holds an agent file; None makes that an error.
+
+    Raises:
+        ProjectDetectionError: When the project can't be read unambiguously.
+    """
+    if agent_directory is not None:
+        agent_directory = agent_directory.rstrip("/")
+        if not stays_inside(agent_directory):
+            raise ProjectDetectionError(
+                "--agent-directory must be a relative path inside the project, "
+                f"not '{agent_directory}'."
+            )
+        if not (project_dir / agent_directory).is_dir():
+            raise ProjectDetectionError(
+                f"--agent-directory '{agent_directory}' is not a directory in "
+                f"'{project_dir}'."
+            )
+        candidates = [agent_directory]
+    else:
+        candidates = _candidate_agent_directories(project_dir)
+
+    # language -> directories holding that language's agent file; the yaml set
+    # holds directories whose agent is a root_agent.yaml, which fits any language.
+    by_language: dict[str, set[str]] = {}
+    yaml_dirs: set[str] = set()
+    for candidate in candidates:
+        for language in _enabled_languages():
+            config = LANGUAGE_CONFIGS[language]
+            # Java/Kotlin agents sit below a package tree; only the conventional
+            # source root is searched for them, so that `src` and `src/main/java`
+            # don't both match.
+            if (
+                config["agent_in_subdirectory"]
+                and agent_directory is None
+                and candidate != config["default_agent_directory"]
+            ):
+                continue
+            agent_file = find_agent_file(project_dir, language, candidate)
+            if agent_file is None:
+                continue
+            if agent_file.name == "root_agent.yaml":
+                yaml_dirs.add(candidate)
+            else:
+                by_language.setdefault(language, set()).add(candidate)
+
+    language = _resolve_project_language(project_dir, by_language, yaml_dirs, candidates)
+    directories = sorted(by_language.get(language, set()) | yaml_dirs)
+
+    if agent_directory is not None:
+        chosen = agent_directory
+    elif len(directories) == 1:
+        chosen = directories[0]
+    elif choose_agent_directory is not None:
+        chosen = choose_agent_directory(directories)
+    else:
+        raise ProjectDetectionError(
+            f"Several directories contain an agent: {', '.join(directories)}.\n"
+            "  Pass --agent-directory <dir> to pick one."
+        )
+    agent_file = find_agent_file(project_dir, language, chosen)
+    if agent_file is None:
+        # Only reachable if the chooser returned a directory it wasn't offered.
+        raise ProjectDetectionError(f"No agent file found in {chosen}/.")
+    return DetectedProject(
+        language=language, agent_directory=chosen, agent_file=agent_file
+    )
+
+
+def _candidate_agent_directories(project_dir: pathlib.Path) -> list[str]:
+    """Top-level directories worth checking, plus each language's default."""
+    candidates = {
+        item.name
+        for item in project_dir.iterdir()
+        if item.is_dir()
+        and not item.name.startswith(".")
+        and item.name not in NON_AGENT_DIRS
+    }
+    for language in _enabled_languages():
+        default = LANGUAGE_CONFIGS[language]["default_agent_directory"]
+        if (project_dir / default).is_dir():
+            candidates.add(default)
+    return sorted(candidates)
+
+
+def _resolve_project_language(
+    project_dir: pathlib.Path,
+    by_language: dict[str, set[str]],
+    yaml_dirs: set[str],
+    candidates: list[str],
+) -> str:
+    if len(by_language) > 1:
+        found = "; ".join(
+            f"{LANGUAGE_CONFIGS[lang]['agent_file']} in {', '.join(sorted(dirs))}"
+            for lang, dirs in sorted(by_language.items())
+        )
+        raise ProjectDetectionError(
+            f"Found agent files for more than one language: {found}.\n"
+            "  Pass --agent-directory <dir> to pick the agent to record."
+        )
+    if len(by_language) == 1:
+        return next(iter(by_language))
+    if not yaml_dirs:
+        looked_for = ", ".join(
+            sorted(
+                {LANGUAGE_CONFIGS[lang]["agent_file"] for lang in _enabled_languages()}
+                | {"root_agent.yaml"}
+            )
+        )
+        searched = ", ".join(candidates) if candidates else "(no directories)"
+        raise ProjectDetectionError(
+            f"No ADK agent found in '{project_dir}'.\n"
+            f"  Looked for {looked_for} in: {searched}.\n"
+            "  Run this from the project root, or pass --agent-directory <dir>."
+        )
+
+    # Only root_agent.yaml agents: the language has to come from the project files.
+    marked = [
+        lang
+        for lang in _enabled_languages()
+        if any(
+            (project_dir / marker).is_file()
+            for marker in _LANGUAGE_MARKER_FILES.get(lang, ())
+        )
+    ]
+    if len(marked) == 1:
+        return marked[0]
+    if not marked:
+        raise ProjectDetectionError(
+            "Could not tell the project language: root_agent.yaml fits any "
+            "language and no project file (pyproject.toml, go.mod, ...) was "
+            f"found in '{project_dir}'."
+        )
+    raise ProjectDetectionError(
+        "Could not tell the project language: root_agent.yaml fits any "
+        f"language and project files for {', '.join(marked)} were found in "
+        f"'{project_dir}'."
+    )
+
+
+def _enabled_languages() -> list[str]:
+    return [lang for lang in LANGUAGE_CONFIGS if is_language_enabled(lang)]
 
 
 def get_project_version(

@@ -33,7 +33,7 @@ An extension contributes two things:
     - For Antigravity, `agents-cli` links each `--global` skill into its global skills folder.
     - If your home folder is a project, both scopes share `~/.agents/skills/`, so an extension with skills can be installed at only one of them.
 
-Extensions come from these places: any `org/repo` on GitHub, a URL on any git host, a local path, a first-party shorthand name, or an `agents-cli-extension.yaml` committed at your project root (auto-loaded, no install step). A framework template ships that last kind, so scaffolding from one needs no install. A template ships its skills as files under `.agents/skills/`, and scaffolding copies them like any other file. Only `extension add`, `extension update`, and `agents-cli install` read the `skills:` field.
+Extensions come from these places: any `org/repo` on GitHub, a URL on any git host, a package on PyPI or another Python package index, a local path, a first-party shorthand name, or an `agents-cli-extension.yaml` committed at your project root (auto-loaded, no install step). A framework template ships that last kind, so scaffolding from one needs no install. A template ships its skills as files under `.agents/skills/`, and scaffolding copies them like any other file. Only `extension add`, `extension update`, and `agents-cli install` read the `skills:` field.
 
 ---
 
@@ -42,7 +42,7 @@ Extensions come from these places: any `org/repo` on GitHub, a URL on any git ho
 ```bash
 agents-cli extension add <ref> [--global] [--ref <branch|tag|sha|:latest>] [--yes]
 agents-cli extension list                      # active extensions, their scope, and the commands they contribute
-agents-cli extension update [<name>] [--to <branch|tag|sha|:latest>]  # advance or move the pin and replace its skills
+agents-cli extension update [<name>] [--to <branch|tag|sha|version|:latest>]  # advance or move the pin and replace its skills
 agents-cli extension remove <name> [--global]  # drop it, its vendored copy, and skills no other scope uses
 agents-cli info                                # active extensions, their sources, and any conflicts
 ```
@@ -58,11 +58,21 @@ An overridden or added command is tagged in `agents-cli --help` with `[↑ <exte
 | `https://git.example.com/acme/acli-extensions` | any git host, over `https://`, `http://`, or `ssh://` |
 | `git@git.example.com:acme/acli-extensions` | the same host, in scp form |
 | `local@../my-extension` | a local path (for development) |
+| `pypi@acme-extensions` | the newest release of a package on PyPI or your package index |
+| `pypi@acme-extensions==1.2.0` | a specific release of that package |
+| `pypi@acme-extensions==1.2.0#core/soc2` | select one extension from a multi-extension package |
 | `<name>` | first-party shorthand that pins the latest release tag of the `google/agents-cli` repo that isn't newer than your agents-cli (for example `v1.12.0`) |
-| `--ref <branch\|tag\|sha>` | pin a branch, tag, or commit SHA |
+| `--ref <branch\|tag\|sha>` | pin a branch, tag, or commit SHA of a git reference |
 | `--ref :latest` | pin the latest release, as the shorthand does without `--ref` (first-party only) |
 
 Agents CLI clones a URL with your existing git configuration, so whatever already authenticates you to that host (a credential helper or an SSH agent) applies. Agents CLI doesn't ask for or store credentials.
+
+A `pypi@` reference installs an extension from a wheel:
+
+- The wheel comes from the index in `UV_DEFAULT_INDEX`, `UV_INDEX_URL` or `PIP_INDEX_URL`, the first one set, or from PyPI when none is. Credentials in the index URL (`https://<user>:<password>@host/simple`) are sent only to that host.
+- The version goes in the reference, `==<version>`. `--ref` doesn't apply.
+- Without `#<folder>`, Agents CLI uses the extension at the wheel's root, or its only extension. When a wheel holds several, the error lists the references to choose from.
+- Installing reads the wheel and never runs package code.
 
 ---
 
@@ -88,9 +98,11 @@ Extensions from `google/agents-cli`, `google/agents-cli-extensions` and `google/
 
 ## Pin and update extensions
 
-Extensions pin to an exact commit, like a lockfile:
+Extensions pin exact content, like a lockfile: a git extension pins a commit SHA, and a `pypi@` extension pins a wheel's sha256.
 
-- **`extension add`** resolves the ref to a commit SHA, records `source` / `ref` / `sha` under `extensions:` in `agents-cli-extensions.yaml`, vendors a working copy under `extensions/`, and copies the extension's skills into the skills folder.
+- **`extension add`** resolves the reference to its pin, records it under `extensions:` in `agents-cli-extensions.yaml`, vendors a working copy under `extensions/`, and copies the extension's skills into the skills folder.
+    - A git entry records `source` / `ref` / `sha`, where `sha` is the commit.
+    - A `pypi@` entry records `source` / `version` / `sha`. `source` holds the `==<version>` pin, such as `pypi@acme-extensions==1.2.0`, `version` is that release, and `sha` is the wheel's sha256.
     - Each copied skill folder gets a `.agents-cli-extension` marker file that holds the extension name and the skill name. A skill folder without this file, or copied under a new folder name, is yours. A folder whose file names another extension belongs to that extension. Neither is overwritten. Don't delete the marker: without it, `agents-cli` treats the folder as yours and no longer replaces or removes it.
     - If a skill folder is yours or another extension's, `extension add` stops with an error, changes no skill, and records nothing.
     - While it copies or deletes skills, `agents-cli` uses hidden folders named `.<name>.incoming` and `.<name>.outgoing` in the skills folder. Don't keep your own files under these names, because they can be overwritten.
@@ -102,9 +114,13 @@ Extensions pin to an exact commit, like a lockfile:
         - `~/.agents/skills` leads somewhere else, for example into a project. Then it deletes none from that folder, in any project.
     - If project A links its `.agents` folder to `~/.agents`, A's skills land in `~/.agents/skills`. Running `agents-cli install` in another project doesn't read A's list, so it can delete them. Run `agents-cli install` in A to bring them back.
     - If a skill folder is yours or another extension's, `agents-cli install` warns, skips that extension's skills, and installs everything else, so CI doesn't break.
-- **`extension update [name]`** advances the pin to the latest commit of the **same tracked ref** (for example, a branch), re-prompting for trust unless the extension is verified by the agents-cli team. A pinned tag or SHA stays where it is. Nothing updates in the background.
-    - `--to <branch|tag|sha>` moves the pin of the named extension to another ref, for example `extension update langchain --to v1.13.0`.
-    - `--to :latest` moves a first-party extension to the latest release that is not newer than your agents-cli. Without a name it moves every first-party extension and skips the others. It records the tag, so run it again to pick up later releases.
+- **`extension update [name]`** re-resolves pins, re-prompting for trust unless the extension is verified by the agents-cli team. Nothing updates in the background.
+    - A git extension advances to the latest commit of the **same tracked ref** (for example, a branch). A pinned tag or SHA stays where it is.
+    - A `pypi@` extension stays on its `==<version>` pin.
+    - `--to` moves the pin of the named extension:
+        - for a git extension, to a branch, tag, or SHA, for example `extension update langchain --to v1.13.0`
+        - for a `pypi@` extension, to a release, for example `extension update acme --to 1.3.0` or `--to ==1.3.0`
+    - `--to :latest` moves a first-party extension to the latest release that is not newer than your agents-cli, and a `pypi@` extension to the newest release on its index. Without a name it moves every first-party and `pypi@` extension and skips the others. It records the release it picked, so run it again to pick up later releases.
     - It replaces the extension's skills with the new version's skills, and removes any it no longer declares. If it can't delete an old skill folder, it warns and leaves the folder with its marker. The update still counts, and a later `extension update` tries the delete again.
     - If the new skills can't be installed (for example, a new skill would replace a folder that is yours or another extension's), `extension update` skips the extension, changes no skill, and keeps the old pin.
         - In a batch `extension update`, the other extension may drop the skill in its own update. If it's at the same scope and comes later in the list, `extension update` tries this extension once more after it, but only if the old copy could be put back.
@@ -126,5 +142,5 @@ Extensions pin to an exact commit, like a lockfile:
 An extension can declare the range of `agents-cli` versions it supports in `requires.agents_cli` (see [Authoring](authoring.md#compatibility)). What you see as a user:
 
 - **`agents-cli extension add` / `update`** refuse an out-of-range install when the extension is `error`-mode (and roll back), so you can't install something that won't run on your CLI. A `warn`-mode extension installs with a warning.
-- **After a CLI upgrade** that moves an extension out of its range, nothing breaks silently. The extension warns, and an `error`-mode one fails with the range and the fix instead of running the built-in. Run `agents-cli extension update <name> --to <tag>` (or `--to :latest` for a first-party extension) to move to a version that supports your CLI. The commands no extension can override (`info`, `login`, `setup`, `update`, `install`, and `extension`) keep working either way.
+- **After a CLI upgrade** that moves an extension out of its range, nothing breaks silently. The extension warns, and an `error`-mode one fails with the range and the fix instead of running the built-in. To move to a version that supports your CLI, run `agents-cli extension update <name> --to <tag or version>`, or `--to :latest` for a first-party or `pypi@` extension. The commands no extension can override (`info`, `login`, `setup`, `update`, `install`, and `extension`) keep working either way.
 - **`agents-cli extension list` and `agents-cli info`** show each extension's `requires` range and flag any that are `! incompatible` with the running CLI.

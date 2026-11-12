@@ -16,7 +16,13 @@
 
 import pytest
 
-from app.app_utils import claude, project_settings, turn_options, workspaces
+from app.app_utils import (
+    claude,
+    memory_bank,
+    project_settings,
+    turn_options,
+    workspaces,
+)
 
 
 @pytest.fixture
@@ -35,10 +41,18 @@ def isolated(monkeypatch, tmp_path):
         "DB_USER",
         "DB_NAME",
         "BQ_ANALYTICS_DATASET_ID",
+        "MEMORY_BANK_ENABLED",
+        "MEMORY_BANK_ENGINE_NAME",
+        "GOOGLE_CLOUD_AGENT_ENGINE_ID",
+        "ANTHROPIC_CUSTOM_HEADERS",
+        "DO_NOT_TRACK",
+        "AGENTS_CLI_TELEMETRY",
     ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-config"))
     turn_options._cloud_sql_store.cache_clear()
+    monkeypatch.setattr(memory_bank, "_engine_name", None)
+    monkeypatch.setattr(memory_bank, "_pending", set())
     monkeypatch.setattr(workspaces, "WORKSPACES", tmp_path / "workspaces")
     monkeypatch.setattr(workspaces, "_workspaces", {})
     project = tmp_path / "project"

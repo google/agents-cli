@@ -22,6 +22,7 @@ import time
 import requests
 
 from google.agents.cli._output import Console
+from google.agents.cli.auth import GCLOUD_LOGIN
 
 from .command import run_gcloud_command
 from .version import PACKAGE_NAME, get_current_version
@@ -29,11 +30,19 @@ from .version import PACKAGE_NAME, get_current_version
 console = Console()
 
 
-_AUTH_ERROR_MESSAGE = (
-    "Looks like you are not authenticated with Google Cloud.\n"
-    "Please run: `gcloud auth login --update-adc`\n"
-    "Then set your project: `gcloud config set project YOUR_PROJECT_ID`"
+_NO_CREDENTIALS_MESSAGE = (
+    "No Google Cloud credentials found.\n"
+    "Install the Google Cloud CLI if needed (https://cloud.google.com/sdk/docs/install), "
+    f"then run: `{GCLOUD_LOGIN}`\n"
+    "To use a Gemini API key instead, run: `agents-cli login -i`"
 )
+_NO_PROJECT_MESSAGE = (
+    "No Google Cloud project is set.\n"
+    "Run: `gcloud config set project YOUR_PROJECT_ID` "
+    "or set the GOOGLE_CLOUD_PROJECT environment variable."
+)
+_RELOGIN_HINT = f"Run: `{GCLOUD_LOGIN}`"
+_AIPLATFORM_SERVICE = "aiplatform.googleapis.com"
 
 
 def get_user_agent(context: str | None = None) -> str:
@@ -58,6 +67,7 @@ def _get_credentials_and_token() -> tuple:
     Returns:
         Tuple of (credentials, project, token)
     """
+    import google.auth.exceptions
     import google.auth.transport.requests
 
     from google.agents.cli.auth import get_adc_credentials
@@ -66,9 +76,40 @@ def _get_credentials_and_token() -> tuple:
 
     # Refresh credentials to get valid token
     auth_req = google.auth.transport.requests.Request()
-    credentials.refresh(auth_req)
+    try:
+        credentials.refresh(auth_req)
+    except google.auth.exceptions.RefreshError as e:
+        raise Exception(_refresh_error_message(credentials, e)) from e
 
     return credentials, project, credentials.token
+
+
+def _refresh_error_message(credentials: object, error: Exception) -> str:
+    """Explain why refreshing the credentials failed and how to fix it."""
+    import google.auth.compute_engine
+    import google.oauth2.credentials
+
+    if isinstance(credentials, google.auth.compute_engine.Credentials):
+        # Re-logging in doesn't help here: the VM's service account itself
+        # can't get a token, usually because the VM lacks the cloud-platform scope.
+        return (
+            f"The VM's service account could not get an access token: {error}\n"
+            "Give the VM the cloud-platform access scope, or sign in as a user "
+            f"with `{GCLOUD_LOGIN}`."
+        )
+    if isinstance(credentials, google.oauth2.credentials.Credentials):
+        return (
+            f"Your Google Cloud credentials could not be refreshed "
+            f"(they may be expired or revoked): {error}\n{_RELOGIN_HINT}"
+        )
+    # Service account keys, workload identity federation and impersonation:
+    # signing in again as a user doesn't fix their configuration.
+    return (
+        f"Your Google Cloud credentials ({type(credentials).__name__}) could not "
+        f"be refreshed: {error}\n"
+        "Check the credentials that GOOGLE_APPLICATION_CREDENTIALS or your "
+        "Application Default Credentials file points to."
+    )
 
 
 def _get_account_from_credentials(credentials: object) -> str | None:
@@ -118,16 +159,71 @@ def _test_vertex_connection(
 
         if response.status_code == 200:
             return True, None
-        elif response.status_code == 403:
-            error_data = response.json().get("error", {})
-            error_message = error_data.get("message", "")
-            if "aiplatform.googleapis.com" in error_message:
-                return False, "api_not_enabled"
-            return False, f"Permission denied: {error_message}"
-        else:
-            return False, f"Status {response.status_code}: {response.text}"
+        return False, _classify_http_error(response, project)
     except requests.exceptions.RequestException as e:
         return False, f"Network error: {e}"
+
+
+def _classify_http_error(response: requests.Response, project: str) -> str:
+    """Map a failed countTokens response to "api_not_enabled" or a message."""
+    if response.status_code == 401:
+        return f"Google Cloud rejected your credentials.\n{_RELOGIN_HINT}"
+    if response.status_code != 403:
+        return f"Status {response.status_code}: {response.text}"
+
+    # Proxies and firewalls can answer with HTML or a non-standard JSON body, so
+    # check the shape before reading it and fall back to the raw text.
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+    error_data = payload.get("error") if isinstance(payload, dict) else None
+    if not isinstance(error_data, dict):
+        error_data = {}
+    error_message = str(error_data.get("message") or response.text)
+    details = error_data.get("details")
+    # Google APIs put the machine-readable cause in google.rpc.ErrorInfo.reason.
+    error_infos = [
+        detail
+        for detail in (details if isinstance(details, list) else [])
+        if isinstance(detail, dict)
+    ]
+    reasons = {info.get("reason") for info in error_infos} - {None}
+    # Interactive mode offers to enable aiplatform, so only report it as
+    # disabled when the error names that service.
+    aiplatform_disabled = any(
+        info.get("reason") == "SERVICE_DISABLED"
+        and isinstance(info.get("metadata"), dict)
+        and info["metadata"].get("service") == _AIPLATFORM_SERVICE
+        for info in error_infos
+    )
+    lowered = error_message.lower()
+    if aiplatform_disabled or (
+        not reasons
+        and _AIPLATFORM_SERVICE in error_message
+        and any(
+            phrase in lowered
+            for phrase in ("not enabled", "is disabled", "has not been used")
+        )
+    ):
+        return "api_not_enabled"
+    if "ACCESS_TOKEN_SCOPE_INSUFFICIENT" in reasons:
+        # ADC from the metadata server only gets the scopes the VM was created with.
+        return (
+            "Your access token lacks the cloud-platform scope. On a Compute Engine "
+            "VM, give the VM the cloud-platform access scope, or sign in as a user "
+            f"with `{GCLOUD_LOGIN}`."
+        )
+    if "BILLING_DISABLED" in reasons:
+        return (
+            f"Billing is not enabled for project '{project}'. "
+            "Link a billing account to the project in the Google Cloud console."
+        )
+    return (
+        f"Permission denied on project '{project}': {error_message}\n"
+        "Check that the project ID is correct and that your account has the "
+        "Vertex AI User role (roles/aiplatform.user)."
+    )
 
 
 def enable_vertex_ai_api(project_id: str, context: str | None = None) -> bool:
@@ -199,6 +295,8 @@ def verify_credentials_and_vertex(
     try:
         # Get credentials and token
         credentials, project, token = _get_credentials_and_token()
+        if not project:
+            raise Exception(_NO_PROJECT_MESSAGE)
 
         # Test the Gemini platform connection
         success, error = _test_vertex_connection(project, token, context)
@@ -244,13 +342,12 @@ def verify_credentials_and_vertex(
         raise Exception(f"Gemini platform connection failed: {error}")
 
     except google.auth.exceptions.DefaultCredentialsError as e:
-        raise Exception(_AUTH_ERROR_MESSAGE) from e
+        raise Exception(_NO_CREDENTIALS_MESSAGE) from e
+    except google.auth.exceptions.TransportError as e:
+        # Raised when refreshing the token can't reach the auth server (e.g.
+        # offline); it is a network problem, not a credentials one.
+        raise Exception(f"Network error connecting to Google Cloud: {e}") from e
+    except google.auth.exceptions.GoogleAuthError as e:
+        raise Exception(f"Google Cloud authentication failed: {e}") from e
     except requests.exceptions.RequestException as e:
         raise Exception(f"Network error connecting to Gemini platform: {e}") from e
-    except Exception as e:
-        error_str = str(e).lower()
-        if any(
-            keyword in error_str for keyword in ["credential", "auth", "login", "token"]
-        ):
-            raise Exception(_AUTH_ERROR_MESSAGE) from e
-        raise

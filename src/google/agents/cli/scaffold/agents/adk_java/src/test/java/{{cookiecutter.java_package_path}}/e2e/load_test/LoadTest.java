@@ -46,7 +46,7 @@ import org.junit.jupiter.api.Test;
  *   <li>_ID_TOKEN: Bearer token for authentication (optional)</li>
  * </ul>
  *
- * <p>Run with: mvn test -Dtest=LoadTest -Dstaging.url=http://localhost:8080
+ * <p>Run with: gradle loadTest -Pstaging.url=http://localhost:8080
  */
 @Tag("load")
 class LoadTest {

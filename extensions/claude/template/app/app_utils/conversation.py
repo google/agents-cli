@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The conversation of the turn that is running."""
+"""The conversation and user of the turn that is running."""
 
 from __future__ import annotations
 
@@ -23,3 +23,7 @@ from contextvars import ContextVar
 current_conversation: ContextVar[str | None] = ContextVar(
     "current_conversation", default=None
 )
+# The running turn's user: the authenticated caller, else one named after the
+# conversation. Tools can key per-user state on it. Unset outside a turn, where
+# get() raises LookupError.
+current_user: ContextVar[str] = ContextVar("current_user")

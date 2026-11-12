@@ -32,6 +32,7 @@ from google.agents.cli._project import (
     read_project_config,
     require_deployment_target,
 )
+from google.agents.cli.deploy import _preflight
 from google.agents.cli.deploy._agent_runtime_validation import (
     validate_agent_runtime_deployment,
 )
@@ -78,8 +79,15 @@ _SIZING_HINT = (
     "On GKE, configure sizing via Terraform and the HorizontalPodAutoscaler "
     "under deployment/terraform/."
 )
+_SECRETS_HINT = (
+    "On GKE, mount secrets via Kubernetes Secrets or the Secret Manager CSI driver."
+)
 _LABELS_HINT = (
     "On GKE, resource labels are managed via Terraform under deployment/terraform/."
+)
+_ENV_VARS_HINT = (
+    "On GKE, the deployment's env vars are managed via Terraform under "
+    "deployment/terraform/."
 )
 # Flags that only some deployment targets support, in the order they are checked:
 # (flag, targets that support it, hint shown on the other targets).
@@ -96,11 +104,9 @@ _TARGET_ONLY_FLAGS: tuple[tuple[str, tuple[str, ...], str], ...] = (
     # TODO: b/555632530 - extend --update-only to Cloud Run and GKE, which have
     # the same "configuration owned by Terraform" problem but are untested for it.
     ("--update-only", (_AGENT_RUNTIME,), ""),
-    (
-        "--secrets",
-        (_AGENT_RUNTIME, _CLOUD_RUN),
-        "On GKE, mount secrets via Kubernetes Secrets or the Secret Manager CSI driver.",
-    ),
+    ("--secrets", (_AGENT_RUNTIME, _CLOUD_RUN), _SECRETS_HINT),
+    ("--remove-secrets", (_AGENT_RUNTIME, _CLOUD_RUN), _SECRETS_HINT),
+    ("--clear-secrets", (_AGENT_RUNTIME, _CLOUD_RUN), _SECRETS_HINT),
     ("--build-args", (_AGENT_RUNTIME,), ""),
     ("--framework", (_AGENT_RUNTIME,), "Cloud Run and GKE record no framework."),
     ("--timeout", (_CLOUD_RUN,), ""),
@@ -129,6 +135,8 @@ _TARGET_ONLY_FLAGS: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("--labels", (_AGENT_RUNTIME, _CLOUD_RUN), _LABELS_HINT),
     ("--remove-labels", (_AGENT_RUNTIME, _CLOUD_RUN), _LABELS_HINT),
     ("--clear-labels", (_AGENT_RUNTIME, _CLOUD_RUN), _LABELS_HINT),
+    ("--remove-env-vars", (_AGENT_RUNTIME, _CLOUD_RUN), _ENV_VARS_HINT),
+    ("--clear-env-vars", (_AGENT_RUNTIME, _CLOUD_RUN), _ENV_VARS_HINT),
     ("--no-wait", (_AGENT_RUNTIME, _CLOUD_RUN), ""),
 )
 
@@ -153,6 +161,22 @@ _TARGET_ONLY_FLAGS: tuple[tuple[str, tuple[str, ...], str], ...] = (
     "(Agent Runtime, Cloud Run).",
 )
 @click.option(
+    "--remove-secrets",
+    default=None,
+    help="Comma-separated secret KEYs to remove (Agent Runtime, Cloud Run). Keys "
+    "that don't exist are ignored. A key can't appear in both --secrets and "
+    "--remove-secrets. Cannot be combined with --clear-secrets.",
+)
+@click.option(
+    "--clear-secrets",
+    is_flag=True,
+    default=False,
+    help="Remove all secrets (Agent Runtime, Cloud Run), including ones set outside "
+    "agents-cli (e.g. by Terraform); on Cloud Run this includes secrets mounted as "
+    "volumes. Combine with --secrets to replace the secret set; the clear is "
+    "applied first. Cannot be combined with --remove-secrets.",
+)
+@click.option(
     "--agent-identity/--no-agent-identity",
     default=None,
     help="Enable or disable Agent Identity. Passing neither leaves an existing "
@@ -162,9 +186,26 @@ _TARGET_ONLY_FLAGS: tuple[tuple[str, tuple[str, ...], str], ...] = (
 @click.option(
     "--env-vars",
     "--update-env-vars",
-    "env_vars",
+    "update_env_vars",
     default=None,
-    help="Comma-separated KEY=VALUE env vars.",
+    help="Comma-separated KEY=VALUE env vars to add or update, applied on top of "
+    "the project .env.",
+)
+@click.option(
+    "--remove-env-vars",
+    default=None,
+    help="Comma-separated env var KEYs to remove (Agent Runtime, Cloud Run). Keys "
+    "that don't exist are ignored. A key can't appear in --remove-env-vars and in "
+    "--env-vars or the project .env. Cannot be combined with --clear-env-vars.",
+)
+@click.option(
+    "--clear-env-vars",
+    is_flag=True,
+    default=False,
+    help="Remove all env vars (Agent Runtime, Cloud Run), including ones set "
+    "outside agents-cli (e.g. by Terraform); secrets are kept. The project .env, "
+    "--env-vars and agents-cli's defaults are applied after the clear. Cannot be "
+    "combined with --remove-env-vars.",
 )
 @click.option(
     "--iap",
@@ -287,8 +328,16 @@ _TARGET_ONLY_FLAGS: tuple[tuple[str, tuple[str, ...], str], ...] = (
     "-n",
     is_flag=True,
     default=False,
-    help="Print what would be executed without running it. For Agent Runtime, "
+    help="Print what would be executed without running it. Also runs the "
+    "pre-flight checks and exits non-zero if any fails. For Agent Runtime, "
     "Cloud Run and GKE, also run read-only Google Cloud checks.",
+)
+@click.option(
+    "--skip-preflight",
+    is_flag=True,
+    default=False,
+    help="Skip the offline pre-flight checks that run before a source build "
+    "(lockfile, build inputs, Python version).",
 )
 @click.option(
     "--list",
@@ -391,8 +440,12 @@ def cmd_deploy(
     region: str | None,
     deployment_target: str | None,
     update_secrets: str | None,
+    remove_secrets: str | None,
+    clear_secrets: bool,
     agent_identity: bool | None,
-    env_vars: str | None,
+    update_env_vars: str | None,
+    remove_env_vars: str | None,
+    clear_env_vars: bool,
     iap: bool,
     ingress: str | None,
     port: int | None,
@@ -408,6 +461,7 @@ def cmd_deploy(
     image: str | None,
     cluster_name: str | None,
     dry_run: bool,
+    skip_preflight: bool,
     list_deployments: bool,
     no_wait: bool,
     update_only: bool,
@@ -493,17 +547,26 @@ def cmd_deploy(
     label_changes = _parse_key_value_flags(
         "labels", update_labels, remove_labels, clear_labels
     )
-    # There is no --remove-secrets / --clear-secrets yet. An explicitly empty
-    # --secrets has always cleared an Agent Runtime agent's secrets, so it is the
-    # clear for now.
+    # An explicitly empty --secrets has always cleared an Agent Runtime agent's
+    # secrets; on Cloud Run it sends nothing.
     secret_changes = _parse_key_value_flags(
-        "secrets", update_secrets, removals=None, clear=update_secrets == ""
+        "secrets",
+        update_secrets,
+        remove_secrets,
+        clear_secrets
+        or (update_secrets == "" and cfg.deployment_target == _AGENT_RUNTIME),
     )
-    # There is no --remove-env-vars / --clear-env-vars yet.
     env_var_changes = _merge_dotenv(
-        _parse_key_value_flags("env-vars", env_vars, removals=None, clear=False)
+        _parse_key_value_flags(
+            "env-vars", update_env_vars, remove_env_vars, clear_env_vars
+        )
     )
 
+    if _builds_from_source(cfg, image):
+        if skip_preflight:
+            logging.info("Skipping pre-flight checks (--skip-preflight).")
+        else:
+            _preflight.check_before_deploy(Path.cwd(), dry_run=dry_run)
     if image and build_args:
         raise click.UsageError(
             "--image deploys a prebuilt image, so there is nothing to build. "
@@ -536,9 +599,13 @@ def cmd_deploy(
                 agent_gateway_egress=agent_gateway_egress,
                 agent_gateway_ingress=agent_gateway_ingress,
                 kms_key=key,
+                port=port,
+                language=cfg.language,
+                secret_changes=secret_changes,
                 label_changes=label_changes,
                 agent_card_sync=cfg.is_a2a,
                 image=image,
+                env_var_changes=env_var_changes,
             )
             report.raise_if_failed()
             return
@@ -645,6 +712,17 @@ def _load_deploy_config(
         )
 
     return cfg, project_root is not None
+
+
+def _builds_from_source(cfg: ProjectConfig, image: str | None) -> bool:
+    """Whether this deploy uploads a Python project's source for a remote build.
+
+    Agent Runtime, Cloud Run, and GKE build from source unless given a prebuilt
+    --image. The pre-flight checks only cover uv-managed Python builds.
+    """
+    if cfg.language != "python":
+        return False
+    return not image
 
 
 def _resolve_deploy_service_name(
@@ -837,6 +915,22 @@ def _parse_key_value_flags(
 
 
 def _merge_dotenv(env_var_changes: KeyValueChanges) -> KeyValueChanges:
-    """Put the project .env under the --env-vars updates, as every target deploys it."""
+    """Put the project .env under the --env-vars updates, as every target deploys it.
+
+    Rejects a .env key that is also removed, and for a clear, logs the .env keys.
+    """
     dotenv = read_project_dotenv(find_project_root() or Path.cwd())
+    conflicts = dotenv.keys() & set(env_var_changes.removals)
+    if conflicts:
+        raise click.ClickException(
+            f"{', '.join(sorted(conflicts))} appear(s) in both the project .env and "
+            "--remove-env-vars. Deploy applies the project .env, so to unset a key, "
+            "delete it from .env instead."
+        )
+    if env_var_changes.clear and dotenv:
+        logging.info(
+            "--clear-env-vars clears the deployed env vars first, then this "
+            "deploy sets the ones in the project .env: %s.",
+            ", ".join(sorted(dotenv)),
+        )
     return replace(env_var_changes, updates={**dotenv, **env_var_changes.updates})

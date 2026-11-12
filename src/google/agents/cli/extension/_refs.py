@@ -18,9 +18,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Literal, TypeAlias
 from urllib.parse import urlsplit
+
+from packaging.utils import canonicalize_name
+from packaging.version import InvalidVersion, Version
+
+from google.agents.cli._fs import stays_inside
 
 _FIRST_PARTY_ORG = "google"
 # The repo a bare extension name resolves to.
@@ -30,8 +34,8 @@ _VERIFIED_REPOS = frozenset(
     {"google/adk-recipes", _SHORTHAND_REPO, "google/agents-cli-extensions"}
 )
 
-# "verified" is a repo in `_VERIFIED_REPOS`, "first_party" any other repo in
-# the `google` GitHub org.
+# "verified" is a repo in `_VERIFIED_REPOS` or a package in `_VERIFIED_PACKAGES`,
+# "first_party" any other repo in the `google` GitHub org.
 Tier: TypeAlias = Literal["verified", "first_party", "third_party"]
 
 # Never recorded as a pin; git rejects it as a ref name, so it can't shadow a ref.
@@ -47,6 +51,16 @@ UNPINNED_REF = "HEAD"
 # commands run arbitrary code on the machine that installs it.
 GIT_URL_SCHEMES = ("https", "http", "ssh", "file")
 
+PYPI_PREFIX = "pypi@"
+# Normalized PyPI project names installed without a trust prompt. List only
+# names Google already owns: anyone can register a free name and be trusted.
+_VERIFIED_PACKAGES: frozenset[str] = frozenset()
+# https://packaging.python.org/en/latest/specifications/name-normalization/
+PACKAGE_NAME_RE = re.compile(r"[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?")
+# Version operators, checked after the supported `==` is split off. A `!` alone
+# is allowed after the first character: it separates an epoch, as in 1!2.0.
+_SPECIFIER_RE = re.compile(r"^!|[<>=~,]")
+
 _SCHEME_RE = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*)://")
 # scp-style, as offered by most hosts' "clone with SSH" button: git@host:org/repo.
 _SCP_RE = re.compile(r"^[A-Za-z0-9._-]+@(?P<host>[A-Za-z0-9._-]+):(?P<path>.+)$")
@@ -59,13 +73,13 @@ class RefParseError(Exception):
 @dataclass(frozen=True)
 class ExtensionRef:
     raw: str
-    kind: str  # "first_party" | "github" | "git" | "local"
+    kind: str  # "first_party" | "github" | "git" | "local" | "pypi"
     tier: Tier
-    repo: str | None
+    # The org/repo of a git ref, the package name of a pypi ref, or a local path.
+    upstream: str
     # Clone URL, set when the ref was given as one. Otherwise the ref names a
     # repo on github.com and the resolver builds the URL from it.
     url: str | None
-    local_path: Path | None
     selector: str | None
     ref: str | None
 
@@ -87,13 +101,7 @@ def _check_selector(selector: str) -> None:
     Either would vendor a directory the ref's kind, pin and trust decision do not
     describe: `langchain#/tmp/x` would install /tmp/x as verified, unprompted.
     """
-    if (
-        not PurePosixPath(selector).parts
-        or "\\" in selector
-        or PurePosixPath(selector).is_absolute()
-        or PureWindowsPath(selector).drive
-        or ".." in PurePosixPath(selector).parts
-    ):
+    if not stays_inside(selector):
         raise RefParseError(
             f"invalid extension selector {selector!r}: use a relative path inside "
             "the source, with '/' separators and no '..', e.g. 'soc2' or "
@@ -149,11 +157,16 @@ def parse_ref(raw: str, *, ref_override: str | None = None) -> ExtensionRef:
       - ``https://git.example.com/acme/acli-extensions``   any git host
       - ``git@git.example.com:acme/acli-extensions``       the same, over ssh
       - ``local@../my-extension``           local path
-      - pass ``ref_override`` to pin a branch, tag, or SHA
+      - ``pypi@acme-extensions==1.2.0#core/soc2``  a wheel on a Python package
+        index, with an optional version and extension selector
+      - pass ``ref_override`` to pin a branch, tag, or SHA (a version for pypi@)
     """
     raw = (raw or "").strip()
     if not raw:
         raise RefParseError("empty extension reference.")
+
+    if is_pypi_reference(raw):
+        return _parse_pypi(PYPI_PREFIX + raw[len(PYPI_PREFIX) :], ref_override)
 
     if raw.startswith("local@"):
         path_part, selector = _split_selector(raw[len("local@") :])
@@ -163,9 +176,8 @@ def parse_ref(raw: str, *, ref_override: str | None = None) -> ExtensionRef:
             raw=raw,
             kind="local",
             tier="third_party",
-            repo=None,
+            upstream=path_part,
             url=None,
-            local_path=Path(path_part),
             selector=selector,
             ref=ref_override,
         )
@@ -180,9 +192,8 @@ def parse_ref(raw: str, *, ref_override: str | None = None) -> ExtensionRef:
             raw=raw,
             kind="git",
             tier=_tier(_github_repo(url)),
-            repo=_repo_identity(url),
+            upstream=_repo_identity(url),
             url=url,
-            local_path=None,
             selector=selector,
             ref=ref_override,
         )
@@ -192,9 +203,8 @@ def parse_ref(raw: str, *, ref_override: str | None = None) -> ExtensionRef:
             raw=raw,
             kind="github",
             tier=_tier(base),
-            repo=base,
+            upstream=base,
             url=None,
-            local_path=None,
             selector=selector,
             ref=ref_override,
         )
@@ -209,12 +219,98 @@ def parse_ref(raw: str, *, ref_override: str | None = None) -> ExtensionRef:
         raw=raw,
         kind="first_party",
         tier="verified",
-        repo=_SHORTHAND_REPO,
+        upstream=_SHORTHAND_REPO,
         url=None,
-        local_path=None,
         selector=selector or base,
         ref=ref_override,
     )
+
+
+def is_pypi_reference(raw: str) -> bool:
+    """Whether ``raw`` is a ``pypi@`` reference, in any letter case."""
+    raw = raw.strip()
+    # `pypi@host:org/repo` is an ssh clone URL for a user named pypi.
+    scp = _SCP_RE.match(raw)
+    if scp is not None and "/" in scp.group("path"):
+        return False
+    return raw[: len(PYPI_PREFIX)].lower() == PYPI_PREFIX
+
+
+def strip_pin(value: str) -> str:
+    """Return a --to or --ref value without surrounding spaces or a leading `==`."""
+    return value.strip().removeprefix("==").strip()
+
+
+def _parse_pypi(raw: str, ref_override: str | None) -> ExtensionRef:
+    # Checked once stripped: " /etc" passes as a relative path until its space goes.
+    spec, _, selector = raw[len(PYPI_PREFIX) :].partition("#")
+    selector = selector.strip() or None
+    if selector is not None:
+        _check_selector(selector)
+    if selector is not None and "==" in selector:
+        raise RefParseError(
+            f"version after the selector in {raw!r}: write it before '#', e.g. "
+            f"'{PYPI_PREFIX}acme-extensions==1.2.0#core/soc2'."
+        )
+    if ref_override is not None:
+        # Not parsed as a Version: sync passes the recorded sha256 here.
+        ref_override = strip_pin(ref_override)
+        if _SPECIFIER_RE.search(ref_override):
+            raise RefParseError(
+                f"unsupported version {ref_override!r}: pin an exact version, "
+                "e.g. 1.2.0 or ==1.2.0."
+            )
+    package, version = _split_package_spec(raw, spec)
+    pinned = ref_override or version or None
+    return ExtensionRef(
+        # Rebuilt with any --ref/--to version, since it is recorded as the source.
+        raw=pypi_source(package, pinned, selector),
+        kind="pypi",
+        tier="verified"
+        if canonicalize_name(package) in _VERIFIED_PACKAGES
+        else "third_party",
+        upstream=package,
+        url=None,
+        selector=selector,
+        ref=pinned,
+    )
+
+
+def _split_package_spec(raw: str, spec: str) -> tuple[str, str]:
+    """Split ``package==version`` into its checked parts; the version may be empty."""
+    package, has_version, version = (part.strip() for part in spec.partition("=="))
+    example = f"e.g. '{PYPI_PREFIX}acme-extensions==1.2.0'"
+    if not package:
+        raise RefParseError(f"no package name in {raw!r}: {example}.")
+    if "[" in package:
+        raise RefParseError(
+            f"extras are not supported in {raw!r}: drop the '[...]', {example}."
+        )
+    if has_version and not version:
+        raise RefParseError(f"no version after '==' in {raw!r}: {example}.")
+    if _SPECIFIER_RE.search(package) or (has_version and not _is_version(version)):
+        raise RefParseError(
+            f"unsupported version in {raw!r}: pin an exact version with '==', {example}."
+        )
+    if not PACKAGE_NAME_RE.fullmatch(package):
+        raise RefParseError(
+            f"invalid package name {package!r} in {raw!r}: use a PyPI project "
+            f"name, {example}."
+        )
+    return package, version
+
+
+def _is_version(value: str) -> bool:
+    try:
+        Version(value)
+    except InvalidVersion:
+        return False
+    return True
+
+
+def pypi_source(package: str, version: str | None, selector: str | None) -> str:
+    pin = f"=={version}" if version else ""
+    return f"{PYPI_PREFIX}{package}{pin}{f'#{selector}' if selector else ''}"
 
 
 def _github_repo(url: str) -> str | None:

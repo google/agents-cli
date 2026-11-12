@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from claude_agent_sdk.types import (
@@ -273,3 +273,23 @@ def test_a_body_that_is_not_json_is_refused(client):
 
     assert response.status_code == 400
     assert "not JSON" in response.json()["detail"]
+
+
+@pytest.mark.parametrize("engine_id, waits", [("123", True), (None, False)])
+def test_on_agent_runtime_a_turn_waits_for_its_memory_ingest(
+    client, monkeypatch, engine_id, waits
+):
+    """Agent Runtime throttles the CPU once the response ends."""
+    if engine_id:
+        monkeypatch.setenv("GOOGLE_CLOUD_AGENT_ENGINE_ID", engine_id)
+    else:
+        monkeypatch.delenv("GOOGLE_CLOUD_AGENT_ENGINE_ID", raising=False)
+    turns = _FakeTurns([_result(result="Hi.")])
+    flush = AsyncMock()
+    with (
+        patch.object(reasoning_engine, "stream_turn", turns),
+        patch.object(reasoning_engine.memory_bank, "flush", flush),
+    ):
+        _stream(client, message="hi", user_id=_USER)
+
+    assert flush.await_count == (1 if waits else 0)

@@ -22,6 +22,8 @@ from typing import Any
 
 from claude_agent_sdk import ClaudeAgentOptions, create_sdk_mcp_server, tool
 
+from app.feature_tools import FEATURE_MCP_SERVERS, FEATURE_TOOLS
+
 
 @tool("get_weather", "Get the current weather for a city.", {"city": str})
 async def get_weather(args: dict[str, Any]) -> dict[str, Any]:
@@ -39,9 +41,9 @@ root_agent = ClaudeAgentOptions(
     model="claude-haiku-4-5",
     # The CLI prepends "You are Claude Code...": give the agent its own name.
     system_prompt="You are Skye, a helpful assistant. Use get_weather for weather questions.",
-    mcp_servers={"weather": weather_server},
+    mcp_servers={"weather": weather_server, **FEATURE_MCP_SERVERS},
     # No built-in Claude Code tools (Bash, Read, Write, ...); allow only these.
     tools=[],
-    allowed_tools=["mcp__weather__get_weather"],
+    allowed_tools=["mcp__weather__get_weather", *FEATURE_TOOLS],
     max_turns=10,
 )

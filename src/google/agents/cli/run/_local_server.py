@@ -21,7 +21,7 @@ import logging
 import os
 import socket
 import sys
-import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import NamedTuple
@@ -31,26 +31,26 @@ import psutil
 
 from google.agents.cli._project import agent_package_name, agents_root
 from google.agents.cli._runner import popen_resolved_detached, redact_cmd
+from google.agents.cli._server_process import (
+    DEFAULT_STARTUP_TIMEOUT,
+    GO_WRITE_TIMEOUT,
+    SERVER_STATE_DIR,
+    terminate_tree,
+    wait_until_serving,
+)
 from google.agents.cli._uv_index import uv_index_env
 from google.agents.cli.scaffold.utils.language import (
     dispatch_language,
     get_language_config,
 )
 
-_PID_DIR = ".google-agents-cli"
 _PID_FILENAME = "run_server.json"
 _LOG_FILENAME = "run_server.log"
 # Project-relative path to the server log, for pointing users at a traceback.
-SERVER_LOG_PATH = f"{_PID_DIR}/{_LOG_FILENAME}"
+SERVER_LOG_PATH = f"{SERVER_STATE_DIR}/{_LOG_FILENAME}"
 _BASE_PORT = 18080
 _MAX_PORT_ATTEMPTS = 10
 _DEFAULT_IDLE_TIMEOUT = 1800  # 30 minutes
-_STARTUP_TIMEOUT_POSIX = 30
-_STARTUP_TIMEOUT_WINDOWS = 90
-_DEFAULT_STARTUP_TIMEOUT = (
-    _STARTUP_TIMEOUT_WINDOWS if os.name == "nt" else _STARTUP_TIMEOUT_POSIX
-)
-_GO_WRITE_TIMEOUT = "10m"
 
 
 class ServerInfo(NamedTuple):
@@ -75,7 +75,7 @@ def ensure_server(
     idle_timeout: int = _DEFAULT_IDLE_TIMEOUT,
     otel_to_cloud: bool = False,
     use_in_memory_session: bool = True,
-    keep_running: bool = False,
+    before_start: Callable[[], None] | None = None,
 ) -> ServerInfo:
     """Return a running local server's port, starting one if needed.
 
@@ -101,10 +101,9 @@ def ensure_server(
             PID file; a mismatch raises a :class:`click.ClickException`
             without terminating the existing server.  Legacy PID files that
             pre-date this field are treated as ``True``.
-        keep_running: Whether the caller will keep this server running after the
-            request (``--start-server``). Only affects the start message: a
-            persistent server advertises how to stop it. Does not change the
-            server lifecycle — the caller still owns teardown.
+        before_start: Called just before a new server is started, not when a
+            running one is reused.
+
     Returns:
         A :class:`ServerInfo` with the port, PID, and whether this call
         started the server.
@@ -150,6 +149,8 @@ def ensure_server(
             # Stale PID file — clean up before starting fresh.
             _cleanup(project_root, info)
 
+    if before_start is not None:
+        before_start()
     port = _find_free_port()
     pid = _start_server(
         project_root=project_root,
@@ -167,15 +168,6 @@ def ensure_server(
         otel_to_cloud=otel_to_cloud,
         use_in_memory_session=use_in_memory_session,
     )
-    if keep_running:
-        click.secho(f"Local server started on port {port} (PID {pid})", dim=True)
-        click.secho("  Stop with: agents-cli run --stop-server", dim=True)
-    else:
-        click.secho(
-            f"Starting a temporary local server on port {port} "
-            "(stops automatically when done).",
-            dim=True,
-        )
     return ServerInfo(port, started=True, pid=pid)
 
 
@@ -326,8 +318,6 @@ def _go_serve_command(
     Mirrors the template Makefile's local-backend target. ADK Go serves the
     ADK REST API at the root (-path_prefix /) and A2A under /a2a on this port.
     """
-    # Raise ADK Go's 15s default write timeout, which cuts off slow /run and A2A
-    # replies. Newer scaffolds set it in main.go too; this covers older ones.
     cmd = [
         "go",
         "run",
@@ -336,7 +326,7 @@ def _go_serve_command(
         "--port",
         str(port),
         "--write-timeout",
-        _GO_WRITE_TIMEOUT,
+        GO_WRITE_TIMEOUT,
     ]
     if otel_to_cloud:
         cmd.append("--otel_to_cloud")
@@ -376,7 +366,7 @@ def _start_server(
     (e.g. the Agent Runtime session type); `false` makes it use the agent's real
     session service.
     """
-    adk_dir = project_root / _PID_DIR
+    adk_dir = project_root / SERVER_STATE_DIR
     adk_dir.mkdir(exist_ok=True)
     log_path = adk_dir / _LOG_FILENAME
 
@@ -440,62 +430,21 @@ def _start_server(
 def _wait_for_port(
     project_root: Path,
     port: int,
-    timeout: int = _DEFAULT_STARTUP_TIMEOUT,
+    timeout: int = DEFAULT_STARTUP_TIMEOUT,
     pid: int | None = None,
 ) -> None:
-    """Wait until a local server is ready to handle HTTP requests.
-
-    Polls with an HTTP GET so the server's lifespan (which registers
-    routes like A2A endpoints) has time to complete.
-    """
-    import urllib.error
-    import urllib.request
-
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        # Fail fast if the server process has already crashed.
-        # os.kill(pid, 0) is unreliable on Windows, so use psutil.pid_exists.
-        if pid is not None and not psutil.pid_exists(pid):
-            raise click.ClickException(
-                "Local server process exited during startup.\n"
-                f"  Check logs: {SERVER_LOG_PATH}"
-            )
-        try:
-            urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=1)
-            return
-        except urllib.error.HTTPError:
-            # Any HTTP response (even 404/405) means the server is ready.
-            return
-        except (urllib.error.URLError, OSError):
-            time.sleep(0.3)
-
+    """Wait until the local server on ``port`` is ready to handle HTTP requests."""
     if sys.platform == "win32":
-        log_path = project_root / _PID_DIR / "run_server.stderr.log"
+        log_path = project_root / SERVER_STATE_DIR / "run_server.stderr.log"
     else:
-        log_path = project_root / _PID_DIR / _LOG_FILENAME
-    log_content = ""
-    if log_path.exists():
-        try:
-            lines = []
-            truncated = False
-            with open(log_path, encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    lines.append(line)
-                    if len(lines) > 50:
-                        lines.pop(0)
-                        truncated = True
-            log_content = "".join(lines)
-            if truncated:
-                log_content = "... (truncated) ...\n" + log_content
-        except Exception as e:
-            log_content = f"<Failed to read log file: {e}>"
-    else:
-        log_content = "<Log file does not exist>"
-
-    raise click.ClickException(
-        f"Local server did not start within {timeout}s.\n"
-        f"  Check logs: {SERVER_LOG_PATH}\n"
-        f"  Log content:\n{log_content}"
+        log_path = project_root / SERVER_STATE_DIR / _LOG_FILENAME
+    wait_until_serving(
+        port,
+        pid=pid,
+        name="Local server",
+        log_path=log_path,
+        log_hint=SERVER_LOG_PATH,
+        timeout=timeout,
     )
 
 
@@ -503,7 +452,7 @@ def _wait_for_port(
 
 
 def _pid_file_path(project_root: Path) -> Path:
-    return project_root / _PID_DIR / _PID_FILENAME
+    return project_root / SERVER_STATE_DIR / _PID_FILENAME
 
 
 def _read_pid_file(project_root: Path) -> dict | None:
@@ -575,21 +524,10 @@ def _is_server_alive(pid: int, port: int) -> bool:
 def _cleanup(project_root: Path, info: dict) -> None:
     """Terminate the server process and remove the PID file."""
     pid = info.get("pid")
-    if pid:
-        try:
-            parent = psutil.Process(pid)
-            children = parent.children(recursive=True)
-            for child in children:
-                try:
-                    child.terminate()
-                except psutil.NoSuchProcess:
-                    pass
-            parent.terminate()
-            psutil.wait_procs([*children, parent], timeout=3)
-        except psutil.NoSuchProcess:
-            logging.warning(
-                "Local server process with PID %d not found, skipping termination.", pid
-            )
+    if pid and not terminate_tree(pid):
+        logging.warning(
+            "Local server process with PID %d not found, skipping termination.", pid
+        )
     path = _pid_file_path(project_root)
     try:
         path.unlink(missing_ok=True)

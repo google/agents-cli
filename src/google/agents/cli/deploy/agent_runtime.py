@@ -26,6 +26,7 @@ import os
 import re
 import warnings
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,7 @@ from google.genai.types import EncryptionSpec
 from google.agents.cli import _sdk_compat
 from google.agents.cli._agent_platform import AgentPlatformClient
 from google.agents.cli._agent_platform_types import types
+from google.agents.cli._error_details import format_error_details
 from google.agents.cli._project import (
     DEFAULT_FRAMEWORK,
     ProjectConfig,
@@ -81,6 +83,7 @@ from google.agents.cli.deploy._utils import (
     DEFAULT_MIN_INSTANCES,
     KeyValueChanges,
     MachineShape,
+    drop_default_env_var_removals,
     parse_kv_flag,
     parse_secret_refs,
     print_table,
@@ -242,9 +245,13 @@ def print_agent_runtime_dry_run(
     agent_gateway_egress: str | None,
     agent_gateway_ingress: str | None,
     kms_key: str | None,
+    port: int | None,
+    language: str,
+    secret_changes: KeyValueChanges,
     label_changes: KeyValueChanges,
     agent_card_sync: bool,
     image: str | None,
+    env_var_changes: KeyValueChanges,
 ) -> None:
     """Print what an Agent Runtime deploy would create or update."""
     # Fill defaults FOR DISPLAY ONLY — the real call passes raw (possibly-None)
@@ -288,18 +295,44 @@ def print_agent_runtime_dry_run(
             msg += f"\n  Agent Gateway {label}: {gateway}"
         elif gateway is not None:
             msg += f"\n  Agent Gateway {label}: (cleared)"
-    # Clear/remove only act on an existing engine's labels.
-    if label_changes.clear:
-        msg += "\n  Labels: all cleared (no effect on create)"
+    msg += _describe_clear_and_removals("Labels", label_changes)
     if label_changes.updates:
         pairs = ", ".join(f"{k}={v}" for k, v in label_changes.updates.items())
         msg += f"\n  Labels to add/update: {pairs}"
-    if label_changes.removals:
-        removals = ", ".join(label_changes.removals)
-        msg += f"\n  Labels to remove: {removals} (no effect on create)"
+    msg += _describe_clear_and_removals("Secrets", secret_changes)
+    if env_var_changes.removals:
+        secrets = parse_secret_refs(secret_changes.updates)
+        # Mirror deploy_agent_runtime, so a prebuilt image's PORT isn't kept.
+        runtime_env_vars = _build_runtime_env_vars(
+            env_vars=env_var_changes.updates,
+            secrets=secrets,
+            port=None if image else port,
+            language=language,
+            reserved=(
+                _PREBUILT_IMAGE_RESERVED_ENV if image else _AGENT_RUNTIME_RESERVED_ENV
+            ),
+        )
+        env_var_changes = replace(
+            env_var_changes,
+            removals=drop_default_env_var_removals(
+                env_var_changes.removals, runtime_env_vars.keys() - secrets.keys()
+            ),
+        )
+    msg += _describe_clear_and_removals("Env vars", env_var_changes)
     if agent_card_sync:
         msg += "\n  A2A agent card: written to Agent Registry after the deploy"
     click.echo(msg)
+
+
+def _describe_clear_and_removals(name: str, changes: KeyValueChanges) -> str:
+    """Dry-run lines for a key-value setting's clear and removals."""
+    lines = ""
+    if changes.clear:
+        lines += f"\n  {name}: all cleared (no effect on create)"
+    if changes.removals:
+        removals = ", ".join(changes.removals)
+        lines += f"\n  {name} to remove: {removals} (no effect on create)"
+    return lines
 
 
 def deploy_agent_runtime(
@@ -341,10 +374,11 @@ def deploy_agent_runtime(
         description: Description of the agent.
         source_packages: Source packages to deploy.
         env_var_changes: Env var changes; the updates hold the project .env with
-            --env-vars on top.
+            --env-vars on top. Removals and a clear act on the live env vars, so
+            they have no effect on create.
         secret_changes: Secret changes, with ENV_VAR: SECRET_ID[:VERSION]
-            updates. The updates replace the agent's secrets; a clear with no
-            updates removes them all.
+            updates. The updates replace the agent's secrets. Removals and a
+            clear act on the live secrets, so they have no effect on create.
         label_changes: Label changes. Removals and a clear act on the live labels, so
             they have no effect on create.
         service_account: Service account email.
@@ -391,18 +425,10 @@ def deploy_agent_runtime(
 
     if not image:
         # Agent Runtime builds from the project's Dockerfile, so upload the tree.
-        auto_packaged = not source_packages
         source_packages = source_packages or _packaged_files(Path.cwd())
 
         if not os.path.exists("Dockerfile"):
             raise click.ClickException(_missing_dockerfile_error(cfg))
-        # A present-but-ignored Dockerfile passes the check above yet breaks the
-        # build, so surface it clearly instead of failing opaquely in Agent Runtime.
-        if auto_packaged and "./Dockerfile" not in source_packages:
-            raise click.ClickException(
-                "Dockerfile is present but excluded by .gcloudignore/.gitignore.\n"
-                "  Remove the matching ignore pattern so the deploy can package it."
-            )
     # Only binding an egress gateway needs the CA; an empty value unbinds.
     if agent_gateway_egress:
         _require_gateway_ready_project(cfg)
@@ -512,6 +538,8 @@ def deploy_agent_runtime(
 
         # None leaves labels out of the update mask, so the live ones are preserved.
         resolved_labels = dict(label_changes.updates) or None
+        # Set when this deploy's secret changes leave the agent with none.
+        clears_all_secrets = False
 
         if matching_agents:
             matching_api_resource = matching_agents[0].api_resource
@@ -549,9 +577,31 @@ def deploy_agent_runtime(
                     existing_spec.effective_identity if existing_spec else None
                 )
             )
-            # Preserve env vars set outside this deploy; CLI/user values still win.
-            for key, value in _existing_plain_env_vars(existing).items():
-                runtime_env_vars.setdefault(key, value)
+            # Computed before kept secrets join runtime_env_vars, so turning a
+            # plain env var into a secret isn't reported as ignored.
+            # A removal still applies to a plain var this deploy turns into a secret.
+            env_var_removals = drop_default_env_var_removals(
+                env_var_changes.removals, runtime_env_vars.keys() - secrets.keys()
+            )
+            # The update replaces secret_env whole, so a removal or clear re-sends
+            # every secret kept. --secrets alone still replaces them.
+            if secret_changes.removals or secret_changes.clear:
+                kept_secrets = secret_changes.apply(_existing_secrets(existing))
+                # Secrets win over plain env vars, as in _build_runtime_env_vars.
+                for key, ref in parse_secret_refs(kept_secrets).items():
+                    if isinstance(runtime_env_vars.get(key), str):
+                        logging.warning(
+                            "Ignoring env var %s: the agent keeps a secret with "
+                            "that name. Pass --remove-secrets %s to replace it.",
+                            key,
+                            key,
+                        )
+                    runtime_env_vars[key] = ref
+                clears_all_secrets = not kept_secrets
+            # Likewise for env vars.
+            runtime_env_vars = replace(
+                env_var_changes, updates=runtime_env_vars, removals=env_var_removals
+            ).apply(_existing_plain_env_vars(existing))
             # The labels mask path replaces the whole map, so send it in full.
             if label_changes.updates or label_changes.removals or label_changes.clear:
                 resolved_labels = label_changes.apply(_existing_labels(existing))
@@ -647,6 +697,17 @@ def deploy_agent_runtime(
             agent_gateway_egress=agent_gateway_egress,
             agent_gateway_ingress=agent_gateway_ingress,
         )
+        # The SDK leaves secret_env out of the update mask when it sends no
+        # secrets, which keeps the live ones.
+        if clears_all_secrets:
+            api_config["update_mask"] = ",".join(
+                p
+                for p in (
+                    api_config.get("update_mask"),
+                    "spec.deployment_spec.secret_env",
+                )
+                if p
+            )
 
         click.echo("\n🤖 Deploying agent to Agent Runtime in Gemini platform...\n")
 
@@ -804,24 +865,6 @@ def deploy_agent_runtime(
 
         if migrates_to_agent_identity:
             grant_agent_identity_roles(project, remote_agent)
-
-        # The update leaves secret_env alone when it sets no secrets, so a clear
-        # with nothing to set needs its own update.
-        if (
-            secret_changes.clear
-            and not secrets
-            and matching_agents
-            and remote_agent.api_resource
-        ):
-            clear_op_name = _sdk_compat.start_update(
-                client,
-                name=remote_agent.api_resource.name,
-                config={
-                    "spec": {"deployment_spec": {"secret_env": []}},
-                    "update_mask": "spec.deployment_spec.secret_env",
-                },
-            )
-            _sdk_compat.wait_for_operation(client, operation_name=clear_op_name)
 
         write_deployment_metadata(remote_agent, cfg, owner_id=claim.owner_id)
         claim.completed = True
@@ -1310,6 +1353,23 @@ def _existing_plain_env_vars(agent: types.Runtime) -> dict[str, str]:
     return result
 
 
+def _existing_secrets(agent: types.Runtime) -> dict[str, str]:
+    """Secrets on a deployed Agent Runtime, as ``{name: "SECRET_ID:VERSION"}``.
+
+    The values have the --secrets format, so KeyValueChanges apply to them.
+    """
+    api_resource = agent.api_resource
+    spec = api_resource.spec if api_resource else None
+    deployment_spec = spec.deployment_spec if spec else None
+    secret_env = deployment_spec.secret_env if deployment_spec else None
+    result: dict[str, str] = {}
+    for var in secret_env or []:
+        ref = var.secret_ref
+        if var.name and ref and ref.secret:
+            result[var.name] = f"{ref.secret}:{ref.version or 'latest'}"
+    return result
+
+
 def _existing_labels(agent: types.Runtime) -> dict[str, str]:
     """Already existing Agent Runtime labels."""
     if not agent.api_resource:
@@ -1499,7 +1559,8 @@ def _request_failed_error(
     hint = _cmek_access_hint(api_message) if kms_key and kms_key in api_message else ""
     return click.ClickException(
         f"Agent Runtime {action} request failed — "
-        f"{exc.code} {exc.status}: {exc.message}{hint}"
+        f"{exc.code} {exc.status}: {exc.message}"
+        f"{format_error_details(exc.details)}{hint}"
     )
 
 

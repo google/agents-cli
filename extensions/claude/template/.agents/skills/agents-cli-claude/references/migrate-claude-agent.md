@@ -55,14 +55,14 @@ not support `gke`) and whether
 they want CI/CD, then run from the project root:
 
 ```bash
-agents-cli scaffold enhance google/agents-cli/extensions/claude/template@v1.13.0 \
+agents-cli scaffold enhance google/agents-cli/extensions/claude/template@v1.14.0 \
   --deployment-target cloud_run
 ```
 
 Optional: `--name <name>` (default: the directory name), which also names the deployed
 service or agent; `--region <region>` (default `us-east1`; `infra` deploys there, so pass
-the same one to `deploy`); and `--bq-analytics` to log each turn to BigQuery Agent
-Analytics.
+the same one to `deploy`); `--bq-analytics` to log each turn to BigQuery Agent
+Analytics; and `--memory-bank` to give the agent memory of each user in Memory Bank.
 
 On `agent_runtime`, `publish gemini`, the Console playground and the Console's
 session views do not work, and Cloud SQL sessions need manual network and database setup
@@ -122,8 +122,8 @@ root_agent = ClaudeAgentOptions(
   unset gives the agent every built-in Claude Code tool.
 - When `app/agent.py`, or a module it imports, reads `.env` values at import
   (`os.environ["WEATHER_URL"]`), call `load_dotenv()` before those imports (mark the
-  imports after it `# noqa: E402`): `agents-cli run`, the server and `tests/unit` import it
-  before anything else loads `.env`.
+  imports after it `# noqa: E402`): `tests/unit` imports it before anything else loads
+  `.env`.
 - Import existing tool functions and servers. Do not rewrite them. In-process tools
   (`@tool`, `create_sdk_mcp_server`) run from the project root, so their relative paths
   still work; only Claude Code's built-in tools (`Read`, `Bash`) run in a

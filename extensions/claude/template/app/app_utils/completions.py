@@ -54,6 +54,7 @@ from app.app_utils.turn_events import (
     ModelCallEnded,
     SubagentPrompt,
     ToolCallEnded,
+    system_prompt_text,
 )
 
 EVENT_NAME = "gen_ai.client.inference.operation.details"
@@ -219,9 +220,6 @@ def _response(content: Any, is_error: bool) -> dict[str, Any]:
 
 
 def _system_instruction(system_prompt: Any) -> list[MessagePart]:
-    """The agent's own system prompt; with a preset, only what it appends."""
-    if isinstance(system_prompt, str) and system_prompt:
-        return [TextPart(content=system_prompt)]
-    if isinstance(system_prompt, dict) and system_prompt.get("append"):
-        return [TextPart(content=system_prompt["append"])]
-    return []
+    """The system prompt the model got; with a preset, only what it appends."""
+    text = system_prompt_text(system_prompt)
+    return [TextPart(content=text)] if text else []

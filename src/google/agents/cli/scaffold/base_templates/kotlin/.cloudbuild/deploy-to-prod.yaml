@@ -1,0 +1,61 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+steps:
+{%- if cookiecutter.deployment_target == 'cloud_run' %}
+
+  # Build and Push
+  - name: "gcr.io/cloud-builders/docker"
+    id: build-image
+    entrypoint: /bin/bash
+    args:
+      - "-c"
+      - |
+        docker build \
+          -t $_REGION-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO_NAME/$_CONTAINER_NAME:$SHORT_SHA \
+          --build-arg COMMIT_SHA=$COMMIT_SHA \
+          .
+        docker push $_REGION-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO_NAME/$_CONTAINER_NAME:$SHORT_SHA
+
+  - name: "gcr.io/cloud-builders/gcloud"
+    id: trigger-deployment
+    entrypoint: /bin/bash
+    args:
+      - "-c"
+      - |
+        curl -LsSf https://astral.sh/uv/0.11.7/install.sh | sh
+        export PATH="$$HOME/.local/bin:$$PATH"
+        {%- if cookiecutter.wheel_gcs_uri %}
+        gsutil cp {{ cookiecutter.wheel_gcs_uri }} /tmp/
+        uvx --from /tmp/{{ cookiecutter.wheel_gcs_uri.split('/')[-1] }} google-agents-cli deploy \
+        {%- else %}
+        uvx google-agents-cli{{ cookiecutter.agents_cli_version_pin }} deploy \
+        {%- endif %}
+          --project ${_PROD_PROJECT_ID} \
+          --region ${_REGION} \
+          --image $_REGION-docker.pkg.dev/$PROJECT_ID/$_ARTIFACT_REGISTRY_REPO_NAME/$_CONTAINER_NAME:$SHORT_SHA \
+          --update-env-vars="OTEL_RESOURCE_ATTRIBUTES=service.version=$COMMIT_SHA"
+{%- endif %}
+
+substitutions:
+  _PROD_PROJECT_ID: YOUR_PROD_PROJECT_ID
+  _REGION: us-east1
+
+logsBucket: gs://${PROJECT_ID}-{{ cookiecutter.project_name | replace('_', '-') }}-logs/build-logs
+options:
+  env:
+    - 'UV_PYTHON=3.12'
+    - 'CI=true'
+  substitutionOption: ALLOW_LOOSE
+  defaultLogsBucketBehavior: REGIONAL_USER_OWNED_BUCKET

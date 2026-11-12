@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 import types
 from pathlib import Path
@@ -75,12 +76,16 @@ def seen(monkeypatch) -> _Seen:
     sdk.ClaudeSDKError = type("ClaudeSDKError", (Exception,), {})
     agent = types.ModuleType("app.agent")
     agent.root_agent = object()
+    # The template's own .env is unrendered: keep it out of the test process.
+    dotenv = types.ModuleType("dotenv")
+    dotenv.load_dotenv = lambda: None
     for name, module in {
         "app": types.ModuleType("app"),
         "app.agent": agent,
         "app.app_utils": types.ModuleType("app.app_utils"),
         "app.app_utils.claude": claude,
         "claude_agent_sdk": sdk,
+        "dotenv": dotenv,
     }.items():
         monkeypatch.setitem(sys.modules, name, module)
     prompts.conversations = conversations
@@ -113,6 +118,30 @@ class TestRun:
     ):
         assert _run(mod, ["fail"], monkeypatch) == 1
         assert "model not available" in capsys.readouterr().err
+
+    def test_agent_is_built_after_dotenv_is_loaded(self, mod, seen, monkeypatch):
+        """Its tool lists depend on flags in .env, such as MEMORY_BANK_ENABLED."""
+        monkeypatch.delenv("MEMORY_BANK_ENABLED", raising=False)
+        monkeypatch.setattr(
+            sys.modules["dotenv"],
+            "load_dotenv",
+            lambda: monkeypatch.setenv("MEMORY_BANK_ENABLED", "true"),
+        )
+        built_with = []
+
+        def build(name):
+            if name != "root_agent":
+                raise AttributeError(name)
+            built_with.append(os.environ.get("MEMORY_BANK_ENABLED"))
+            return object()
+
+        agent = types.ModuleType("app.agent")
+        # Builds root_agent on import, as app/agent.py does.
+        agent.__getattr__ = build
+        monkeypatch.setitem(sys.modules, "app.agent", agent)
+
+        assert _run(mod, ["hi"], monkeypatch) == 0
+        assert built_with == ["true"]
 
     def test_extra_words_are_rejected_not_joined(self, mod, seen, monkeypatch):
         """Matches the built-in: the message is one argument, quoted."""

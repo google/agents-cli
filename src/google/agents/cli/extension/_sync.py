@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import os
 from pathlib import Path
@@ -42,6 +41,7 @@ from google.agents.cli.extension._resolver import (
     fingerprint,
     materialize,
     read_stamp,
+    unstamp,
     validate_extension_name,
 )
 from google.agents.cli.extension._skills import (
@@ -219,10 +219,8 @@ def _restore_copy(entry: ExtensionEntry, extension_dir: Path) -> _CopyState:
         # materialize) so a restore survives an upstream rename.
         materialize(ref, entry.sha, extension_dir.parent, name=entry.name)
     except CopyChangedError as e:
-        # A failed swap can leave the copy half deleted. Without its stamp it
-        # never passes as current, so the next run copies it again.
-        with contextlib.suppress(OSError):
-            (extension_dir / STAMP_FILE).unlink(missing_ok=True)
+        # A failed swap can leave the copy half deleted.
+        unstamp(extension_dir)
         what_is_left = (
             "may be incomplete" if os.path.lexists(extension_dir) else "is missing"
         )

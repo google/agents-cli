@@ -64,7 +64,7 @@ resource "google_cloud_run_v2_service" "app" {
 
       env {
         name  = "GOOGLE_CLOUD_LOCATION"
-        value = var.region
+        value = "global"
       }
 
       env {

@@ -167,7 +167,8 @@ steps:
       - "-c"
       - |
         mkdir -p e2e/load_test/.results
-        curl -fsSL --retry 3 https://go.dev/dl/go1.26.5.linux-amd64.tar.gz | tar -C /usr/local -xz
+        # Keep this at least the go directive in go.mod.
+        curl -fsSL --retry 3 https://go.dev/dl/go1.26.10.linux-amd64.tar.gz | tar -C /usr/local -xz
         export PATH="$$PATH:/usr/local/go/bin"
         gcloud container clusters get-credentials ${_GKE_CLUSTER_NAME} --region ${_REGION} --project ${_STAGING_PROJECT_ID}
         kubectl port-forward svc/{{cookiecutter.project_name}} 8080:8080 -n {{cookiecutter.project_name}} &

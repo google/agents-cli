@@ -17,3 +17,8 @@
 # The agent's name in traces and analytics. Keep in sync with
 # create_params.root_agent_name in agents-cli-manifest.yaml.
 AGENT_NAME: str = "{{cookiecutter.root_agent_name}}"
+
+# The agents-cli version that created this project. Model calls send it in the
+# x-goog-api-client header so Google can count traffic from agents-cli projects;
+# set DO_NOT_TRACK=1 or AGENTS_CLI_TELEMETRY=0 to stop sending it.
+AGENTS_CLI_VERSION: str = "{{cookiecutter.package_version}}"

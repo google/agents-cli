@@ -27,3 +27,5 @@ settings:
   extra_dependencies: []
   tags: ["claude", "a2a"]
   frontend_type: "None"
+  # Accepts --memory-bank, which turns Memory Bank on in .env.
+  supports_memory_bank: true

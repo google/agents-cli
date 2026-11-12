@@ -1,5 +1,5 @@
 async function runLoadTest() {
-  const baseUrl = process.env.STAGING_URL || 'http://localhost:8000';
+  const baseUrl = process.env.STAGING_URL || 'http://127.0.0.1:8080';
   const idToken = process.env._ID_TOKEN;
 
   const durationSeconds = 30;

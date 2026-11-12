@@ -34,7 +34,7 @@ from packaging.utils import canonicalize_name
 from rich.markup import escape
 from rich.prompt import Confirm, IntPrompt
 
-from google.agents.cli._defaults import DEFAULT_MODEL
+from google.agents.cli._defaults import DEFAULT_MODEL, GCP_PROJECT_PLACEHOLDER
 from google.agents.cli._output import Console
 from google.agents.cli._project import (
     AGENT_IDENTITY,
@@ -443,9 +443,6 @@ def get_overwrite_folders(agent_directory: str) -> list[str]:
 
 TEMPLATE_CONFIG_FILE = "templateconfig.yaml"
 
-# Written to the generated .env when no GCP project could be resolved.
-GCP_PROJECT_PLACEHOLDER = "your-gcp-project-id"
-
 DEPLOYMENT_TARGETS = {
     "agent_runtime": {
         "display_name": "agent_runtime",
@@ -486,7 +483,7 @@ def generate_java_package_vars(project_name: str) -> dict[str, str]:
     if sanitized and sanitized[0].isdigit():
         sanitized = "_" + sanitized
 
-    # Maven convention: a reverse-domain package, as in the ADK Java examples.
+    # Java convention: a reverse-domain package, as in the ADK Java examples.
     java_package = f"{_JAVA_PACKAGE_PREFIX}.{sanitized}"
 
     return {
@@ -1221,6 +1218,7 @@ def process_template(
     recorded_base_template: str | None = None,
     google_cloud_project: str | None = None,
     bq_analytics: bool = False,
+    memory_bank: bool = False,
     agent_gateway: bool = False,
     agent_runtime_identity_default: str = SERVICE_ACCOUNT,
     cloud_run_identity_default: str = SERVICE_ACCOUNT,
@@ -1253,6 +1251,7 @@ def process_template(
         agent_garden: Whether this deployment is from Agent Garden
         google_cloud_project: Optional GCP project ID to populate .env file
         bq_analytics: Whether to include BigQuery Agent Analytics Plugin
+        memory_bank: Whether to turn on Memory Bank, for templates that support it
         agent_gateway: Whether the Dockerfile should trust the Agent Gateway root CA
 
     Returns:
@@ -1653,6 +1652,7 @@ def process_template(
                 "java_package": java_vars.get("java_package", ""),
                 "java_package_path": java_vars.get("java_package_path", ""),
                 "bq_analytics": bq_analytics,
+                "memory_bank": memory_bank,
                 "agent_gateway": agent_gateway,
                 "agent_runtime_identity_default": agent_runtime_identity_default,
                 "cloud_run_identity_default": cloud_run_identity_default,

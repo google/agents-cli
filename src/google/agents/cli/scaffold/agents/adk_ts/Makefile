@@ -15,7 +15,8 @@ playground:
 	@echo "==============================================================================="
 	@echo "| Starting your agent playground...                                           |"
 	@echo "|                                                                             |"
-	@echo "| Try asking: What's the weather in San Francisco?                             |"
+	@echo "| ADK Web: http://127.0.0.1:8080/dev-ui                                       |"
+	@echo "| Try asking: What's the weather in San Francisco?                            |"
 	@echo "==============================================================================="
 	npm run build && npm run dev
 
@@ -25,7 +26,7 @@ playground:
 
 # Launch local development server
 local-backend:
-	npm run build && npx @google/adk-devtools api_server -h localhost --port 8000 dist
+	npm run build && npx @google/adk-devtools api_server dist --host 127.0.0.1 --port 8080
 
 # Run agent with CLI
 run:

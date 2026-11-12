@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Resolve extension references to commit SHAs and vendor extension directories."""
+"""Resolve extension references to pinned revisions and vendor extension directories."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path, PurePosixPath
-from typing import Any, cast
+from typing import Any
 
 import yaml
 from filelock import FileLock, Timeout
@@ -42,7 +42,18 @@ from google.agents.cli._symlinks import (
     vet_symlinks,
 )
 from google.agents.cli.extension._paths import git_cache_dir_name, git_cache_root
-from google.agents.cli.extension._refs import LATEST, UNPINNED_REF, ExtensionRef
+from google.agents.cli.extension._pypi import (
+    PypiError,
+    extension_from_wheel,
+    latest_wheel_version,
+    resolve_wheel_sha256,
+)
+from google.agents.cli.extension._refs import (
+    LATEST,
+    UNPINNED_REF,
+    ExtensionRef,
+    pypi_source,
+)
 from google.agents.cli.extension._spec import EXTENSION_FILE
 from google.agents.cli.scaffold.utils.fs import source_ignore_patterns
 
@@ -206,6 +217,10 @@ class ResolverError(Exception):
 class CopyChangedError(ResolverError):
     """Raised when vendoring fails after it started to change the vendored copy."""
 
+    def __init__(self, message: str, extension_dir: Path) -> None:
+        super().__init__(message)
+        self.extension_dir = extension_dir
+
 
 def read_stamp(extension_dir: Path) -> str | None:
     """Return what an extension dir was materialized from, or None if unstamped."""
@@ -215,19 +230,33 @@ def read_stamp(extension_dir: Path) -> str | None:
     return stamp.read_text(encoding="utf-8").strip() or None
 
 
+def unstamp(extension_dir: Path) -> None:
+    """Delete the stamp, so the next `agents-cli install` copies the extension again."""
+    try:
+        (extension_dir / STAMP_FILE).unlink(missing_ok=True)
+    except OSError as e:
+        # A stale stamp would pass a half-replaced copy as current.
+        logging.warning(
+            "Could not mark %s as incomplete (%s). Delete that folder, then run "
+            "`agents-cli install`.",
+            extension_dir,
+            e,
+        )
+
+
 def expected_stamp(ref: ExtensionRef, sha: str) -> str:
     """Return the stamp a freshly materialized copy of ``ref`` would carry.
 
-    For a git ref that is the pinned SHA. A ``local@`` ref has no commit to pin —
-    its recorded pin is the constant ``LOCAL_SHA`` — so its copy is stamped with a
-    hash of the source tree instead. Comparing that hash is what lets sync notice
-    edits to a local source; comparing the pin would only match the sentinel
-    against itself and never refresh.
+    For a git ref that is the pinned SHA, and for a pypi ref the wheel's sha256.
+    A ``local@`` ref has no commit to pin — its recorded pin is the constant
+    ``LOCAL_SHA`` — so its copy is stamped with a hash of the source tree instead.
+    Comparing that hash is what lets sync notice edits to a local source;
+    comparing the pin would only match the sentinel against itself and never
+    refresh.
     """
     if ref.kind != "local":
         return sha
-    src = _local_source_dir(ref)
-    repo_root = _local_repo_root(ref, src)
+    src, repo_root = _local_source(ref)
     return fingerprint(src, _SourceExclusions(src, repo_root), repo_root)
 
 
@@ -287,25 +316,15 @@ def fingerprint(
     return digest.hexdigest()
 
 
-def _local_source_dir(ref: ExtensionRef) -> Path:
-    """Return the directory a ``local@`` ref selects, or raise if it is unusable."""
-    src = ref.local_path
-    if src is None or not src.exists():
-        raise ResolverError(f"local extension path not found: {ref.local_path}.")
+def _local_source(ref: ExtensionRef) -> tuple[Path, Path]:
+    """Return the ``local@`` source dir and the root its symlinks must stay inside."""
+    src = Path(ref.upstream)
+    if not src.exists():
+        raise ResolverError(f"local extension path not found: {src}.")
     sub = _inside(src, ref.selector) if ref.selector else src
     if not (sub / EXTENSION_FILE).exists():
         raise ResolverError(f"{sub} has no {EXTENSION_FILE}.")
-    return sub
-
-
-def _local_repo_root(ref: ExtensionRef, sub: Path) -> Path:
-    """The folder a symlink in a ``local@`` source must stay inside.
-
-    Like a local template: the enclosing Git, Mercurial, or Jujutsu working
-    copy, or else the ``local@`` path itself.
-    """
-    # _local_source_dir has already checked that local_path is set.
-    return find_repo_boundary(sub) or cast(Path, ref.local_path)
+    return sub, find_repo_boundary(sub) or src
 
 
 def _inside(root: Path, selector: str) -> Path:
@@ -338,9 +357,7 @@ def _clone_url(ref: ExtensionRef) -> str:
     """Return the URL git should clone or query for a non-local ref."""
     if ref.url is not None:
         return ref.url
-    if ref.repo is None:
-        raise ResolverError(f"cannot resolve ref {ref.raw!r}: repo is not set.")
-    return _https_url(ref.repo)
+    return _https_url(ref.upstream)
 
 
 def _git(*args: str) -> subprocess.CompletedProcess:
@@ -354,14 +371,26 @@ def _git(*args: str) -> subprocess.CompletedProcess:
 
 
 def resolve_sha(ref: ExtensionRef) -> str:
-    """Resolve an ExtensionRef to an exact commit SHA.
+    """Resolve an ExtensionRef to the exact revision to pin.
 
-    For local refs returns the sentinel ``LOCAL_SHA`` (unpinned).
-    For every other ref runs ``git ls-remote`` unless the caller
-    already supplied a full hex SHA.
+    That is the sentinel ``LOCAL_SHA`` for a local ref (unpinned), the wheel's
+    sha256 for a pypi ref, and the commit SHA for a git ref.
     """
     if ref.kind == "local":
         return LOCAL_SHA
+    if ref.kind == "pypi":
+        return _resolve_pypi_sha(ref)
+    return _resolve_commit_sha(ref)
+
+
+def _resolve_pypi_sha(ref: ExtensionRef) -> str:
+    try:
+        return resolve_wheel_sha256(ref.upstream, ref.ref)
+    except PypiError as e:
+        raise ResolverError(str(e)) from e
+
+
+def _resolve_commit_sha(ref: ExtensionRef) -> str:
     # Anything short of a full SHA goes through ls-remote: a short hex string
     # could be a branch or tag named like hex.
     if ref.ref and is_commit_sha(ref.ref):
@@ -376,28 +405,31 @@ def resolve_sha(ref: ExtensionRef) -> str:
     result = _git("ls-remote", "--", _clone_url(ref), target, f"{target}^{{}}")
     if result.returncode != 0 or not result.stdout.strip():
         raise ResolverError(
-            f"could not resolve {target!r} in {ref.repo!r}{_git_reason(result)}; "
+            f"could not resolve {target!r} in {ref.upstream!r}{_git_reason(result)}; "
             "check the repo and ref."
         )
     lines = [line.partition("\t") for line in result.stdout.splitlines() if line]
     sha = next((s for s, _, name in lines if name.endswith("^{}")), lines[0][0])
     if not is_commit_sha(sha):
         raise ResolverError(
-            f"git ls-remote returned {sha!r} for {target!r} in {ref.repo!r}, "
+            f"git ls-remote returned {sha!r} for {target!r} in {ref.upstream!r}, "
             "which is not a commit SHA."
         )
     return sha
 
 
 def pin_ref(ref: ExtensionRef) -> ExtensionRef:
-    """Pin an unpinned first-party ref or ``LATEST`` to a release tag.
+    """Pin an unpinned first-party or pypi ref, or ``LATEST``, to a release.
 
-    The tag is the newest release no newer than the running CLI.
+    A first-party ref gets the newest release tag no newer than the running
+    CLI; an unversioned pypi ref gets the newest release, recorded as ``==<version>``.
     """
+    if ref.kind == "pypi":
+        return _pin_pypi_release(ref)
     if ref.ref == LATEST and ref.kind != "first_party":
         raise ResolverError(
-            f"{LATEST} is only for first-party extensions; pin a branch, tag, or "
-            "SHA instead."
+            f"{LATEST} is only for first-party and pypi@ extensions; pin a branch, "
+            "tag, or SHA instead."
         )
     # UNPINNED_REF reads back as "no ref", which pins the latest release.
     if ref.kind == "first_party" and ref.ref == UNPINNED_REF:
@@ -410,18 +442,28 @@ def pin_ref(ref: ExtensionRef) -> ExtensionRef:
         logging.info(
             "Using %s, the latest release of %s for agents-cli %s.",
             tag,
-            ref.repo,
+            ref.upstream,
             __version__,
         )
         return replace(ref, ref=tag)
     return ref
 
 
+def _pin_pypi_release(ref: ExtensionRef) -> ExtensionRef:
+    if ref.ref not in (None, LATEST):
+        return ref
+    try:
+        version = latest_wheel_version(ref.upstream)
+    except PypiError as e:
+        raise ResolverError(str(e)) from e
+    return replace(ref, ref=version, raw=pypi_source(ref.upstream, version, ref.selector))
+
+
 def _list_release_tags(ref: ExtensionRef) -> list[str]:
     result = _git("ls-remote", "--tags", "--", _clone_url(ref), "v*")
     if result.returncode != 0:
         raise ResolverError(
-            f"could not list the release tags of {ref.repo!r}{_git_reason(result)}; "
+            f"could not list the release tags of {ref.upstream!r}{_git_reason(result)}; "
             "check your network and git access, or pin a branch, tag, or SHA instead."
         )
     names = (
@@ -431,7 +473,7 @@ def _list_release_tags(ref: ExtensionRef) -> list[str]:
     tags = [name for name in names if _RELEASE_TAG_RE.fullmatch(name)]
     if not tags:
         raise ResolverError(
-            f"{ref.repo!r} has no release tags; pin a branch, tag, or SHA instead."
+            f"{ref.upstream!r} has no release tags; pin a branch, tag, or SHA instead."
         )
     return tags
 
@@ -447,7 +489,7 @@ def _pick_release(tags: Sequence[str], ref: ExtensionRef) -> str:
     eligible = [tag for tag in tags if running is None or Version(tag) <= running]
     if not eligible:
         raise ResolverError(
-            f"{ref.repo!r} has no release at or below agents-cli {__version__}; "
+            f"{ref.upstream!r} has no release at or below agents-cli {__version__}; "
             "upgrade agents-cli, or pin a branch, tag, or SHA instead."
         )
     return max(eligible, key=Version)
@@ -509,7 +551,7 @@ def _replace_tree(
     except OSError as e:
         delete_folder(staged)
         message = f"could not copy {src} into {dest}: {first_copy_error(e)}"
-        raise CopyChangedError(message) from e
+        raise CopyChangedError(message, dest) from e
 
 
 def _write_stamp(extension_dir: Path, sha: str) -> None:
@@ -517,7 +559,9 @@ def _write_stamp(extension_dir: Path, sha: str) -> None:
     try:
         (extension_dir / STAMP_FILE).write_text(sha, encoding="utf-8")
     except OSError as e:
-        raise CopyChangedError(f"could not stamp {extension_dir}: {e}") from e
+        raise CopyChangedError(
+            f"could not stamp {extension_dir}: {e}", extension_dir
+        ) from e
 
 
 def materialize(
@@ -532,6 +576,7 @@ def materialize(
 
     Returns ``(extension_name, extension_dir)``.
     For ``local@`` refs, copies from the local path.
+    For ``pypi@`` refs, unpacks the wheel whose sha256 is ``sha``.
     For git refs, clones/reuses the cache and checks out ``sha``.
 
     When ``name`` is provided the vendored directory is placed at
@@ -543,22 +588,49 @@ def materialize(
     ``ref_flag`` is the caller's flag for pinning a ref, named in error hints.
     """
     dest_root.mkdir(parents=True, exist_ok=True)
-
     if ref.kind == "local":
-        sub = _local_source_dir(ref)
-        spec_name = _extension_name_from_dir(sub, ref.selector or sub.name)
-        resolved_name = validate_extension_name(name if name is not None else spec_name)
-        extension_dir = dest_root / resolved_name
-        repo_root = _local_repo_root(ref, sub)
-        exclude = _SourceExclusions(sub, repo_root)
-        # Fingerprinted before the copy, so a source edited while it is being
-        # copied leaves the older stamp and the next sync redoes the copy,
-        # rather than blessing a tree that is half of each.
-        stamp = fingerprint(sub, exclude, repo_root)
-        _replace_tree(sub, extension_dir, exclude, repo_root)
-        _write_stamp(extension_dir, stamp)
-        return resolved_name, extension_dir
+        return _materialize_local(ref, dest_root, name=name)
+    if ref.kind == "pypi":
+        return _materialize_pypi(ref, sha, dest_root, name=name)
+    return _materialize_commit(ref, sha, dest_root, name=name, ref_flag=ref_flag)
 
+
+def _materialize_local(
+    ref: ExtensionRef, dest_root: Path, *, name: str | None
+) -> tuple[str, Path]:
+    sub, repo_root = _local_source(ref)
+    spec_name = _extension_name_from_dir(sub, sub.name)
+    resolved_name = validate_extension_name(name if name is not None else spec_name)
+    extension_dir = dest_root / resolved_name
+    exclude = _SourceExclusions(sub, repo_root)
+    # Fingerprinted before the copy, so a source edited while it is being
+    # copied leaves the older stamp and the next sync redoes the copy,
+    # rather than blessing a tree that is half of each.
+    stamp = fingerprint(sub, exclude, repo_root)
+    _replace_tree(sub, extension_dir, exclude, repo_root)
+    _write_stamp(extension_dir, stamp)
+    return resolved_name, extension_dir
+
+
+def _materialize_pypi(
+    ref: ExtensionRef, sha: str, dest_root: Path, *, name: str | None
+) -> tuple[str, Path]:
+    try:
+        with extension_from_wheel(ref.upstream, sha, ref.selector) as sub:
+            # Unpacking refused the wheel's symlinks, so none lead outside sub.
+            return _vendor(ref, sha, sub, sub, dest_root, name=name)
+    except PypiError as e:
+        raise ResolverError(str(e)) from e
+
+
+def _materialize_commit(
+    ref: ExtensionRef,
+    sha: str,
+    dest_root: Path,
+    *,
+    name: str | None,
+    ref_flag: str | None,
+) -> tuple[str, Path]:
     checkout = _checkout(ref, sha)
     if ref.kind == "first_party":
         sub = (
@@ -570,16 +642,9 @@ def materialize(
         sub = _inside(checkout, ref.selector) if ref.selector else checkout
     if not (sub / EXTENSION_FILE).exists():
         raise ResolverError(
-            f"{ref.repo}#{ref.selector or ''} has no {EXTENSION_FILE} at the pinned commit."
+            f"{ref.upstream}#{ref.selector or ''} has no {EXTENSION_FILE} at the pinned commit."
         )
-    spec_name = _extension_name_from_dir(
-        sub, ref.selector or (ref.repo.split("/")[-1] if ref.repo else "extension")
-    )
-    resolved_name = validate_extension_name(name if name is not None else spec_name)
-    extension_dir = dest_root / resolved_name
-    _replace_tree(sub, extension_dir, _SourceExclusions(sub, None), checkout)
-    _write_stamp(extension_dir, sha)
-    return resolved_name, extension_dir
+    return _vendor(ref, sha, sub, checkout, dest_root, name=name)
 
 
 def _checkout(ref: ExtensionRef, sha: str) -> Path:
@@ -597,9 +662,7 @@ def _checkout(ref: ExtensionRef, sha: str) -> Path:
         )
     cache = git_cache_root()
     cache.mkdir(parents=True, exist_ok=True)
-    if ref.repo is None:
-        raise ResolverError(f"cannot checkout ref {ref.raw!r}: repo is not set.")
-    repo_dir = cache / git_cache_dir_name(ref.repo, ref.url)
+    repo_dir = cache / git_cache_dir_name(ref.upstream, ref.url)
     url = _clone_url(ref)
 
     # The cache is shared across processes and checkout mutates a single working
@@ -610,10 +673,10 @@ def _checkout(ref: ExtensionRef, sha: str) -> Path:
             timeout=_CACHE_LOCK_TIMEOUT_SECONDS,
         )
         with lock:
-            return _checkout_locked(repo_dir, url, ref.repo, sha)
+            return _checkout_locked(repo_dir, url, ref.upstream, sha)
     except Timeout as e:
         raise ResolverError(
-            f"timed out waiting for the extension cache lock for {ref.repo}; "
+            f"timed out waiting for the extension cache lock for {ref.upstream}; "
             "another agents-cli process may be resolving extensions."
         ) from e
 
@@ -695,7 +758,27 @@ def _first_party_source(
     )
     example = f", for example {ref_flag} main" if ref_flag and ref.ref != "main" else ""
     raise ResolverError(
-        f"no first-party extension {ref.selector!r} in {ref.repo} at {ref.ref or sha}. "
+        f"no first-party extension {ref.selector!r} in {ref.upstream} at {ref.ref or sha}. "
         f"Check the name, {upgrade}or pin a branch, tag, or commit where it "
         f"exists{example}."
     )
+
+
+def _vendor(
+    ref: ExtensionRef,
+    sha: str,
+    sub: Path,
+    source_root: Path,
+    dest_root: Path,
+    *,
+    name: str | None,
+) -> tuple[str, Path]:
+    """Copy a fetched extension folder into ``dest_root`` and stamp it with ``sha``."""
+    # The selected folder's own name, like a local@ copy; a nested selector is a path.
+    fallback = PurePosixPath(ref.selector).name if ref.selector else None
+    spec_name = _extension_name_from_dir(sub, fallback or ref.upstream.split("/")[-1])
+    resolved_name = validate_extension_name(name if name is not None else spec_name)
+    extension_dir = dest_root / resolved_name
+    _replace_tree(sub, extension_dir, _SourceExclusions(sub, None), source_root)
+    _write_stamp(extension_dir, sha)
+    return resolved_name, extension_dir

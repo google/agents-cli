@@ -27,6 +27,7 @@ import click
 from click.core import ParameterSource
 from rich.prompt import IntPrompt, Prompt
 
+from google.agents.cli._defaults import GCP_PROJECT_PLACEHOLDER
 from google.agents.cli._fs import delete_folder
 from google.agents.cli._gcp_project import resolve_gcp_project
 from google.agents.cli._output import (
@@ -117,6 +118,7 @@ class CreationInputs:
     base_template: str | None
     cli_overrides: dict | None
     bq_analytics: bool
+    memory_bank: bool
     skip_checks: bool
     skip_deps: bool
     locked: bool
@@ -245,6 +247,7 @@ def create(
     locked: bool = False,
     cli_overrides: dict | None = None,
     bq_analytics: bool = False,
+    memory_bank: bool = False,
     agent_gateway: bool | None = None,
     agent_runtime_identity_default: str | None = None,
     cloud_run_identity_default: str | None = None,
@@ -277,6 +280,7 @@ def create(
         base_template=base_template,
         cli_overrides=cli_overrides,
         bq_analytics=bq_analytics,
+        memory_bank=memory_bank,
         skip_checks=skip_checks,
         skip_deps=skip_deps,
         locked=locked,
@@ -1206,6 +1210,17 @@ def _resolve_project(
     enforces the agent-gateway / region constraints, and returns the resolved
     choices consumed by `_render_project`.
     """
+    if inputs.memory_bank and not (loaded.config.get("settings") or {}).get(
+        "supports_memory_bank"
+    ):
+        raise click.UsageError(
+            "--memory-bank is not supported by this template. Templates that "
+            "support it: the Claude Agent SDK template "
+            "(--agent google/agents-cli/extensions/claude/template@<version>). "
+            "For ADK agents, add Memory Bank with the cross-session-memory recipe "
+            "from google/adk-recipes."
+        )
+
     final_deployment = _resolve_deployment_target(
         deployment_target=inputs.deployment_target,
         prototype=inputs.prototype,
@@ -1786,6 +1801,7 @@ def _render_project(
             remote_spec=selection.remote_spec,
             google_cloud_project=plan.google_cloud_project,
             bq_analytics=selection.bq_analytics,
+            memory_bank=inputs.memory_bank,
             agent_gateway=bool(inputs.agent_gateway),
             agent_runtime_identity_default=plan.agent_runtime_identity_default,
             cloud_run_identity_default=plan.cloud_run_identity_default,
@@ -1936,7 +1952,7 @@ def _print_next_steps(location: ProjectLocation, plan: RenderPlan) -> None:
         console.print(
             "\n[bold yellow]⚠️  Set your GCP project[/]\n"
             "   No GCP project was detected, so .env still has "
-            f"GOOGLE_CLOUD_PROJECT={template.GCP_PROJECT_PLACEHOLDER}.\n"
+            f"GOOGLE_CLOUD_PROJECT={GCP_PROJECT_PLACEHOLDER}.\n"
             f"   Edit [cyan]{cd_path}/.env[/] and set it to your project ID "
             "before running the agent."
         )
@@ -1963,11 +1979,11 @@ def _print_next_steps(location: ProjectLocation, plan: RenderPlan) -> None:
 
 def _env_has_placeholder_project(env_path: pathlib.Path) -> bool:
     """Whether the generated .env still carries the placeholder project ID."""
-    # Not every language ships a .env (TypeScript and Java only get .env.example).
+    # A remote template may not ship a .env.
     if not env_path.is_file():
         return False
     # Tolerate an `export` prefix, spaces around `=` and a quoted value.
-    placeholder = re.escape(template.GCP_PROJECT_PLACEHOLDER)
+    placeholder = re.escape(GCP_PROJECT_PLACEHOLDER)
     pattern = (
         rf"""^\s*(?:export\s+)?GOOGLE_CLOUD_PROJECT\s*=\s*(["']?){placeholder}\1\s*$"""
     )

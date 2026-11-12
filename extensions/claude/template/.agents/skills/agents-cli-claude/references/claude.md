@@ -53,6 +53,12 @@ approval, run `agents-cli infra single-project --apply` and deploy with
 Subagents often ask for an alias (`model: sonnet`). If that model isn't enabled, map
 the alias: `env={"ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-haiku-4-5"}`.
 
+Model calls send `x-goog-api-client: agents-cli-app/<version>+claude-agent-sdk`, so
+Google can count usage from agents-cli projects. `_traffic_tag_env` in
+`app/app_utils/turn_options.py` appends it to `ANTHROPIC_CUSTOM_HEADERS`, after any
+headers the agent or the server sets. `DO_NOT_TRACK=1` or `AGENTS_CLI_TELEMETRY=0`, in
+the server's environment or the agent's `env`, turns it off.
+
 The Claude Code CLI, and every tool, hook and stdio MCP server it runs, inherits the
 server's environment, including the values passed with `--secrets`. Give an agent with
 `Bash` or file tools only the secrets it needs.
@@ -178,6 +184,27 @@ through a PSC interface and the Cloud SQL Python Connector:
    connector's API calls fail with `401` on bound tokens. Later deploys keep the network
    attachment.
 
+## Memory Bank (`--memory-bank`)
+
+With `MEMORY_BANK_ENABLED=true` (what `--memory-bank` writes to `.env`, which `deploy`
+sends to the agent), `app/app_utils/memory_bank.py` gives the agent memory of each user
+across conversations, as ADK's memory tools do:
+
+- Each turn, the user's memories that match the prompt are added to the system prompt.
+  BigQuery `LLM_REQUEST` rows and prompt logs show them; `AGENT_STARTING` shows only
+  the agent's own system prompt, as in ADK.
+- After a turn succeeds, its prompt and the main agent's text, tool calls and tool results
+  (not its subagents') go to Memory Bank, which extracts memories from them.
+- The model can search the memories with `search_memory`, which `app/feature_tools.py`
+  adds to `root_agent`.
+- Memories are scoped to `AGENT_NAME` and the user: the authenticated A2A caller, else
+  `A2A_USER_<context_id>`, or the `user_id` of an Agent Runtime query. Without an
+  authenticated caller, an A2A conversation's memories serve only that conversation.
+- On Agent Runtime, the agent's own engine holds the memories. Elsewhere, the Agent
+  Runtime engine named `MEMORY_BANK_ENGINE_NAME` (default `AGENT_NAME`) does; it is
+  created when missing, in `GOOGLE_CLOUD_LOCATION`, or `us-east1` when that is `global`.
+- Memory Bank errors are logged and never fail a turn.
+
 ## MCP servers and tools
 
 In-process `@tool` functions run in the server process, from the project root, so
@@ -281,7 +308,8 @@ together.
 Settings (also read from `.env`):
 
 - `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true` records prompts, replies
-  and tool arguments and results in spans; they are redacted otherwise.
+  and tool arguments and results in spans; they are redacted otherwise. It also records
+  the system prompt the model got, recalled memories included, on the turn span.
 - `OTEL_TRACES_SAMPLER=parentbased_traceidratio` and `OTEL_TRACES_SAMPLER_ARG=0.1`
   sample traces; every request is traced by default.
 - `OTEL_SERVICE_NAME` sets the service name (`infra` sets it to the project name).

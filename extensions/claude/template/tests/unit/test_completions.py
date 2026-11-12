@@ -173,6 +173,18 @@ def test_each_call_reads_the_turn_so_far(upload, events, spans):
     ]
 
 
+def test_a_custom_system_prompt_is_the_system_instruction(upload, events, spans):
+    _log(
+        [_call("m1", [TextBlock(text="It's foggy.")])],
+        spans,
+        system_prompt={"type": "custom", "prompt": "You report the weather."},
+    )
+
+    [event] = events
+    [instruction] = _uploaded(event.attributes["gen_ai.system_instructions_ref"])
+    assert instruction["content"] == "You report the weather."
+
+
 def test_each_call_gets_a_chat_span_carrying_its_entry(upload, events, spans):
     _log(_TOOL_TURN, spans)
 

@@ -363,19 +363,20 @@ def cmd_setup(*, workspace, skip_auth, dry_run, dev, interactive, skills_source,
     if not skip_auth:
         from google.agents.cli.auth import is_authenticated, run_auth_step
 
-        authed, display = is_authenticated()
-        if authed:
-            click.echo()
-            click.secho(f"  Authenticated as {display}", fg="green")
-        elif interactive:
+        click.echo()
+        if interactive:
+            # run_auth_step checks the current credentials itself.
             run_auth_step(show_header=False)
         else:
-            click.echo()
-            click.secho(
-                "  Not authenticated. Run with --interactive (-i) to authenticate interactively.",
-                fg="yellow",
-                dim=True,
-            )
+            authed, display = is_authenticated()
+            if authed:
+                click.secho(f"  Authenticated as {display}", fg="green")
+            else:
+                click.secho(
+                    "  Not authenticated. Run 'agents-cli login -i' to sign in with"
+                    " Google Cloud or a Gemini API key.",
+                    fg="yellow",
+                )
     else:
         click.echo()
         click.secho("  Skipped (--skip-auth)", dim=True)
@@ -467,7 +468,8 @@ def cmd_setup(*, workspace, skip_auth, dry_run, dev, interactive, skills_source,
     else:
         from google.agents.cli.auth import is_authenticated
 
-        authed, display = is_authenticated()
+        # Step 1 already reported any problems; only show the final status here.
+        authed, display = is_authenticated(report_problems=False)
         if authed:
             click.echo(f"  Auth:   {display}")
         else:

@@ -39,11 +39,11 @@ async function waitForServer(url: string, maxRetries = 180): Promise<boolean> {
 
 describe('Server E2E', () => {
   let serverProcess: ChildProcess;
-  const baseUrl = 'http://localhost:8000';
+  const baseUrl = 'http://127.0.0.1:8080';
 
   beforeAll(async () => {
     // Serve the compiled dist/ as the container does (`npm test` builds it first).
-    serverProcess = spawn('npx', ['@google/adk-devtools', 'api_server', 'dist', '--port', '8000'], {
+    serverProcess = spawn('npx', ['@google/adk-devtools', 'api_server', 'dist', '--host', '127.0.0.1', '--port', '8080'], {
       cwd: rootDir,
       env: { ...process.env, ...dotenvVars },
       stdio: 'pipe',

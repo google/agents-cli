@@ -29,6 +29,8 @@ from typing import Any
 
 import yaml
 
+from google.agents.cli.extension._refs import UNPINNED_REF, ExtensionRef
+
 EXTENSIONS_FILE = "agents-cli-extensions.yaml"
 
 
@@ -40,9 +42,29 @@ class ExtensionListError(Exception):
 class ExtensionEntry:
     name: str
     source: str
-    ref: str
+    # A git entry sets `ref`; a pypi@ entry sets `version`, also the == pin in `source`.
+    ref: str | None
+    version: str | None
     sha: str
     scope: str
+
+    @classmethod
+    def for_ref(
+        cls, ref: ExtensionRef, *, name: str, sha: str, scope: str
+    ) -> ExtensionEntry:
+        """Return the entry recording ``ref``, resolved by ``pin_ref``, pinned at ``sha``."""
+        if ref.kind == "pypi":
+            return cls(
+                name=name, source=ref.raw, ref=None, version=ref.ref, sha=sha, scope=scope
+            )
+        return cls(
+            name=name,
+            source=ref.raw,
+            ref=ref.ref or UNPINNED_REF,
+            version=None,
+            sha=sha,
+            scope=scope,
+        )
 
 
 @dataclass(frozen=True)
@@ -124,7 +146,8 @@ def _parse_extension_entries(
             ExtensionEntry(
                 name=name,
                 source=str(item.get("source") or ""),
-                ref=str(item.get("ref") or ""),
+                ref=str(item["ref"]) if item.get("ref") else None,
+                version=str(item["version"]) if item.get("version") else None,
                 sha=str(item.get("sha") or ""),
                 scope=str(item.get("scope") or ""),
             )
@@ -194,15 +217,12 @@ def upsert_extension_entry(manifest_path: Path, entry: ExtensionEntry) -> None:
     extensions: list[Any] = [
         p for p in existing if not (isinstance(p, dict) and _entry_name(p) == entry.name)
     ]
-    extensions.append(
-        {
-            "name": entry.name,
-            "source": entry.source,
-            "ref": entry.ref,
-            "sha": entry.sha,
-            "scope": entry.scope,
-        }
-    )
+    item = {"name": entry.name, "source": entry.source}
+    if entry.ref is not None:
+        item["ref"] = entry.ref
+    if entry.version is not None:
+        item["version"] = entry.version
+    extensions.append({**item, "sha": entry.sha, "scope": entry.scope})
     data["extensions"] = extensions
     _write_manifest(manifest_path, data)
 

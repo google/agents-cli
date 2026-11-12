@@ -489,3 +489,18 @@ def resolve_root_agent_name(cfg: ProjectConfig) -> str:
     because a telemetry query filtered on the wrong name simply returns no rows.
     """
     return cfg.root_agent_name or root_agent_name(cfg.project_name)
+
+
+def find_nearest_dotenv(start_dir: Path) -> Path | None:
+    """The nearest ``.env`` at or above ``start_dir``, or None.
+
+    Finds the same file an agent server loads: ADK's ``load_dotenv_for_agent``
+    and python-dotenv's ``load_dotenv()`` both walk up from the agent folder
+    and stop at the first ``.env``.
+    """
+    start = start_dir.resolve()
+    for folder in (start, *start.parents):
+        candidate = folder / ".env"
+        if candidate.is_file():
+            return candidate
+    return None

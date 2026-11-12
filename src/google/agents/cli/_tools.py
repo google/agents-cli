@@ -53,6 +53,7 @@ DEFAULT_INSTALL_HINTS = {
     # uvx is shipped by uv, so the install instructions are the same.
     "uvx": "uvx is part of uv. Install uv (https://docs.astral.sh/uv/getting-started/installation/) and ensure it is in your PATH.",
     "go": "Install Go (https://go.dev/doc/install) and ensure it is in your PATH.",
+    "gradle": "Install Gradle (https://gradle.org/install/) and ensure it is in your PATH.",
 }
 
 

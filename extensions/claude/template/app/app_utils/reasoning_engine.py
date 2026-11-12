@@ -45,9 +45,10 @@ from fastapi import FastAPI, HTTPException, Request, responses
 from opentelemetry import trace
 
 from app.agent import root_agent
+from app.app_utils import memory_bank
 from app.app_utils.claude import stream_turn
 from app.app_utils.replies import result_error, tool_result_text
-from app.app_utils.telemetry.config import agent_name
+from app.app_utils.telemetry.config import agent_name, on_agent_runtime
 
 
 def add_reasoning_engine_routes(app: FastAPI) -> None:
@@ -157,6 +158,9 @@ async def _turn(
                     yield _error(invocation_id, result_error(message))
                 elif event := _event(invocation_id, message, tool_names):
                     yield event
+        if on_agent_runtime():
+            # Agent Runtime throttles the CPU once the response ends.
+            await memory_bank.flush()
     except Exception as e:
         # Log under the ended turn span so the record links to its trace.
         with trace.use_span(turn_span):

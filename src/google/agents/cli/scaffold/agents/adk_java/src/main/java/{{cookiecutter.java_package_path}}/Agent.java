@@ -52,7 +52,7 @@ public class Agent {
           .description("A helpful AI assistant that can provide weather information.")
           .instruction(
               "You are a helpful assistant that can provide weather information. "
-              + "When asked about weather, use the get_weather tool. "
+              + "When asked about weather, use the getWeather tool. "
               + "Be friendly and concise in your responses.")
           .tools(FunctionTool.create(Agent.class, "getWeather"))
           .build();

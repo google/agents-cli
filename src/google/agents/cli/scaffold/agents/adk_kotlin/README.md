@@ -13,6 +13,7 @@ A Kotlin agent built with Google's Agent Development Kit (ADK).
 │   └── Main.kt              # ADK API server (development UI with --dev)
 ├── src/test/kotlin/{{cookiecutter.java_package_path}}/
 │   └── AgentTest.kt         # Unit tests
+├── eval/                    # Eval dataset and config (`agents-cli eval run`)
 ├── deployment/
 │   └── terraform/           # Infrastructure as Code
 ├── Dockerfile               # Container build

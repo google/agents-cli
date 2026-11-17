@@ -29,6 +29,7 @@ import click
 from google.agents.cli._click import LazyGroup
 from google.agents.cli._output import Console
 from google.agents.cli._project import (
+    ProjectConfig,
     find_project_root,
     read_project_config,
     require_agent_directory,
@@ -36,6 +37,7 @@ from google.agents.cli._project import (
 from google.agents.cli._runner import run
 from google.agents.cli._uv_index import sync_failure_message, uv_index_env
 from google.agents.cli.eval import _paths
+from google.agents.cli.scaffold.utils.language import dispatch_language
 
 _SYNTHESIZE_TIMEOUT = 600  # 10 minutes
 
@@ -149,11 +151,11 @@ def cmd_synthesize(
 
     \b
     Requires:
-      - A local ADK agent project with agents-cli-manifest.yaml
+      - A local ADK Python agent project with agents-cli-manifest.yaml
+        (other languages aren't supported yet)
       - Google Cloud authentication (`agents-cli login`)
     """
     logging.warning("`eval dataset synthesize` is experimental and may change.")
-    console = Console()
     project_root = find_project_root()
     if not project_root:
         raise click.ClickException(
@@ -161,6 +163,34 @@ def cmd_synthesize(
             "current directory or any parent."
         )
     cfg = read_project_config(str(project_root))
+    handler = dispatch_language(
+        "eval dataset synthesize", LANGUAGE_HANDLERS, cfg.language
+    )
+    handler(
+        project_root=project_root,
+        cfg=cfg,
+        count=count,
+        instruction=instruction,
+        environment_context=environment_context,
+        max_turns=max_turns,
+        model=model,
+        output=output,
+    )
+
+
+def _synthesize_python(
+    *,
+    project_root: Path,
+    cfg: ProjectConfig,
+    count: int,
+    instruction: str | None,
+    environment_context: str | None,
+    max_turns: int,
+    model: str | None,
+    output: str | None,
+) -> None:
+    """Synthesize traces by running the ADK Python runner in the project's venv."""
+    console = Console()
     require_agent_directory(cfg)
     agent_path = str((project_root / cfg.agent_directory).resolve())
 
@@ -239,6 +269,16 @@ def cmd_synthesize(
                 logging.warning("Could not remove staged script %s: %s", script_path, exc)
 
     console.print(f"[bold green]Traces saved to:[/bold green] {output_path}")
+
+
+# The runner loads the agent with ADK Python, so other languages aren't supported yet.
+LANGUAGE_HANDLERS = {
+    "python": _synthesize_python,
+    "go": None,
+    "java": None,
+    "typescript": None,
+    "kotlin": None,
+}
 
 
 dataset_group.add_lazy_command(

@@ -32,6 +32,9 @@ import click
 from google.agents.cli.__init__ import __version__
 from google.agents.cli._fs import delete_folder, first_copy_error, make_folders_writable
 from google.agents.cli._trust import require_confirmation
+from google.agents.cli.extension._deprecation import (
+    warn_if_installed_from_agents_cli_repo,
+)
 from google.agents.cli.extension._loader import is_out_of_range, load_extension_spec
 from google.agents.cli.extension._manifest import (
     EXTENSIONS_FILE,
@@ -290,6 +293,7 @@ def _parse_entry_ref(run: _ScopeRun, entry: ExtensionEntry) -> ExtensionRef | No
     """
     try:
         validate_extension_name(entry.name)
+        warn_if_installed_from_agents_cli_repo(entry.name, entry.source, run.scope)
         ref = parse_ref(
             entry.source,
             ref_override=run.to or _recorded_ref(entry),

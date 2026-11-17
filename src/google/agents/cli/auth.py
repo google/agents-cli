@@ -566,8 +566,9 @@ def get_access_token() -> str:
     ``gcloud auth print-access-token``.
 
     Raises:
-        RuntimeError: If both paths fail.
+        click.ClickException: If both paths fail; the message says why each failed.
     """
+    import google.auth.exceptions
     from google.auth.transport.requests import Request as GoogleAuthRequest
 
     try:
@@ -575,13 +576,41 @@ def get_access_token() -> str:
         credentials.refresh(GoogleAuthRequest())
         if credentials.token:
             return credentials.token
-    except Exception:
-        pass
+        adc_failure = "no token was returned"
+    except google.auth.exceptions.GoogleAuthError as exc:
+        adc_failure = _describe_token_failure(exc)
 
     try:
-        return get_gcloud_access_token()
-    except Exception as exc:
-        raise RuntimeError("Failed to get access token") from exc
+        token = get_gcloud_access_token()
+    # ClickException covers gcloud not being installed or not executable.
+    except (subprocess.SubprocessError, click.ClickException) as exc:
+        raise _no_access_token_error(adc_failure, _describe_token_failure(exc)) from exc
+    if not token:
+        raise _no_access_token_error(adc_failure, "no token was returned")
+    return token
+
+
+def _describe_token_failure(exc: Exception) -> str:
+    # gcloud explains the failure on stderr; the CalledProcessError text only
+    # gives the exit status.
+    if isinstance(exc, subprocess.CalledProcessError) and (
+        stderr := (exc.stderr or "").strip()
+    ):
+        # Unrelated WARNING lines can come before the ERROR line. The "Please
+        # run:" footer suggests a login that doesn't update ADC, and the hint in
+        # _no_access_token_error covers it.
+        error = stderr[max(stderr.find("ERROR:"), 0) :]
+        return error.partition("\nPlease run:")[0].strip()
+    return str(exc) or type(exc).__name__
+
+
+def _no_access_token_error(adc_failure: str, gcloud_failure: str) -> click.ClickException:
+    return click.ClickException(
+        "Could not get a Google Cloud access token.\n"
+        f"  Application Default Credentials: {adc_failure}\n"
+        f"  gcloud: {gcloud_failure}\n"
+        f"Run `agents-cli login` (or `{GCLOUD_LOGIN}`) and try again."
+    )
 
 
 def get_gcloud_access_token() -> str:

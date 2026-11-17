@@ -387,7 +387,7 @@ def _get_agent_identity_principal(
         )
         resp.raise_for_status()
         identity = resp.json().get("workloadIdentityConfig", {}).get("identity")
-    except (requests.RequestException, ValueError, RuntimeError) as e:
+    except (requests.RequestException, ValueError, click.ClickException) as e:
         logging.warning("Could not read the identity of revision %s: %s", revision, e)
         return None
     # The API returns the identity already prefixed with "//", so the IAM member

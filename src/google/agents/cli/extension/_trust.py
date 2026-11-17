@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import click
 
-from google.agents.cli.extension._pypi import PypiError, index_label
+from google.agents.cli.extension._pypi import PypiError, index_label, uses_public_index
 from google.agents.cli.extension._refs import ExtensionRef
 
 
@@ -28,7 +28,7 @@ def confirm_trust(ref: ExtensionRef, *, auto_approve: bool) -> bool:
     Verified extensions are trusted. Everything else prompts unless
     `auto_approve`.
     """
-    if ref.tier == "verified" or auto_approve:
+    if auto_approve or is_verified(ref):
         return True
     click.echo()
     click.secho(
@@ -37,6 +37,20 @@ def confirm_trust(ref: ExtensionRef, *, auto_approve: bool) -> bool:
         fg="yellow",
     )
     return click.confirm("  Install and trust this extension?", default=False)
+
+
+def is_verified(ref: ExtensionRef) -> bool:
+    if ref.tier != "verified":
+        return False
+    if ref.kind != "pypi":
+        return True
+    # Google owns a verified package name only on PyPI; another index can serve
+    # anything under it.
+    try:
+        return uses_public_index()
+    except PypiError:
+        # Resolving reports the bad index URL; trust nothing until then.
+        return False
 
 
 def _origin(ref: ExtensionRef) -> str:

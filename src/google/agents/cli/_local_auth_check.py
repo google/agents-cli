@@ -60,7 +60,7 @@ def warn_if_model_auth_broken(agent_dir: Path) -> None:
     for the Gemini API (API key) backend.
     """
     env = {**_read_nearest_dotenv(agent_dir), **os.environ}
-    if not _uses_gemini_platform(env):
+    if not uses_gemini_platform(env):
         return
     if env.get("GOOGLE_CLOUD_PROJECT") == GCP_PROJECT_PLACEHOLDER:
         logging.warning(
@@ -100,6 +100,14 @@ def warn_if_model_auth_broken(agent_dir: Path) -> None:
     _warn_if_no_adc_token()
 
 
+def uses_gemini_platform(env: Mapping[str, str]) -> bool:
+    """Whether google-genai calls Gemini on Google Cloud with these variables."""
+    for flag in _GEMINI_PLATFORM_FLAGS:
+        if flag in env:
+            return env[flag].strip().lower() in _TRUE_VALUES
+    return False
+
+
 def _read_nearest_dotenv(agent_dir: Path) -> dict[str, str]:
     dotenv_path = find_nearest_dotenv(agent_dir)
     if dotenv_path is None:
@@ -109,13 +117,6 @@ def _read_nearest_dotenv(agent_dir: Path) -> dict[str, str]:
         for key, value in dotenv_values(dotenv_path, encoding="utf-8").items()
         if value is not None
     }
-
-
-def _uses_gemini_platform(env: Mapping[str, str]) -> bool:
-    for flag in _GEMINI_PLATFORM_FLAGS:
-        if flag in env:
-            return env[flag].strip().lower() in _TRUE_VALUES
-    return False
 
 
 def _warn_if_no_adc_token() -> None:

@@ -48,9 +48,13 @@ def main() -> int:
 
     from app.agent import root_agent
 
-    result = root_agent.invoke(
-        {"messages": [{"role": "user", "content": args.message}]}
-    )
+    agent = root_agent
+    if getattr(agent, "store", None) is None and hasattr(agent, "copy"):
+        from langgraph.store.memory import InMemoryStore
+
+        agent = agent.copy(update={"store": InMemoryStore()})
+
+    result = agent.invoke({"messages": [{"role": "user", "content": args.message}]})
     print(content_to_text(result["messages"][-1].content))
     return 0
 

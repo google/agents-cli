@@ -220,3 +220,7 @@ credentials*.json
 
 # Files `scaffold enhance` moved aside from a repo it adopted.
 /.agents-cli-original/
+
+# Local server state and eval output written by agents-cli.
+/.google-agents-cli/
+/artifacts/

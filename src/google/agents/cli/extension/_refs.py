@@ -28,11 +28,12 @@ from google.agents.cli._fs import stays_inside
 
 _FIRST_PARTY_ORG = "google"
 # The repo a bare extension name resolves to.
-_SHORTHAND_REPO = f"{_FIRST_PARTY_ORG}/agents-cli"
+AGENTS_CLI_REPO = f"{_FIRST_PARTY_ORG}/agents-cli"
+# Where first-party extensions live now; their old copies in `AGENTS_CLI_REPO` are
+# deprecated.
+EXTENSIONS_REPO = f"{_FIRST_PARTY_ORG}/agents-cli-extensions"
 # Installed without a trust prompt.
-_VERIFIED_REPOS = frozenset(
-    {"google/adk-recipes", _SHORTHAND_REPO, "google/agents-cli-extensions"}
-)
+_VERIFIED_REPOS = frozenset({"google/adk-recipes", AGENTS_CLI_REPO, EXTENSIONS_REPO})
 
 # "verified" is a repo in `_VERIFIED_REPOS` or a package in `_VERIFIED_PACKAGES`,
 # "first_party" any other repo in the `google` GitHub org.
@@ -52,9 +53,10 @@ UNPINNED_REF = "HEAD"
 GIT_URL_SCHEMES = ("https", "http", "ssh", "file")
 
 PYPI_PREFIX = "pypi@"
-# Normalized PyPI project names installed without a trust prompt. List only
-# names Google already owns: anyone can register a free name and be trusted.
-_VERIFIED_PACKAGES: frozenset[str] = frozenset()
+# Normalized PyPI project names installed without a trust prompt, only from
+# public PyPI (see `_trust.is_verified`). List only names Google already owns:
+# anyone can register a free name and be trusted.
+_VERIFIED_PACKAGES = frozenset({"google-agents-cli-extensions"})
 # https://packaging.python.org/en/latest/specifications/name-normalization/
 PACKAGE_NAME_RE = re.compile(r"[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?")
 # Version operators, checked after the supported `==` is split off. A `!` alone
@@ -209,7 +211,7 @@ def parse_ref(raw: str, *, ref_override: str | None = None) -> ExtensionRef:
             ref=ref_override,
         )
 
-    # Shorthand: a bare name selects that extension from `_SHORTHAND_REPO`
+    # Shorthand: a bare name selects that extension from `AGENTS_CLI_REPO`
     # (google/agents-cli). The name becomes the selector, so it
     # needs the same check: `..` or `C:\tmp\evil` has no `/` to make it a repo.
     # Checked even when a `#selector` replaces it, so a junk name is not
@@ -219,7 +221,7 @@ def parse_ref(raw: str, *, ref_override: str | None = None) -> ExtensionRef:
         raw=raw,
         kind="first_party",
         tier="verified",
-        upstream=_SHORTHAND_REPO,
+        upstream=AGENTS_CLI_REPO,
         url=None,
         selector=selector or base,
         ref=ref_override,
@@ -313,16 +315,40 @@ def pypi_source(package: str, version: str | None, selector: str | None) -> str:
     return f"{PYPI_PREFIX}{package}{pin}{f'#{selector}' if selector else ''}"
 
 
+def is_from_agents_cli_repo(ref: ExtensionRef) -> bool:
+    """Whether ``ref`` installs from the agents-cli repo, by shorthand or in full."""
+    if ref.kind == "first_party":
+        return True
+    if ref.kind == "github":
+        return ref.upstream.lower() == AGENTS_CLI_REPO
+    if ref.kind == "git" and ref.url is not None:
+        return is_agents_cli_repo_url(ref.url)
+    return False
+
+
+def is_agents_cli_repo_url(url: str) -> bool:
+    """Whether ``url`` points at github.com/google/agents-cli, over any scheme."""
+    return (_github_location(url) or "").lower() == AGENTS_CLI_REPO
+
+
 def _github_repo(url: str) -> str | None:
     """Return ``org/repo`` if ``url`` clones a github.com repo over https or ssh."""
+    # Plain http could be tampered with, so it never names a trusted repo.
+    if _SCP_RE.match(url) is None and urlsplit(url).scheme.lower() not in (
+        "https",
+        "ssh",
+    ):
+        return None
+    return _github_location(url)
+
+
+def _github_location(url: str) -> str | None:
+    """Return the ``org/repo`` path of a github.com URL, whatever its scheme."""
     scp = _SCP_RE.match(url)
     if scp is not None:
         host, path = scp.group("host"), scp.group("path")
     else:
         parts = urlsplit(url)
-        # Plain http could be tampered with, so it never names a trusted repo.
-        if parts.scheme.lower() not in ("https", "ssh"):
-            return None
         host, path = parts.hostname or "", parts.path
     if host.lower().removeprefix("www.") != "github.com":
         return None

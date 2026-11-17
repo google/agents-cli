@@ -23,6 +23,7 @@ from pathlib import Path
 import click
 
 from google.agents.cli._project import (
+    ProjectConfig,
     chdir_project_root,
     read_project_config,
     require_agent_directory,
@@ -30,6 +31,7 @@ from google.agents.cli._project import (
 from google.agents.cli._runner import run
 from google.agents.cli._uv_index import sync_failure_message, uv_index_env
 from google.agents.cli.eval.optimize_utils import _prepare_adk_evalsets
+from google.agents.cli.scaffold.utils.language import dispatch_language
 
 _DEFAULT_OPTIMIZATION_CONFIG = "tests/eval/optimization_config.json"
 
@@ -210,7 +212,8 @@ def cmd_optimize(dataset_file, target_metric, config_path):
     """[Experimental] Optimize agent prompts using the GEPA framework.
 
     This command runs 'adk optimize' under the hood to automatically improve
-    your agent's instructions by iteratively refining the prompt.
+    your agent's instructions by iteratively refining the prompt. Supported
+    for ADK Python projects only.
 
     \b
     How it works:
@@ -231,6 +234,23 @@ def cmd_optimize(dataset_file, target_metric, config_path):
     logging.warning("`eval optimize` is experimental and may change.")
     chdir_project_root()
     cfg = read_project_config()
+    handler = dispatch_language("eval optimize", LANGUAGE_HANDLERS, cfg.language)
+    handler(
+        cfg=cfg,
+        dataset_file=dataset_file,
+        target_metric=target_metric,
+        config_path=config_path,
+    )
+
+
+def _optimize_python(
+    *,
+    cfg: ProjectConfig,
+    dataset_file: str | None,
+    target_metric: str | None,
+    config_path: str | None,
+) -> None:
+    """Optimize the agent's prompt by running ADK Python's `adk optimize`."""
     require_agent_directory(cfg)
 
     agent_path = f"./{cfg.agent_directory}"
@@ -268,3 +288,13 @@ def cmd_optimize(dataset_file, target_metric, config_path):
         rel_train_id=rel_train_id,
         rel_val_id=rel_val_id,
     )
+
+
+# `adk optimize` is only available in ADK Python, so other languages aren't supported yet.
+LANGUAGE_HANDLERS = {
+    "python": _optimize_python,
+    "go": None,
+    "java": None,
+    "typescript": None,
+    "kotlin": None,
+}

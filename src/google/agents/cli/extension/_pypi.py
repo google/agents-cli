@@ -59,9 +59,9 @@ from google.agents.cli._download import (
     request_error_reason,
 )
 from google.agents.cli._fs import delete_path, stays_inside
-from google.agents.cli._uv_index import PUBLIC_INDEX_URL
+from google.agents.cli._uv_index import PUBLIC_INDEX_URL, normalize_index_url
 from google.agents.cli.extension._refs import PACKAGE_NAME_RE, PYPI_PREFIX, pypi_source
-from google.agents.cli.extension._spec import EXTENSION_FILE
+from google.agents.cli.extension._spec import EXTENSION_FILE, TEMPLATE_DIR
 
 # uv's then pip's precedence, so extensions come from the index the machine already uses.
 # https://docs.astral.sh/uv/reference/environment/
@@ -195,6 +195,10 @@ class _LinkParser(HTMLParser):
 def index_label() -> str:
     """The index wheels come from, for messages: the variable that set it, or its URL."""
     return _index().label
+
+
+def uses_public_index() -> bool:
+    return normalize_index_url(_index().url) == PUBLIC_INDEX_URL
 
 
 def resolve_wheel_sha256(package: str, version: str | None) -> str:
@@ -622,9 +626,11 @@ def _delete_wheel_metadata(contents: Path, wheel: _Wheel) -> None:
 def _find_extension_dir(
     contents: Path, package: str, version: str, selector: str | None
 ) -> Path:
-    if selector and (contents / selector / EXTENSION_FILE).is_file():
-        return contents / selector
-    if not selector and (contents / EXTENSION_FILE).is_file():
+    if selector:
+        for candidate in (contents / selector, contents / selector / TEMPLATE_DIR):
+            if (candidate / EXTENSION_FILE).is_file():
+                return candidate
+    elif (contents / EXTENSION_FILE).is_file():
         return contents
     found = sorted(m.parent for m in contents.rglob(EXTENSION_FILE) if m.is_file())
     if not found:
@@ -634,7 +640,11 @@ def _find_extension_dir(
         )
     if selector:
         raise _pick_one_error(
-            contents, package, version, found, f"has no {EXTENSION_FILE} in {selector}/"
+            contents,
+            package,
+            version,
+            found,
+            f"has no {EXTENSION_FILE} in {selector}/ or its {TEMPLATE_DIR}/",
         )
     if len(found) > 1:
         raise _pick_one_error(

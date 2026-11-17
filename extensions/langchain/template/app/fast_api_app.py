@@ -33,7 +33,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.agent import root_agent
 from app.app_utils.a2a import add_a2a_routes
+from app.app_utils.services import persistence_context
 from app.app_utils.telemetry import setup_telemetry
 
 # Configure tracing + GenAI logging before the app handles any request.
@@ -42,8 +44,25 @@ setup_telemetry()
 
 @asynccontextmanager
 async def lifespan(app_instance: FastAPI) -> AsyncIterator[None]:
-    add_a2a_routes(app_instance)
-    yield
+    # Open the Cloud SQL pool (if DB env vars are set) or fall back to in-memory
+    # persistence for the lifetime of the server. The compiled graph closes over
+    # its checkpointer and store, so the pool must outlive the request loop.
+    async with persistence_context() as persistence:
+        checkpointer = (
+            persistence.checkpointer
+            if persistence.has_postgres
+            else (getattr(root_agent, "checkpointer", None) or persistence.checkpointer)
+        )
+        store = (
+            persistence.store
+            if persistence.has_postgres
+            else (getattr(root_agent, "store", None) or persistence.store)
+        )
+        app_instance.state.agent = root_agent.copy(
+            update={"checkpointer": checkpointer, "store": store}
+        )
+        add_a2a_routes(app_instance, agent=app_instance.state.agent)
+        yield
 
 
 app = FastAPI(

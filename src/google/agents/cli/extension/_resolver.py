@@ -54,7 +54,7 @@ from google.agents.cli.extension._refs import (
     ExtensionRef,
     pypi_source,
 )
-from google.agents.cli.extension._spec import EXTENSION_FILE
+from google.agents.cli.extension._spec import EXTENSION_FILE, TEMPLATE_DIR
 from google.agents.cli.scaffold.utils.fs import source_ignore_patterns
 
 # An extension name becomes a directory component under the vendoring root, so it
@@ -77,6 +77,12 @@ def validate_extension_name(name: str) -> str:
         )
     return name
 
+
+# Only branches and tags vouch for a pinned commit: GitHub also advertises
+# refs/pull/*, which anyone can point at a commit in their fork. The prefixes
+# are where the refspecs store them.
+_TRUSTED_REFSPECS = ("+refs/heads/*:refs/remotes/origin/*", "+refs/tags/*:refs/tags/*")
+_TRUSTED_REF_PREFIXES = ("refs/remotes/origin", "refs/tags")
 
 # Seconds to wait for the shared git-cache lock before giving up.
 _CACHE_LOCK_TIMEOUT_SECONDS = 120
@@ -689,10 +695,8 @@ def _clone(repo_dir: Path, url: str, repo: str) -> None:
     ``--filter=blob:none`` skips downloading them, leaving git to fetch blobs
     lazily for the commit that is actually wanted.
 
-    ``--depth=1`` is deliberately not used. The caller checks out an arbitrary
-    SHA, which a shallow clone can only reach if the server allows
-    ``uploadpack.allowReachableSHA1InWant``, and the existing ``fetch --all``
-    fallback does not unshallow.
+    ``--depth=1`` is deliberately not used. The caller checks out a SHA anywhere
+    in the history of a branch or tag, which a shallow clone does not hold.
     """
     base = ["clone", "--quiet", "--no-checkout"]
     res = _git(*base, "--filter=blob:none", "--", url, str(repo_dir))
@@ -714,16 +718,50 @@ def _clone(repo_dir: Path, url: str, repo: str) -> None:
 def _checkout_locked(repo_dir: Path, url: str, repo: str, sha: str) -> Path:
     if not (repo_dir / ".git").exists():
         _clone(repo_dir, url, repo)
-
-    fetch = _git("-C", str(repo_dir), "fetch", "--quiet", "--", "origin", sha)
-    # Some hosts reject fetching an arbitrary SHA; fall back to a full fetch.
-    if fetch.returncode != 0:
-        _git("-C", str(repo_dir), "fetch", "--quiet", "--all")
-
+    # A failed fetch leaves the refs of the last one, which still came from the
+    # repo, so a pin already in the cache syncs offline.
+    fetch = _git(
+        "-C",
+        str(repo_dir),
+        "fetch",
+        "--quiet",
+        "--prune",
+        "--",
+        "origin",
+        *_TRUSTED_REFSPECS,
+    )
+    # GitHub serves any commit in a repo's fork network from that repo's URL,
+    # so a SHA that fetches and checks out is no proof the repo contains it.
+    if not _is_on_branch_or_tag(repo_dir, sha):
+        if fetch.returncode != 0:
+            raise ResolverError(
+                f"could not fetch {repo}{_git_reason(fetch)}, and commit {sha} is not "
+                "on a branch or tag fetched before; check your network and git access."
+            )
+        raise ResolverError(
+            f"commit {sha} is not on any branch or tag of {repo}, so it may come "
+            "from a fork. Pin a branch, a tag, or a commit on one of them."
+        )
     checkout = _git("-C", str(repo_dir), "checkout", "--quiet", sha)
     if checkout.returncode != 0:
         raise ResolverError(f"git checkout {sha} failed: {checkout.stderr.strip()}")
     return repo_dir
+
+
+def _is_on_branch_or_tag(repo_dir: Path, sha: str) -> bool:
+    result = _git(
+        "-C",
+        str(repo_dir),
+        "for-each-ref",
+        "--count=1",
+        "--format=%(refname)",
+        "--contains",
+        sha,
+        "--",
+        *_TRUSTED_REF_PREFIXES,
+    )
+    # git exits non-zero for a commit the cache doesn't hold.
+    return result.returncode == 0 and bool(result.stdout.strip())
 
 
 def _first_party_source(
@@ -733,7 +771,7 @@ def _first_party_source(
     sub = _inside(checkout, f"extensions/{ref.selector}")
     if (sub / EXTENSION_FILE).exists():
         return sub
-    template = _inside(checkout, f"extensions/{ref.selector}/template")
+    template = _inside(checkout, f"extensions/{ref.selector}/{TEMPLATE_DIR}")
     if (template / EXTENSION_FILE).exists():
         return template
     pin = f" --ref {ref.ref}" if ref.ref else ""
@@ -748,7 +786,7 @@ def _first_party_source(
         )
         raise ResolverError(
             f"{ref.selector!r} has no {EXTENSION_FILE} in extensions/{ref.selector}/ "
-            f"or its template/ at {sha}. Install one of the extensions found under "
+            f"or its {TEMPLATE_DIR}/ at {sha}. Install one of the extensions found under "
             f"it instead:\n{commands}"
         )
     upgrade = (

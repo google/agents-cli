@@ -1,6 +1,6 @@
 [project]
 name = "google-agents-cli"
-version = "1.14.0"
+version = "1.15.0"
 description = "Agents CLI — Agent Development Lifecycle toolchain for ADK"
 readme = "README.md"
 license = "Apache-2.0"

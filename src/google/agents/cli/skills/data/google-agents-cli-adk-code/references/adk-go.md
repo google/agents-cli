@@ -21,7 +21,6 @@ my-agent/
 ├── app/
 │   ├── agent.go             // NewRootAgent(ctx) (agent.Agent, error) — model, instruction, tools
 │   └── agent_test.go
-├── appinfo/                 // template-owned: serves {prefix}/apps/{app}/app-info for agents-cli eval
 ├── e2e/
 │   ├── integration/         // server_e2e_test.go — drives a running server
 │   └── load_test/

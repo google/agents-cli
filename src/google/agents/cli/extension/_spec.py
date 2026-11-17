@@ -49,6 +49,8 @@ from google.agents.cli.skills._bundle import SKILL_PREFIX
 # in a breaking way, and `v1` is reserved for the point it stops doing so.
 V1ALPHA1 = "agents-cli-extension/v1alpha1"
 EXTENSION_FILE = "agents-cli-extension.yaml"
+# A selected folder that holds no extension falls back to this subfolder.
+TEMPLATE_DIR = "template"
 # The Agent Skills name rule, since the key becomes the folder that SKILL.md's
 # `name` must match. It also keeps names clear of hidden and staging folders.
 _SKILL_NAME_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")

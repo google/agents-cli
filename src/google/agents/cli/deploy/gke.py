@@ -258,8 +258,12 @@ def deploy_gke(
     click.echo("\n\n✅ GKE deployment complete!")
     if service_ip:
         click.echo(f"   Internal service IP: {service_ip}")
+    click.echo("   For local access:")
     click.echo(
-        f"   For local access: kubectl port-forward svc/{service_name} 8080:8080 -n {service_name}"
+        f"      Run: kubectl port-forward svc/{service_name} 8080:8080 -n {service_name}"
+    )
+    click.echo(
+        '      then use: agents-cli run --url http://localhost:8080 --mode a2a "Hello"'
     )
 
 

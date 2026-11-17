@@ -33,7 +33,7 @@ An extension contributes two things:
     - For Antigravity, `agents-cli` links each `--global` skill into its global skills folder.
     - If your home folder is a project, both scopes share `~/.agents/skills/`, so an extension with skills can be installed at only one of them.
 
-Extensions come from these places: any `org/repo` on GitHub, a URL on any git host, a package on PyPI or another Python package index, a local path, a first-party shorthand name, or an `agents-cli-extension.yaml` committed at your project root (auto-loaded, no install step). A framework template ships that last kind, so scaffolding from one needs no install. A template ships its skills as files under `.agents/skills/`, and scaffolding copies them like any other file. Only `extension add`, `extension update`, and `agents-cli install` read the `skills:` field.
+Extensions come from these places: any `org/repo` on GitHub, a URL on any git host, a package on PyPI or another Python package index, a local path, or an `agents-cli-extension.yaml` committed at your project root (auto-loaded, no install step). A framework template ships that last kind, so scaffolding from one needs no install. A template ships its skills as files under `.agents/skills/`, and scaffolding copies them like any other file. Only `extension add`, `extension update`, and `agents-cli install` read the `skills:` field.
 
 ---
 
@@ -61,9 +61,8 @@ An overridden or added command is tagged in `agents-cli --help` with `[↑ <exte
 | `pypi@acme-extensions` | the newest release of a package on PyPI or your package index |
 | `pypi@acme-extensions==1.2.0` | a specific release of that package |
 | `pypi@acme-extensions==1.2.0#core/soc2` | select one extension from a multi-extension package |
-| `<name>` | first-party shorthand that pins the latest release tag of the `google/agents-cli` repo that isn't newer than your agents-cli (for example `v1.12.0`) |
 | `--ref <branch\|tag\|sha>` | pin a branch, tag, or commit SHA of a git reference |
-| `--ref :latest` | pin the latest release, as the shorthand does without `--ref` (first-party only) |
+| `--ref :latest` | pin the latest release, as the shorthand does without `--ref` (shorthand and `pypi@` only) |
 
 Agents CLI clones a URL with your existing git configuration, so whatever already authenticates you to that host (a credential helper or an SSH agent) applies. Agents CLI doesn't ask for or store credentials.
 
@@ -72,6 +71,7 @@ A `pypi@` reference installs an extension from a wheel:
 - The wheel comes from the index in `UV_DEFAULT_INDEX`, `UV_INDEX_URL` or `PIP_INDEX_URL`, the first one set, or from PyPI when none is. Credentials in the index URL (`https://<user>:<password>@host/simple`) are sent only to that host.
 - The version goes in the reference, `==<version>`. `--ref` doesn't apply.
 - Without `#<folder>`, Agents CLI uses the extension at the wheel's root, or its only extension. When a wheel holds several, the error lists the references to choose from.
+- With `#<folder>`, Agents CLI uses `<folder>/template/` when `<folder>/` itself holds no extension, so `#core/langchain` selects `core/langchain/template/`.
 - Installing reads the wheel and never runs package code.
 
 ---
@@ -90,7 +90,7 @@ When both scopes define the same command, **project wins**; `agents-cli info` sh
 
 ## Trust
 
-Extensions from `google/agents-cli`, `google/agents-cli-extensions` and `google/adk-recipes` are verified and trusted automatically, whether you add them with the shorthand form (`agents-cli extension add <name>`), an `org/repo` reference, or an https or ssh URL. Every other reference **prompts before install**, since its commands run arbitrary code when invoked. The `--yes` flag skips the prompt and trusts every extension, so use it only for automation and bootstrap.
+Extensions from `google/agents-cli`, `google/agents-cli-extensions` and `google/adk-recipes` are verified and trusted automatically, whether you add them with the shorthand form (`agents-cli extension add <name>`), an `org/repo` reference, or an https or ssh URL. So is the `google-agents-cli-extensions` package added with `pypi@`, when it comes from PyPI rather than an index set in `UV_DEFAULT_INDEX`, `UV_INDEX_URL` or `PIP_INDEX_URL`. Every other reference **prompts before install**, since its commands run arbitrary code when invoked. The `--yes` flag skips the prompt and trusts every extension, so use it only for automation and bootstrap.
 
 ---
 

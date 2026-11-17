@@ -25,6 +25,7 @@ import click
 from google.agents.cli.__init__ import __version__
 from google.agents.cli._fs import delete_folder, make_folders_writable
 from google.agents.cli._trust import require_confirmation
+from google.agents.cli.extension._deprecation import warn_if_agents_cli_repo_ref
 from google.agents.cli.extension._loader import (
     RECOVERY_COMMANDS,
     current_extension_set,
@@ -203,6 +204,7 @@ def cmd_add(
             "--ref does not apply to a local@ extension: a local folder has no "
             "branches or tags. Drop --ref."
         )
+    warn_if_agents_cli_repo_ref(ref, global_=global_)
 
     root = scope_root(scope)
     if root is None:

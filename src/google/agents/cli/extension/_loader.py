@@ -37,6 +37,7 @@ from google.agents.cli.extension._spec import (
     ExtensionSpecError,
     parse_extension_spec,
 )
+from google.agents.cli.extension._trust import is_verified
 
 # Loaded extension sets per (project root, user root), so startup and the command
 # share one load and one warning. Stale once the extension files change.
@@ -78,9 +79,11 @@ class ResolvedCommand:
     # to the built-in would silently do something else (an ADK scaffold in a
     # LangChain project, say).
     blocked_requires: str | None = None
-    # Whether the extension comes from the `google` GitHub org, so telemetry may
-    # record its name.
+    # Whether the extension comes from the `google` GitHub org or is a verified
+    # package, so telemetry may record its name.
     first_party: bool = False
+    # The `source:` the extension was installed from, if recorded.
+    source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -256,6 +259,7 @@ def load_extension_set(project_root: Path | None, user_root: Path | None) -> Ext
                 extension_root=spec.root,
                 blocked_requires=blocked_requires,
                 first_party=_is_first_party(spec.source),
+                source=spec.source,
             )
 
     return ExtensionSet(
@@ -356,7 +360,8 @@ def _is_first_party(source: str | None) -> bool:
     if source is None:
         return False
     try:
-        return parse_ref(source).tier in ("verified", "first_party")
+        ref = parse_ref(source)
     except RefParseError as e:
         logging.debug("Could not parse extension source %r: %s", source, e)
         return False
+    return ref.tier == "first_party" or is_verified(ref)

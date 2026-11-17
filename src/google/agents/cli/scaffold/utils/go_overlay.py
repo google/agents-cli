@@ -43,7 +43,7 @@ SCAFFOLD_ROOT_FILES = frozenset(
     {"main.go", "main_test.go", "go.mod", "go.sum", "Dockerfile"}
 )
 # Packages the generated main.go imports by path; its Dockerfile copies them by name.
-SCAFFOLD_PACKAGES = frozenset({"appinfo", "sessions"})
+SCAFFOLD_PACKAGES = frozenset({"sessions"})
 
 _PACKAGE_MAIN = re.compile(
     r"^[ \t]*package\s+main(_test)?(?=\s*(?://.*)?$)", re.MULTILINE

@@ -24,7 +24,9 @@ example_question: "What's the weather in San Francisco?"
 render_files: ["app/agent.py"]
 settings:
   language: "python"
-  requires_session: false
+  # agent_platform_sessions is ADK-only; the first entry is the default.
+  requires_session: true
+  session_types: ["in_memory", "cloud_sql"]
   deployment_targets: ["agent_runtime", "cloud_run", "gke", "none"]
   agent_directory: "app"
   extra_dependencies: []

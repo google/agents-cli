@@ -21,6 +21,7 @@ A Java agent built with Google's Agent Development Kit (ADK).
 │       └── e2e/             # End-to-end tests
 │           ├── integration/ # Server integration tests
 │           └── load_test/   # Load tests
+├── eval/                    # Eval dataset and config (`agents-cli eval run`)
 ├── deployment/
 │   └── terraform/           # Infrastructure as Code
 {%- if cookiecutter.deployment_target == 'gke' %}

@@ -55,7 +55,7 @@ not support `gke`) and whether
 they want CI/CD, then run from the project root:
 
 ```bash
-agents-cli scaffold enhance google/agents-cli/extensions/claude/template@v1.14.0 \
+agents-cli scaffold enhance google/agents-cli-extensions/core/claude/template \
   --deployment-target cloud_run
 ```
 

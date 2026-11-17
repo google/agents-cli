@@ -27,7 +27,6 @@ RUN go mod download || (sleep 10 && go mod download) || (sleep 20 && go mod down
 # Copy source code
 COPY *.go ./
 COPY {{cookiecutter.agent_directory}}/ ./{{cookiecutter.agent_directory}}/
-COPY appinfo/ ./appinfo/
 COPY sessions/ ./sessions/
 {%- for package_dir in cookiecutter.extra_go_package_dirs %}
 COPY {{ package_dir }}/ ./{{ package_dir }}/

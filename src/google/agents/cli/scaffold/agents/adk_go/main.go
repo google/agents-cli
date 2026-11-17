@@ -23,7 +23,6 @@ import (
 	"time"
 
 	app "{{cookiecutter.project_name}}/{{cookiecutter.agent_directory}}"
-	"{{cookiecutter.project_name}}/appinfo"
 	"{{cookiecutter.project_name}}/sessions"
 
 	"github.com/joho/godotenv"
@@ -40,6 +39,7 @@ import (
 	"google.golang.org/adk/v2/cmd/launcher/web/triggers/eventarc"
 	"google.golang.org/adk/v2/cmd/launcher/web/triggers/pubsub"
 	"google.golang.org/adk/v2/cmd/launcher/web/webui"
+	"google.golang.org/adk/v2/exp/appinfo"
 )
 
 func main() {

@@ -203,7 +203,6 @@ my-agent/
 ├── app/
 │   ├── agent.go              # NewRootAgent: model, instruction, tools
 │   └── agent_test.go
-├── appinfo/                  # Serves app info for agents-cli eval
 ├── sessions/                 # Session service for the chosen backend
 ├── eval/                     # Evaluation datasets and config
 ├── e2e/

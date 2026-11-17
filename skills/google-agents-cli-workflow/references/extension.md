@@ -89,9 +89,10 @@ agents-cli info                                # shows active extensions + sourc
 | `pypi@acme-extensions` | the newest release of a package on PyPI or your package index |
 | `pypi@acme-extensions==1.2.0` | a specific release of that package |
 | `pypi@acme-extensions==1.2.0#core/soc2` | select one extension from a multi-extension package |
-| `<name>` | first-party shorthand — pins the latest release tag of the `google/agents-cli` repo that is not newer than your agents-cli (for example `v1.12.0`) |
+| `google/agents-cli-extensions#core/<name>/template` | a first-party extension, such as `core/langchain/template` |
+| `<name>` | deprecated first-party shorthand for an extension in the `google/agents-cli` repo; use `google/agents-cli-extensions#core/<name>/template` instead |
 | `--ref <branch\|tag\|sha>` | pin a branch, tag, or commit SHA of a git reference |
-| `--ref :latest` | pin the latest release, as the shorthand does without `--ref` (first-party only) |
+| `--ref :latest` | pin the latest release, as the shorthand does without `--ref` (shorthand and `pypi@` only) |
 
 A URL is cloned with your ambient git configuration, so whatever already authenticates you to that host (credential helper, ssh agent) applies — agents-cli neither asks for nor stores credentials.
 
@@ -99,6 +100,7 @@ A `pypi@` reference installs an extension from a wheel:
 - The index is the first of `UV_DEFAULT_INDEX`, `UV_INDEX_URL`, `PIP_INDEX_URL` that is set, else PyPI. Credentials in the index URL go only to that host.
 - The version goes in the reference (`==<version>`); `--ref` doesn't apply.
 - Without `#<folder>`, the wheel's root extension or its only extension is used; when it holds several, the error lists the references to pick from.
+- With `#<folder>`, `<folder>/template/` is used when `<folder>/` itself holds no extension (`#core/langchain` selects `core/langchain/template/`).
 - The wheel is only read, never built, so installing runs no package code.
 
 An extension changes commands. To run a different agent framework, scaffold from that framework's template instead (`agents-cli create my-agent --agent <org>/<repo>@<tag> --deployment-target <target>`); the template carries its own `agents-cli-extension.yaml`, so nothing is installed machine-wide.
@@ -111,8 +113,8 @@ An extension changes commands. To run a different agent framework, scaffold from
 
 ### Trust
 
-- First-party extensions added via the **shorthand** form (`extension add <name>`) are trusted automatically.
-- Every other reference — an `org/repo`, a URL, a `pypi@` package, a local path, and `google/agents-cli` typed in full — **prompts before install** (its commands run arbitrary code when invoked). `--yes` skips the prompt (blanket trust — use only for automation/bootstrap).
+- Extensions from `google/agents-cli`, `google/agents-cli-extensions` and `google/adk-recipes` are trusted automatically, whether added via the **shorthand** form (`extension add <name>`), an `org/repo` reference, or an https or ssh URL. So is the `pypi@google-agents-cli-extensions` package when it comes from PyPI index.
+- Every other reference — any other repo or URL, any other `pypi@` package, and a local path — **prompts before install** (its commands run arbitrary code when invoked). `--yes` skips the prompt (blanket trust — use only for automation/bootstrap).
 
 ### Pinning and updates
 

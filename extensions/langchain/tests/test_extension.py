@@ -50,6 +50,8 @@ class TestTemplateConfig:
 
         assert config["base_template"] == "empty_py"
         assert config["settings"]["tags"] == ["langchain", "a2a"]
+        assert config["settings"]["requires_session"] is True
+        assert config["settings"]["session_types"] == ["in_memory", "cloud_sql"]
         # The empty base ships no server, so the template owes the entrypoint.
         agent_dir = config["settings"]["agent_directory"]
         assert (_TEMPLATE_DIR / agent_dir / "fast_api_app.py").is_file()
@@ -168,6 +170,38 @@ class TestScaffoldedProject:
         assert "google-adk" not in (project / "pyproject.toml").read_text()
         # cicd_runner keeps tests/load_test, so the template's copy must win.
         assert (project / "tests" / "load_test" / "load_test.py").is_file()
+
+
+def test_cloud_sql_session_type_renders_database_infra(tmp_path):
+    """`--session-type cloud_sql` wires Cloud SQL into the generated Terraform."""
+    from click.testing import CliRunner
+
+    from google.agents.cli.scaffold.commands.create import create
+
+    result = CliRunner().invoke(
+        create,
+        [
+            "langchain-sql",
+            "--agent",
+            f"local@{_TEMPLATE_DIR}",
+            "--skip-checks",
+            "--skip-deps",
+            "--auto-approve",
+            "--deployment-target",
+            "cloud_run",
+            "--session-type",
+            "cloud_sql",
+            "--output-dir",
+            str(tmp_path),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    project = tmp_path / "langchain-sql"
+    manifest = yaml.safe_load((project / "agents-cli-manifest.yaml").read_text())
+    assert manifest["create_params"]["session_type"] == "cloud_sql"
+    service_tf = (project / "deployment/terraform/single-project/service.tf").read_text()
+    assert 'resource "google_sql_database_instance" "session_db"' in service_tf
+    assert 'name  = "INSTANCE_CONNECTION_NAME"' in service_tf
 
 
 class TestShippedSkill:

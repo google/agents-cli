@@ -152,9 +152,9 @@ def generate_lock_file(pyproject_content: str, output_path: pathlib.Path) -> Non
 def generate_go_lock_file() -> None:
     """Generate go.sum and go.mod for the adk_go template.
 
-    Creates a temporary Go project using the CLI, runs go mod tidy,
-    then copies go.sum and go.mod back to the template (with project name
-    replaced by the Jinja variable).
+    Creates a temporary Go project using the CLI, upgrades its dependencies
+    with go get -u and go mod tidy, then copies go.sum and go.mod back to the
+    template (with project name replaced by the Jinja variable).
     """
     go_mod_path = GO_AGENT_TEMPLATE / "go.mod"
     go_sum_path = GO_AGENT_TEMPLATE / "go.sum"
@@ -194,7 +194,13 @@ def generate_go_lock_file() -> None:
 
         project_dir = tmp_dir / project_name
 
-        # Run go mod tidy in the generated project
+        # go mod tidy never raises a version, so upgrade first to match what
+        # uv lock does for the Python templates.
+        run_resolved(
+            ["go", "get", "-u", "./..."],
+            cwd=project_dir,
+            check=True,
+        )
         run_resolved(
             ["go", "mod", "tidy"],
             cwd=project_dir,

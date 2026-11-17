@@ -181,7 +181,12 @@ def main() -> int:
     from app.agent import root_agent
 
     def infer(prompt: str) -> str:
-        result = root_agent.invoke({"messages": [{"role": "user", "content": prompt}]})
+        agent = root_agent
+        if getattr(agent, "store", None) is None and hasattr(agent, "copy"):
+            from langgraph.store.memory import InMemoryStore
+
+            agent = agent.copy(update={"store": InMemoryStore()})
+        result = agent.invoke({"messages": [{"role": "user", "content": prompt}]})
         last = result["messages"][-1]
         # getattr handles LangChain BaseMessage objects; fall back to dict access
         # for plain dicts. Avoid calling .get() on a BaseMessage (no such method).

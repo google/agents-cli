@@ -60,11 +60,23 @@ agents-cli scaffold enhance -d cloud_run --cicd-runner github_actions   # add in
 `agents-cli-extension.yaml` at the project root. Prefix any command with
 `AGENTS_CLI_DISABLE_OVERRIDES=1` to reach the built-in instead.
 
-## Serving
+## Serving & Persistence
 
 A2A only: JSON-RPC at `POST /a2a/app`, card at
 `/a2a/app/.well-known/agent-card.json`, health at `/health`. Token streaming
 comes from `astream(stream_mode="messages")`.
+
+`app/app_utils/services.py` wires both a short-term thread checkpointer (keyed by
+A2A `context_id` as `thread_id`) and a long-term `BaseStore` (reachable in tools
+via `from langgraph.prebuilt import InjectedStore`) onto `root_agent` at server
+startup:
+- With `--session-type cloud_sql` on Cloud Run or GKE (`INSTANCE_CONNECTION_NAME` +
+  `DB_PASS`, or `SESSION_DB_URI`), it uses `AsyncPostgresSaver` and
+  `AsyncPostgresStore` sharing one connection pool.
+- Without DB credentials, it falls back to `InMemorySaver` and `InMemoryStore`.
+- Leave `root_agent` in `app/agent.py` without a custom `checkpointer` or `store`
+  at module import time so `langgraph dev` (`agents-cli playground`) can attach
+  its own runtime persistence.
 
 ## Common mistakes
 

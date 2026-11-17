@@ -3,6 +3,18 @@
 All notable changes to this project will be documented in this file.
 
 
+## [1.15.0] - 2026-11-17
+
+- **First-party extensions and templates move to `google/agents-cli-extensions`.** Installing one from `google/agents-cli` shows a deprecation warning that points to the new location.
+  - The `google-agents-cli-extensions` package installs from PyPI without a trust prompt.
+- A git extension pinned to a commit SHA must be on a branch or tag of the repo it names.
+- The LangChain extension template supports `--session-type cloud_sql`, which stores conversation checkpoints and long-term memory in Cloud SQL for PostgreSQL.
+- `agents-cli create` no longer reports success when the Google Cloud credential or API check fails.
+- When `agents-cli` can't get a Google Cloud access token, it explains why and suggests `agents-cli login`.
+- Generated projects ignore the `artifacts/` and `.google-agents-cli/` directories that `agents-cli eval` and `agents-cli run` write.
+- Go projects serve `/apps/{app_name}/app-info` from ADK Go's `exp/appinfo` package, and new projects no longer contain an `appinfo/` folder.
+  - Action needed: if you kept a customized `main.go` during `agents-cli scaffold upgrade`, change the import `"<project>/appinfo"` to `"google.golang.org/adk/v2/exp/appinfo"`.
+
 ## [1.14.0] - 2026-11-12
 
 - **`agents-cli deploy` runs pre-flight checks before source builds.**

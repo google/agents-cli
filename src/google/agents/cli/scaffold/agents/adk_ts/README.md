@@ -12,6 +12,7 @@ This project is organized as follows:
 ├── {{cookiecutter.agent_directory}}/                 # Core application code
 │   └── agent.ts         # Main agent logic with tools
 ├── .cloudbuild/         # CI/CD pipeline configurations for Google Cloud Build
+├── eval/                # Eval dataset and config (`agents-cli eval run`)
 ├── deployment/          # Infrastructure and deployment scripts
 {%- if cookiecutter.deployment_target == 'gke' %}
 │   ├── k8s/             # Kubernetes manifests for GKE deployment

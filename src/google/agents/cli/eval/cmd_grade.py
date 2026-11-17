@@ -308,7 +308,9 @@ def cmd_grade(
     except click.ClickException:
         raise
     except Exception as e:
-        raise click.ClickException("Evaluation failed.") from e
+        raise click.ClickException(
+            f"Evaluation failed: {str(e) or type(e).__name__}"
+        ) from e
 
     # Outside the try: Exit isn't a ClickException, so the handler above would
     # report it as "Evaluation failed."

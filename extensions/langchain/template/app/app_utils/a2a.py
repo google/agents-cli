@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from typing import TYPE_CHECKING
 
 from a2a.helpers import new_task_from_user_message
 from a2a.server.agent_execution import AgentExecutor, RequestContext
@@ -44,6 +45,9 @@ from opentelemetry import trace
 from app.agent import root_agent
 from app.app_utils.content import content_to_text
 
+if TYPE_CHECKING:
+    from langgraph.graph.state import CompiledStateGraph
+
 
 def advertised_base_url() -> str:
     """Base URL for the agent card: APP_URL, else the host and port we bind."""
@@ -66,6 +70,9 @@ A2A_RPC_PATH = f"/a2a/{A2A_NAME}"
 class LangGraphAgentExecutor(AgentExecutor):
     """Bridge the A2A request lifecycle to the compiled LangGraph graph."""
 
+    def __init__(self, agent: CompiledStateGraph = root_agent) -> None:
+        self._agent = agent
+
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         user_input = context.get_user_input()
         task = context.current_task
@@ -86,9 +93,9 @@ class LangGraphAgentExecutor(AgentExecutor):
         streamed = False
         final_reply = ""
         with _tracer.start_as_current_span("invoke_agent"):
-            async for mode, data in root_agent.astream(
+            async for mode, data in self._agent.astream(
                 {"messages": [{"role": "user", "content": user_input}]},
-                config={"configurable": {"thread_id": task.context_id}},
+                config={"configurable": {"thread_id": task.context_id or task.id}},
                 stream_mode=["messages", "values"],
             ):
                 if mode == "messages":
@@ -156,11 +163,11 @@ def _agent_card() -> AgentCard:
     )
 
 
-def add_a2a_routes(app: FastAPI) -> None:
+def add_a2a_routes(app: FastAPI, agent: CompiledStateGraph = root_agent) -> None:
     """Mount the JSON-RPC endpoint and the agent card on the app."""
     agent_card = _agent_card()
     request_handler = DefaultRequestHandler(
-        agent_executor=LangGraphAgentExecutor(),
+        agent_executor=LangGraphAgentExecutor(agent=agent),
         task_store=InMemoryTaskStore(),
         agent_card=agent_card,
     )

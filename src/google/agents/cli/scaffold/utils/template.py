@@ -1674,7 +1674,6 @@ def process_template(
                     "*.ipynb",  # Don't render notebooks
                     "*.sum",  # Don't render Go sum files
                     "e2e/**/*",  # Don't render Go e2e test files (contain Go {{ }} syntax)
-                    "appinfo/*",  # Don't render Go app-info files (contain Go {{ }} syntax)
                     "frontend/**/*",  # Don't render frontend directory (covers all JS/TS/CSS/JSON files)
                     "sample_data/*",  # Don't render sample data files
                     ".git/*",  # Don't render git directory

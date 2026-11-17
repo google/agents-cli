@@ -25,6 +25,9 @@ import click
 
 from google.agents.cli.__init__ import __version__
 from google.agents.cli._fs import is_real_dir
+from google.agents.cli.extension._deprecation import (
+    warn_if_installed_from_agents_cli_repo,
+)
 from google.agents.cli.extension._loader import incompatible_spec, load_extension_spec
 from google.agents.cli.extension._manifest import (
     EXTENSIONS_FILE,
@@ -125,6 +128,8 @@ def _sync_scope(
 ) -> list[str]:
     """Restore one scope's copies, then its skills; returns the re-materialized names."""
     extension_list = read_extension_list(scope_root / EXTENSIONS_FILE, warn=True)
+    for entry in extension_list.entries:
+        warn_if_installed_from_agents_cli_repo(entry.name, entry.source, scope)
     vendored_dir = vendored_extensions_dir(scope_root)
     states = _restore_copies(extension_list.entries, vendored_dir)
     vendored_names = [name for name, state in states.items() if state != "missing"]

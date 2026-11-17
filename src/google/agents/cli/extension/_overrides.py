@@ -25,6 +25,9 @@ import click
 from google.agents.cli._output import print_error
 from google.agents.cli._project import find_project_root
 from google.agents.cli._runner import DISABLE_OVERRIDES_ENV, run_extension_command
+from google.agents.cli.extension._deprecation import (
+    warn_if_installed_from_agents_cli_repo,
+)
 from google.agents.cli.extension._refs import LATEST
 from google.agents.cli.extension._spec import ExtensionCommand
 
@@ -68,6 +71,9 @@ def run_override(
     resolved: ResolvedCommand, argv: list[str], *, display_path: str
 ) -> None:
     """Run a resolved override's vector, exiting with its code on failure."""
+    warn_if_installed_from_agents_cli_repo(
+        resolved.extension_name, resolved.source, resolved.scope
+    )
     if resolved.contribution.kind == "override":
         click.echo(
             f"running {display_path!r} via extension {resolved.extension_name!r} ({resolved.scope} scope)",
@@ -163,6 +169,7 @@ def make_override_command(
     leaf_name: str,
     display_path: str,
     extension_root: Path,
+    source: str | None,
 ) -> click.Command:
     """Build a Click command that runs an extension contribution.
 
@@ -189,6 +196,7 @@ def make_override_command(
     )
     @click.argument("extra_args", nargs=-1, type=click.UNPROCESSED)
     def _cmd(extra_args: tuple[str, ...]) -> None:
+        warn_if_installed_from_agents_cli_repo(extension_name, source, scope)
         if contribution.kind == "override":
             click.echo(
                 f"running {display_path!r} via extension {extension_name!r} ({scope} scope)",

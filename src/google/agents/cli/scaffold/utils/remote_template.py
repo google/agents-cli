@@ -31,6 +31,7 @@ import click
 from google.agents.cli._git import is_option_like
 from google.agents.cli._output import Console
 from google.agents.cli._project import DEFAULT_BASE_TEMPLATE
+from google.agents.cli.extension._deprecation import warn_if_agents_cli_repo_template
 
 from .fs import walk_source_tree
 from .language import get_language_config
@@ -261,6 +262,9 @@ def fetch_remote_template(
     if spec.tree_path:
         git_ref, template_path = _split_tree_path(spec.repo_url, spec.tree_path)
         spec = replace(spec, git_ref=git_ref, template_path=template_path)
+    warn_if_agents_cli_repo_template(
+        spec.repo_url, spec.template_path, original_agent_spec
+    )
     if is_option_like(spec.git_ref):
         raise RuntimeError(
             f"Invalid git ref {spec.git_ref!r}: pass a branch, tag, or commit, "

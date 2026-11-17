@@ -223,6 +223,7 @@ class _MainGroup(LazyGroup):
             leaf_name=leaf,
             display_path=display,
             extension_root=resolved.extension_root,
+            source=resolved.source,
         )
 
     def _install_top_level(self, name: str, resolved: ResolvedCommand) -> bool:

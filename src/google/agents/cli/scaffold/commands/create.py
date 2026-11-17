@@ -25,11 +25,14 @@ from dataclasses import dataclass, replace
 
 import click
 from click.core import ParameterSource
+from dotenv import dotenv_values
+from rich.markup import escape
 from rich.prompt import IntPrompt, Prompt
 
 from google.agents.cli._defaults import GCP_PROJECT_PLACEHOLDER
 from google.agents.cli._fs import delete_folder
 from google.agents.cli._gcp_project import resolve_gcp_project
+from google.agents.cli._local_auth_check import uses_gemini_platform
 from google.agents.cli._output import (
     INTERACTIVE_FIX,
     Console,
@@ -153,6 +156,8 @@ class RenderPlan:
     google_cloud_project: str | None
     agent_runtime_identity_default: str
     cloud_run_identity_default: str
+    # Why the Google Cloud credential/API check failed; None if it passed or was skipped.
+    gcp_setup_error: str | None
 
 
 def _handle_create_errors(f: Callable) -> Callable:
@@ -352,6 +357,8 @@ def create(
     # a temp directory that is deleted moments later, so telling the user to cd
     # into it would be wrong as well as noisy.
     if mode.quiet:
+        if plan.gcp_setup_error:
+            logging.warning("%s", plan.gcp_setup_error)
         return
 
     _print_next_steps(location, plan)
@@ -1216,7 +1223,7 @@ def _resolve_project(
         raise click.UsageError(
             "--memory-bank is not supported by this template. Templates that "
             "support it: the Claude Agent SDK template "
-            "(--agent google/agents-cli/extensions/claude/template@<version>). "
+            "(--agent google/agents-cli-extensions/core/claude/template@<version>). "
             "For ADK agents, add Memory Bank with the cross-session-memory recipe "
             "from google/adk-recipes."
         )
@@ -1276,7 +1283,7 @@ def _resolve_project(
 
     # GCP Setup
     logging.debug("Setting up GCP...")
-    creds_info = _resolve_gcp_creds(
+    creds_info, gcp_setup_error = _resolve_gcp_creds(
         skip_checks=inputs.skip_checks,
         region=region,
         agent_garden=inputs.agent_garden,
@@ -1291,6 +1298,7 @@ def _resolve_project(
         google_cloud_project=creds_info.get("project"),
         agent_runtime_identity_default=final_agent_runtime_identity_default,
         cloud_run_identity_default=final_cloud_run_identity_default,
+        gcp_setup_error=gcp_setup_error,
     )
 
 
@@ -1532,24 +1540,28 @@ def _resolve_gcp_creds(
     region: str,
     agent_garden: bool,
     mode: InteractionMode,
-) -> dict:
+) -> tuple[dict, str | None]:
     """Resolve GCP project / credentials info for the generated .env.
 
     Runs full GCP environment setup unless --skip-checks; on failure (or when
     skipping) falls back to whatever project ID is resolvable, degrading
-    gracefully so template processing can continue.
+    gracefully so template processing can continue. Returns the credentials
+    info and, if setup failed, why; the closing summary reports the failure so
+    it isn't lost in the middle of the output.
     """
+    setup_error = None
     if not skip_checks:
         try:
-            return _setup_gcp_environment(
+            creds_info = _setup_gcp_environment(
                 auto_approve=mode.auto_approve,
                 interactive=mode.interactive,
                 region=region,
                 agent_garden=agent_garden,
             )
+            return creds_info, None
         except Exception as e:
             logging.debug("GCP environment setup failed: %s", e)
-            logging.warning("%s. Continuing with template processing...", e)
+            setup_error = str(e)
 
     # Checks skipped or failed (e.g. the aiplatform.googleapis.com API not enabled): still try to
     # resolve a project ID so the generated .env has a valid value for local
@@ -1558,10 +1570,10 @@ def _resolve_gcp_creds(
         project_id = resolve_gcp_project()
         if project_id:
             logging.debug("Using project ID from env / gcloud config: %s", project_id)
-            return {"project": project_id}
+            return {"project": project_id}, setup_error
     except Exception as e:
         logging.debug("Could not get project ID from gcloud: %s", e)
-    return {}
+    return {}, setup_error
 
 
 def _setup_gcp_environment(
@@ -1931,7 +1943,14 @@ def _print_next_steps(location: ProjectLocation, plan: RenderPlan) -> None:
     else:
         cd_path = "."
 
-    console.print("\n[bold green]✅ Success![/] Your agent project is ready.\n")
+    setup_steps = _setup_steps(location.project_path, cd_path, plan)
+    if setup_steps:
+        console.print(
+            "\n[bold green]✅ Project created.[/] "
+            "It needs setup before the agent can run (see below).\n"
+        )
+    else:
+        console.print("\n[bold green]✅ Success![/] Your agent project is ready.\n")
 
     console.print("[bold cyan]📖 Documentation[/]")
     console.print(f"   README:    [cyan]cat {cd_path}/README.md[/]")
@@ -1948,14 +1967,21 @@ def _print_next_steps(location: ProjectLocation, plan: RenderPlan) -> None:
             "   Once ready for production, run: [cyan]agents-cli scaffold enhance[/]"
         )
 
-    if _env_has_placeholder_project(location.project_path / ".env"):
-        console.print(
-            "\n[bold yellow]⚠️  Set your GCP project[/]\n"
-            "   No GCP project was detected, so .env still has "
-            f"GOOGLE_CLOUD_PROJECT={GCP_PROJECT_PLACEHOLDER}.\n"
-            f"   Edit [cyan]{cd_path}/.env[/] and set it to your project ID "
-            "before running the agent."
-        )
+    if setup_steps:
+        console.print("\n[bold yellow]⚠️  The agent won't run until you:[/]")
+        for step in setup_steps:
+            console.print(f"   • {step}")
+        # Only offer the API key when the template's .env has a slot for one;
+        # some templates (e.g. Claude on Vertex AI) can't use an AI Studio key.
+        env_path = location.project_path / ".env"
+        if env_path.is_file() and "GEMINI_API_KEY" in env_path.read_text(
+            encoding="utf-8"
+        ):
+            console.print(
+                "   Or use a Gemini API key instead of Google Cloud: in "
+                f"[cyan]{cd_path}/.env[/], comment out the Gemini platform settings "
+                "and set GEMINI_API_KEY."
+            )
 
     # Languages agents-cli can't run yet still ship Makefile targets for both.
     language = read_project_config(str(location.project_path)).language
@@ -1975,6 +2001,33 @@ def _print_next_steps(location: ProjectLocation, plan: RenderPlan) -> None:
             "project by running:\n"
             f'     [cyan]cd "{cd_path}" && agents-cli setup --workspace[/]'
         )
+
+
+def _setup_steps(
+    project_path: pathlib.Path, cd_path: pathlib.Path | str, plan: RenderPlan
+) -> list[str]:
+    """What the user still has to do before the generated agent can run."""
+    env_path = project_path / ".env"
+    # An agent whose .env picks the Gemini API (an API key) doesn't need Google
+    # Cloud, so a failed Google Cloud check doesn't stop it from running.
+    if env_path.is_file() and not uses_gemini_platform(
+        {
+            key: value
+            for key, value in dotenv_values(env_path, encoding="utf-8").items()
+            if value is not None
+        }
+    ):
+        return []
+    steps = []
+    if plan.gcp_setup_error:
+        error = escape(plan.gcp_setup_error).replace("\n", "\n     ")
+        steps.append(f"Fix Google Cloud access. The check failed with:\n     {error}")
+    if _env_has_placeholder_project(env_path):
+        steps.append(
+            f"Set GOOGLE_CLOUD_PROJECT in [cyan]{cd_path}/.env[/] to your project ID "
+            f"(it is still {GCP_PROJECT_PLACEHOLDER})."
+        )
+    return steps
 
 
 def _env_has_placeholder_project(env_path: pathlib.Path) -> bool:

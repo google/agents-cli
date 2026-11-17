@@ -54,6 +54,7 @@ FILE_CATEGORIES = {
         "tests/eval/datasets/*.json",
         "tests/eval/eval_config.yaml",
         "tests/eval/*.py",
+        "eval/**",
         "tests/unit/**",
         "tests/integration/**",
         "deployment_metadata.json",

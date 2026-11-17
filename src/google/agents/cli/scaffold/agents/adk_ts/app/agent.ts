@@ -24,6 +24,6 @@ export const rootAgent = new LlmAgent({
   model: MODEL,
   description: 'Tells the current weather in a specified city.',
   instruction: `You are a helpful assistant that tells the current weather in a city.
-                Use the 'getWeather' tool for this purpose.`,
+                Use the 'get_weather' tool for this purpose.`,
   tools: [getWeather],
 });

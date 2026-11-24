@@ -12,12 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+@file:OptIn(com.google.adk.kt.webserver.ExperimentalAppInfoFeature::class)
+
 package {{cookiecutter.java_package}}
 
 import com.google.adk.kt.apps.App
 import com.google.adk.kt.webserver.AdkApiServer
 import com.google.adk.kt.webserver.AdkServerConfig
-import com.google.adk.kt.webserver.dev.AdkDevServer
+import com.google.adk.kt.webserver.dev.adkDevModule
+import io.ktor.server.application.Application
 
 /**
  * The {app_name} in /apps/{app_name}/... and /list-apps. It must match
@@ -25,11 +28,26 @@ import com.google.adk.kt.webserver.dev.AdkDevServer
  */
 private const val APP_NAME = "{{cookiecutter.app_name}}"
 
-/** Serves the agent over the ADK API on HOST:PORT; `--dev` adds the development UI. */
+/** Serves the agent over the ADK API and A2A on HOST:PORT; `--dev` adds the development UI. */
 fun main(args: Array<String>) {
-    var config = AdkServerConfig.inMemory(App(APP_NAME, Agent.rootAgent))
+    // includeAppInfo adds GET /apps/{app_name}/app-info, the agent metadata `agents-cli eval` reads.
+    var config = AdkServerConfig.inMemory(App(APP_NAME, Agent.rootAgent)).copy(includeAppInfo = true)
     System.getenv("HOST")?.let { config = config.copy(host = it) }
     System.getenv("PORT")?.let { config = config.copy(port = it.toInt()) }
-    val server = if ("--dev" in args) AdkDevServer(config) else AdkApiServer(config)
-    server.start(wait = true)
+    // The URL the agent card advertises; deployments set APP_URL to the public URL.
+    val appUrl = System.getenv("APP_URL") ?: "http://localhost:${config.port}"
+    val a2a = A2aServer(APP_NAME, Agent.rootAgent, config.sessionService, appUrl)
+    Server(config, dev = "--dev" in args, a2a).start(wait = true)
+}
+
+/** The ADK API server, or with [dev] the development server, plus the A2A routes. */
+private class Server(
+    config: AdkServerConfig,
+    private val dev: Boolean,
+    private val a2a: A2aServer,
+) : AdkApiServer(config) {
+    override fun configure(application: Application) {
+        if (dev) application.adkDevModule(config) else super.configure(application)
+        a2a.install(application)
+    }
 }

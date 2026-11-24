@@ -79,7 +79,10 @@ class ServerE2ETest {
 
     // Validate skills structure
     List<Map<String, Object>> skills = (List<Map<String, Object>>) body.get("skills");
-    assertFalse(skills.isEmpty(), "AgentCard should have at least one skill");
+    // Every agent advertises its own skill, whatever kind of agent the root is.
+    assertTrue(
+        skills.stream().anyMatch(skill -> body.get("name").equals(skill.get("id"))),
+        "AgentCard should have a skill for the agent itself");
 
     // Validate capabilities structure
     Map<String, Object> capabilities = (Map<String, Object>) body.get("capabilities");

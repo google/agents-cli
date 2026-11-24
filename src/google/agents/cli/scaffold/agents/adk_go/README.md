@@ -62,7 +62,9 @@ A Go agent built with Google's Agent Development Kit (ADK).
 | `make test` | Run all tests |
 | `make local-backend` | Start API server on port 8000 |
 | `make build` | Build binary |
-| `make deploy` | Deploy to Cloud Run |
+{%- if cookiecutter.deployment_target in ('cloud_run', 'gke') %}
+| `make deploy` | Deploy to {{ 'GKE' if cookiecutter.deployment_target == 'gke' else 'Cloud Run' }} |
+{%- endif %}
 
 ## 🛠️ Project Management
 
@@ -78,11 +80,22 @@ A Go agent built with Google's Agent Development Kit (ADK).
 Edit your agent logic in `{{cookiecutter.agent_directory}}/agent.go` and test with `make playground` - it auto-reloads on save.
 
 ## Deployment
+{%- if cookiecutter.deployment_target in ('cloud_run', 'gke') %}
 
 ```bash
 gcloud config set project <your-project-id>
 make deploy
 ```
+{%- elif cookiecutter.deployment_target == 'agent_runtime' %}
+
+```bash
+gcloud config set project <your-project-id>
+agents-cli deploy
+```
+{%- else %}
+
+This project has no deployment target. Add one with `agents-cli scaffold enhance --deployment-target <target>`.
+{%- endif %}
 
 ## Learn More
 

@@ -41,7 +41,7 @@ public class Agent {
    */
   public static final String APP_NAME = "{{cookiecutter.app_name}}";
 
-  public static final LlmAgent ROOT_AGENT =
+  public static final BaseAgent ROOT_AGENT =
       LlmAgent.builder()
           // Keep in sync with agents-cli-manifest.yaml: agents-cli derives this name
           // from the project `name:` recorded there, and telemetry reports it as
@@ -84,6 +84,8 @@ public class Agent {
    * @param city The city to get weather for
    * @return A map containing the weather status and report
    */
+  // The method-level @Schema description is the tool description the model and agent card see.
+  @Schema(description = "Get the current weather for a city.")
   public static Map<String, String> getWeather(
       @Schema(name = "city", description = "The city to get weather for")
       String city) {

@@ -14,8 +14,10 @@
 
 """One-shot agent-graph runner — drop-in for `agents-cli run`.
 
-Invokes the compiled graph in-process (no server, no ports). For remote
-queries against a deployed service, bypass the override:
+Invokes the compiled graph in-process (no server, no ports) and prints the turn
+the way the built-in prints an ADK agent's: the prompt, then each tool call and
+tool response, then the reply. For remote queries against a deployed service,
+bypass the override:
 
     AGENTS_CLI_DISABLE_OVERRIDES=1 agents-cli run --url https://... --mode a2a "hi"
 """
@@ -23,7 +25,10 @@ queries against a deployed service, bypass the override:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+from collections.abc import Sequence
+from typing import Any
 
 from _content import content_to_text
 
@@ -55,8 +60,84 @@ def main() -> int:
         agent = agent.copy(update={"store": InMemoryStore()})
 
     result = agent.invoke({"messages": [{"role": "user", "content": args.message}]})
-    print(content_to_text(result["messages"][-1].content))
+    name = getattr(root_agent, "name", None) or "agent"
+    print(_render_turn(args.message, result["messages"], name))
     return 0
+
+
+def _render_turn(prompt: str, messages: Sequence[object], agent_name: str) -> str:
+    """The turn as `agents-cli run` prints an ADK agent's.
+
+    Tool lines use the built-in's `[tool_call: name({...})]` and
+    `[tool_response: name -> {...}]` shapes, so scripts that read `run` output
+    handle both kinds of project the same way.
+    """
+    lines = [f"[user]: {prompt}"]
+    body: list[str] = []
+    # A ToolMessage can come back without a name; its call id still says which tool.
+    names_by_call_id: dict[str, str] = {}
+    for message in messages:
+        kind = _kind(message)
+        if kind in ("human", "system"):
+            continue
+        if kind == "tool":
+            call_id = _field(message, "tool_call_id") or ""
+            tool = _field(message, "name") or names_by_call_id.get(call_id, "tool")
+            response = _tool_response(_field(message, "content"))
+            body.append(f"[tool_response: {tool} -> {json.dumps(response)}]")
+            continue
+        text = content_to_text(_field(message, "content")).strip()
+        if text:
+            body.append(text)
+        for call in _field(message, "tool_calls") or []:
+            tool = call.get("name", "")
+            if call.get("id"):
+                names_by_call_id[call["id"]] = tool
+            body.append(f"[tool_call: {tool}({json.dumps(call.get('args') or {})})]")
+    if not body:
+        return "\n".join([*lines, "(no response content)"])
+    # Like the built-in: a reply that starts with text shares the tag's line.
+    tag = f"[{agent_name}]: "
+    if body[0].startswith("[tool_"):
+        lines.append(tag)
+    else:
+        body[0] = tag + body[0]
+    return "\n".join([*lines, *body])
+
+
+def _kind(message: object) -> str | None:
+    """A message's `type`, or a dict message's role in LangChain's terms.
+
+    LangGraph state can hold OpenAI-style dicts, which say `user` and
+    `assistant` where LangChain messages say `human` and `ai`.
+    """
+    role = _field(message, "role")
+    roles = {"user": "human", "assistant": "ai"}
+    return _field(message, "type") or roles.get(role, role)
+
+
+def _field(message: object, key: str) -> Any:
+    """A message attribute; LangGraph state can also hold plain dicts.
+
+    `Any`: the override reads messages without importing langchain_core's types.
+    """
+    if isinstance(message, dict):
+        return message.get(key)
+    return getattr(message, key, None)
+
+
+def _tool_response(content: object) -> object:
+    """A tool's output as the built-in shows it: a JSON object.
+
+    Tools return strings to LangChain; one holding JSON is shown parsed. ADK
+    wraps a non-dict return value in {"result": ...}, and so does this.
+    """
+    text = content_to_text(content)
+    try:
+        value = json.loads(text)
+    except ValueError:
+        value = text
+    return value if isinstance(value, dict) else {"result": value}
 
 
 if __name__ == "__main__":

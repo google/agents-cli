@@ -64,6 +64,6 @@ ENV NODE_EXTRA_CA_CERTS=${AGENT_GATEWAY_ROOT_CERTIFICATES:+/usr/local/share/ca-c
 
 EXPOSE 8080
 
-# Serve dist/ so the app is named after its {{cookiecutter.app_name}}/ folder. It
-# binds to localhost by default, which is unreachable from outside the container.
-CMD ["npx", "@google/adk-devtools", "api_server", "dist", "--host", "0.0.0.0", "--port", "8080"]
+# server.js binds to localhost by default, which is unreachable from outside the container.
+ENV HOST=0.0.0.0
+CMD ["node", "dist/{{cookiecutter.app_name}}/server.js"]

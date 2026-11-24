@@ -21,6 +21,7 @@ import time
 
 import requests
 
+from google.agents.cli._defaults import DEFAULT_MODEL
 from google.agents.cli._output import Console
 from google.agents.cli.auth import GCLOUD_LOGIN
 
@@ -146,7 +147,8 @@ def _test_vertex_connection(
 
     try:
         response = requests.post(
-            f"https://us-east1-aiplatform.googleapis.com/v1beta1/projects/{project}/locations/global/publishers/google/models/gemini-2.5-flash:countTokens",
+            # Location "global" is served only by the bare host; regional hosts 404.
+            f"https://{_AIPLATFORM_SERVICE}/v1beta1/projects/{project}/locations/global/publishers/google/models/{DEFAULT_MODEL}:countTokens",
             headers={
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",

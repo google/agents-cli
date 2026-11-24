@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Argv handling for the `run` override, which replaces the built-in's parser."""
+"""Argv handling and output of the `run` override, which replaces the built-in."""
 
 from __future__ import annotations
 
@@ -90,3 +90,113 @@ class TestArgv:
     ):
         assert _run(mod, argv, monkeypatch) == 2
         assert "AGENTS_CLI_DISABLE_OVERRIDES=1" in capsys.readouterr().err
+
+
+def _message(kind: str, content: object = "", **fields) -> types.SimpleNamespace:
+    """A stand-in for a LangChain message: the attributes the override reads."""
+    return types.SimpleNamespace(type=kind, content=content, **fields)
+
+
+@pytest.fixture
+def replies(monkeypatch):
+    """Make the stub graph return the given messages after the user's."""
+
+    def set_messages(messages, name="office_hours"):
+        def invoke(state):
+            prompt = state["messages"][-1]["content"]
+            return {"messages": [_message("human", prompt), *messages]}
+
+        agent = types.ModuleType("app.agent")
+        agent.root_agent = types.SimpleNamespace(invoke=invoke, name=name)
+        monkeypatch.setitem(sys.modules, "app", types.ModuleType("app"))
+        monkeypatch.setitem(sys.modules, "app.agent", agent)
+
+    return set_messages
+
+
+class TestOutput:
+    """`run` prints the turn in the built-in's ADK shape, tool calls included."""
+
+    def test_prints_tool_calls_and_responses_before_the_reply(
+        self, mod, replies, monkeypatch, capsys
+    ):
+        call = {"name": "get_hours", "args": {"date": "2026-11-18"}, "id": "c1"}
+        replies(
+            [
+                _message("ai", "", tool_calls=[call]),
+                _message(
+                    "tool", '{"is_open": true}', name="get_hours", tool_call_id="c1"
+                ),
+                _message("ai", [{"type": "text", "text": "Open, 8:30 to 17:30."}]),
+            ]
+        )
+        assert _run(mod, ["Are we open?"], monkeypatch) == 0
+        assert capsys.readouterr().out.splitlines() == [
+            "[user]: Are we open?",
+            "[office_hours]: ",
+            '[tool_call: get_hours({"date": "2026-11-18"})]',
+            '[tool_response: get_hours -> {"is_open": true}]',
+            "Open, 8:30 to 17:30.",
+        ]
+
+    def test_a_reply_without_tools_shares_the_tag_line(
+        self, mod, replies, monkeypatch, capsys
+    ):
+        replies([_message("ai", "Hello.")], name="")
+        assert _run(mod, ["hi"], monkeypatch) == 0
+        assert capsys.readouterr().out.splitlines() == [
+            "[user]: hi",
+            "[agent]: Hello.",
+        ]
+
+    @pytest.mark.parametrize(
+        ("content", "shown"),
+        [
+            ("It's 60 degrees.", '{"result": "It\'s 60 degrees."}'),
+            ("[1, 2]", '{"result": [1, 2]}'),
+        ],
+    )
+    def test_a_tool_output_that_is_not_an_object_is_wrapped(
+        self, mod, replies, monkeypatch, capsys, *, content, shown
+    ):
+        call = {"name": "get_weather", "args": {"query": "sf"}, "id": "c1"}
+        # No name on the ToolMessage: the call id says which tool answered.
+        replies(
+            [
+                _message("ai", "", tool_calls=[call]),
+                _message("tool", content, tool_call_id="c1"),
+                _message("ai", "Foggy."),
+            ]
+        )
+        assert _run(mod, ["weather in sf?"], monkeypatch) == 0
+        assert f"[tool_response: get_weather -> {shown}]" in capsys.readouterr().out
+
+    def test_says_so_when_the_agent_returns_nothing(
+        self, mod, replies, monkeypatch, capsys
+    ):
+        replies([_message("ai", "")])
+        assert _run(mod, ["hi"], monkeypatch) == 0
+        assert capsys.readouterr().out.splitlines() == [
+            "[user]: hi",
+            "(no response content)",
+        ]
+
+    def test_reads_dict_messages_by_role(self, mod, monkeypatch, capsys):
+        # LangGraph state can hold OpenAI-style dicts; the prompt must not echo as the reply.
+        def invoke(state):
+            return {
+                "messages": [
+                    *state["messages"],
+                    {"role": "assistant", "content": "Hello."},
+                ]
+            }
+
+        agent = types.ModuleType("app.agent")
+        agent.root_agent = types.SimpleNamespace(invoke=invoke, name="office_hours")
+        monkeypatch.setitem(sys.modules, "app", types.ModuleType("app"))
+        monkeypatch.setitem(sys.modules, "app.agent", agent)
+        assert _run(mod, ["hi"], monkeypatch) == 0
+        assert capsys.readouterr().out.splitlines() == [
+            "[user]: hi",
+            "[office_hours]: Hello.",
+        ]

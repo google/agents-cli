@@ -12,7 +12,7 @@ description: >
 metadata:
   author: Google
   license: Apache-2.0
-  version: 1.15.0
+  version: 1.16.0
   requires:
     bins:
       - agents-cli
@@ -46,7 +46,7 @@ Improving agent quality is iterative. The 4 stages below describe the loop. Each
 
 ### 1. Prepare Data
 
-**Default:** Use or edit the scaffolded `tests/eval/datasets/basic-dataset.json` to define single-turn eval inputs. Start with 1–2 cases.
+**Default:** Use or edit the scaffolded `tests/eval/datasets/basic-dataset.json` to define single-turn eval inputs. Start with 1–2 cases. Its cases test the scaffolded sample agent; replace them when you replace it.
 
 **Opt-in (ADK projects):** `agents-cli eval dataset synthesize`: user-simulate multi-turn datasets when you lack data; its output already includes traces, so Stage 2 collapses to `agents-cli eval grade` alone. See *Eval Commands* and `references/user-simulation.md`.
 
@@ -176,7 +176,7 @@ Live agents run over a WebSocket, not `/run_sse`: add `--mode adk_live` to `gene
 
 ### `eval grade`
 
-Scores traces (from `eval generate`, `eval dataset synthesize`, or hand-authored) against built-in or custom metrics. Writes timestamped `results_<YYYYMMDD_HHMMSS>.json` (consumed by `eval compare`) and `.html` (open in a browser) into the output dir, and prints a summary table to the console. The output ends with a `RESULT: PASS|FAIL (...)` line; the command exits 1 when a metric's mean score is below its threshold (`thresholds` in the config, or `--fail-under`) or any case errored, so CI can gate on the exit code.
+Scores traces (from `eval generate`, `eval dataset synthesize`, or hand-authored) against built-in or custom metrics. Writes timestamped `results_<YYYYMMDD_HHMMSS>.json` (consumed by `eval compare`) and `.html` (open in a browser) into the output dir, and prints a summary table to the console. The output ends with a `RESULT: PASS|FAIL (...)` line, or `RESULT: NOT GATED` when no thresholds are set; the command exits 1 when a metric's mean score is below its threshold (`thresholds` in the config, or `--fail-under`) or any case errored, so CI can gate on the exit code.
 
 ```bash
 # Basic — defaults: traces from artifacts/traces/, results to artifacts/grade_results/,

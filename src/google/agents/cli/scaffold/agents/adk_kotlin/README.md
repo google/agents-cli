@@ -8,10 +8,14 @@ A Kotlin agent built with Google's Agent Development Kit (ADK).
 {{cookiecutter.project_name}}/
 ├── build.gradle.kts         # Gradle build file
 ├── settings.gradle.kts      # Gradle project settings
+├── gradlew, gradlew.bat     # Gradle wrapper: runs the pinned Gradle version
+├── gradle/wrapper/          # Gradle wrapper version and launcher
 ├── src/main/kotlin/{{cookiecutter.java_package_path}}/
 │   ├── Agent.kt             # Agent implementation
-│   └── Main.kt              # ADK API server (development UI with --dev)
+│   ├── A2aServer.kt         # A2A agent card and endpoint
+│   └── Main.kt              # ADK API and A2A server (development UI with --dev)
 ├── src/test/kotlin/{{cookiecutter.java_package_path}}/
+│   ├── A2aServerTest.kt     # A2A agent card test
 │   └── AgentTest.kt         # Unit tests
 ├── eval/                    # Eval dataset and config (`agents-cli eval run`)
 ├── deployment/
@@ -26,7 +30,7 @@ A Kotlin agent built with Google's Agent Development Kit (ADK).
 ## Requirements
 
 - Java 17 or later
-- Gradle 9.5 or later
+- No Gradle install needed: `./gradlew` downloads the version the project pins
 - Google Cloud SDK (`gcloud`)
 - A Google Cloud project with Gemini platform enabled
 
@@ -55,7 +59,7 @@ A Kotlin agent built with Google's Agent Development Kit (ADK).
 |---------|-------------|
 | `make install` | Download Gradle dependencies |
 | `make playground` | Launch local development environment with web UI |
-| `make local-backend` | Start the ADK API server on port 8080 |
+| `make local-backend` | Start the ADK API and A2A server on port 8080 |
 | `make test` | Run tests |
 | `make lint` | Run code quality checks using ktlint |
 | `make build` | Build the application |
@@ -63,7 +67,9 @@ A Kotlin agent built with Google's Agent Development Kit (ADK).
 {%- if cookiecutter.deployment_target == 'cloud_run' %}
 | `make deploy` | Deploy to Cloud Run |
 {%- endif %}
+{%- if cookiecutter.deployment_target != 'none' %}
 | `make setup-dev-env` | Set up Terraform infrastructure |
+{%- endif %}
 
 ## Deployment
 {%- if cookiecutter.deployment_target == 'cloud_run' %}
@@ -73,6 +79,9 @@ A Kotlin agent built with Google's Agent Development Kit (ADK).
 ```bash
 make deploy
 ```
+{%- else %}
+
+This project has no deployment target. Add one with `agents-cli scaffold enhance --deployment-target <target>`.
 {%- endif %}
 
 ### CI/CD Pipeline

@@ -39,14 +39,14 @@ make load-test DURATION=60 USERS=20 RAMP=5
 You can also run the load test directly with Gradle:
 
 ```bash
-gradle loadTest \
+./gradlew loadTest \
   -Pstaging.url=http://127.0.0.1:8080 \
   -Pload.duration=30 \
   -Pload.users=10 \
   -Pload.ramp=2
 ```
 
-**Note:** The `loadTest` task runs only the load tests; `gradle test` skips them.
+**Note:** The `loadTest` task runs only the load tests; `./gradlew test` skips them.
 
 ## Remote Load Testing (Targeting Cloud Run)
 

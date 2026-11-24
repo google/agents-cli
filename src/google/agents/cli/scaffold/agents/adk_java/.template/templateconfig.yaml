@@ -13,12 +13,11 @@
 # limitations under the License.
 
 description: "Java agent with A2A"
-hidden: true
 example_question: "What's the weather in San Francisco?"
 settings:
   language: "java"
   requires_session: false
-  deployment_targets: ["cloud_run", "gke", "none"]
+  deployment_targets: ["cloud_run", "none"]
   extra_dependencies: []
   tags: ["adk", "java", "a2a"]
   frontend_type: "None"

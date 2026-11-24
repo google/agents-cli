@@ -35,9 +35,7 @@ if TYPE_CHECKING:
     from google.agents.cli.extension._loader import ResolvedCommand
 
 # A pinned tag re-resolves to itself, so a plain `extension update` can't fix this.
-_TO_COMPATIBLE_REF = (
-    f"--to <tag or version> ({LATEST} for a first-party or pypi@ extension)"
-)
+_TO_COMPATIBLE_REF = f"--to <tag or version> (or {LATEST} for the newest release)"
 
 
 def installed_override(dotted: str) -> ResolvedCommand | None:
@@ -71,9 +69,7 @@ def run_override(
     resolved: ResolvedCommand, argv: list[str], *, display_path: str
 ) -> None:
     """Run a resolved override's vector, exiting with its code on failure."""
-    warn_if_installed_from_agents_cli_repo(
-        resolved.extension_name, resolved.source, resolved.scope
-    )
+    warn_if_installed_from_agents_cli_repo(resolved.extension_name, resolved.source)
     if resolved.contribution.kind == "override":
         click.echo(
             f"running {display_path!r} via extension {resolved.extension_name!r} ({resolved.scope} scope)",
@@ -196,7 +192,7 @@ def make_override_command(
     )
     @click.argument("extra_args", nargs=-1, type=click.UNPROCESSED)
     def _cmd(extra_args: tuple[str, ...]) -> None:
-        warn_if_installed_from_agents_cli_repo(extension_name, source, scope)
+        warn_if_installed_from_agents_cli_repo(extension_name, source)
         if contribution.kind == "override":
             click.echo(
                 f"running {display_path!r} via extension {extension_name!r} ({scope} scope)",

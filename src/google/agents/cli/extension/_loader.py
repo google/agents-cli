@@ -166,6 +166,20 @@ def _load_yaml(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def is_inline_extension(root: Path, name: str) -> bool:
+    """Whether `root/agents-cli-extension.yaml` declares extension `name`."""
+    return inline_extension_name(root) == name
+
+
+def inline_extension_name(root: Path) -> str | None:
+    """Name from `root/agents-cli-extension.yaml`, or None if absent or invalid."""
+    try:
+        spec = load_extension_spec(root)
+    except ExtensionSpecError:
+        return None
+    return spec.name if spec else None
+
+
 def load_extension_spec(root: Path) -> ExtensionSpec | None:
     """Parse an extension's manifest.
 
@@ -176,11 +190,11 @@ def load_extension_spec(root: Path) -> ExtensionSpec | None:
     success for an extension that contributes nothing.
     """
     path = root / EXTENSION_FILE
-    if not path.exists():
-        return None
     try:
         with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
+    except FileNotFoundError:
+        return None
     except (OSError, RecursionError, UnicodeDecodeError, yaml.YAMLError) as e:
         # Unreadable, undecodable and unparseable are all as fatal as each other
         # for `add`, and all as skippable for the load path, so they have to
@@ -340,6 +354,8 @@ def _scope_specs(
             logging.warning("%s: %s; ignoring this extension.", extension_dir, e)
             continue
         if spec is None:
+            if inline is not None and name == inline.name:
+                continue
             logging.warning(
                 "Extension %r is recorded in %s but not vendored at %s; "
                 "run `agents-cli install`.",

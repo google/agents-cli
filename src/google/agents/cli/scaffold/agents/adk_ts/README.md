@@ -66,7 +66,7 @@ GOOGLE_CLOUD_LOCATION=global
 ```bash
 make install && make playground
 ```
-> **📊 Observability Note:** Agent telemetry (Cloud Trace) is always enabled. Prompt-response logging (GCS, BigQuery, Cloud Logging) is **disabled** locally, **enabled by default** in deployed environments (metadata only - no prompts/responses). See [Monitoring and Observability](#monitoring-and-observability) for details.
+> **📊 Observability Note:** ADK TypeScript agents don't export traces or prompt-response logs to Google Cloud yet. See [Monitoring and Observability](#monitoring-and-observability) for details.
 
 ## Commands
 
@@ -74,14 +74,20 @@ make install && make playground
 | -------------------- | ------------------------------------------------------------------------------------------- |
 | `make install`       | Install all required dependencies using npm                                                 |
 | `make playground`    | Launch local development environment with backend and frontend - leveraging ADK devtools   |
+{%- if cookiecutter.deployment_target == 'cloud_run' %}
 | `make deploy`        | Deploy agent to Cloud Run (use `IAP=true` to enable Identity-Aware Proxy, `PORT=8080` to specify container port) |
+{%- elif cookiecutter.deployment_target == 'gke' %}
+| `make deploy`        | Deploy agent to GKE                                                                         |
+{%- endif %}
 | `make local-backend` | Launch local development server                                                             |
 | `make test`          | Run unit and integration tests using vitest                                                 |
 | `make lint`          | Run code quality checks using eslint                                                        |
 | `make build`         | Build TypeScript to JavaScript                                                              |
 | `make typecheck`     | Run TypeScript type checking                                                                |
 | `make clean`         | Remove build artifacts (dist, node_modules)                                                 |
+{%- if cookiecutter.deployment_target != 'none' %}
 | `make setup-dev-env` | Set up development environment resources using Terraform                                    |
+{%- endif %}
 
 For full command options and usage, refer to the [Makefile](Makefile).
 
@@ -93,7 +99,7 @@ This template follows a "bring your own agent" approach - you focus on your busi
 2. **Integrate:** Import your agent into the app by editing `{{cookiecutter.agent_directory}}/agent.ts`. Add tools using `FunctionTool` with Zod schemas for parameter validation.
 3. **Test:** Explore your agent functionality using the local playground with `make playground`. The playground automatically reloads your agent on code changes.
 4. **Deploy:** Set up and initiate the CI/CD pipelines, customizing tests as necessary. Refer to the [deployment section](#deployment) for comprehensive instructions. For streamlined infrastructure deployment, simply run `uvx google-agents-cli infra cicd`. Currently supports GitHub with both Google Cloud Build and GitHub Actions as CI/CD runners.
-5. **Monitor:** Track performance and gather insights using BigQuery telemetry data, Cloud Logging, and Cloud Trace to iterate on your application.
+5. **Monitor:** Follow your deployed agent's logs in Cloud Logging to iterate on your application.
 
 The project includes a `GEMINI.md` file that provides context for AI tools like Antigravity CLI when asking questions about your template.
 
@@ -103,6 +109,7 @@ The project includes a `GEMINI.md` file that provides context for AI tools like 
 > **Note:** For a streamlined one-command deployment of the entire CI/CD pipeline and infrastructure using Terraform, you can use the `agents-cli infra cicd` CLI command. Currently supports GitHub with both Google Cloud Build and GitHub Actions as CI/CD runners.
 
 ### Dev Environment
+{%- if cookiecutter.deployment_target in ('cloud_run', 'gke') %}
 
 You can test deployment towards a Dev Environment using the following command:
 
@@ -110,6 +117,10 @@ You can test deployment towards a Dev Environment using the following command:
 gcloud config set project <your-dev-project-id>
 make deploy
 ```
+{%- else %}
+
+This project has no deployment target. Add one with `agents-cli scaffold enhance --deployment-target <target>`.
+{%- endif %}
 
 
 The repository includes a Terraform configuration for the setup of the Dev Google Cloud project.
@@ -120,23 +131,9 @@ The repository includes a Terraform configuration for the setup of a production 
 
 ## Monitoring and Observability
 
-The application provides two levels of observability:
+A deployed agent's output goes to **Cloud Logging**.
 
-**1. Agent Telemetry Events (Always Enabled)**
-- OpenTelemetry traces and spans exported to **Cloud Trace**
-- Tracks agent execution, latency, and system metrics
+Not available for ADK TypeScript agents yet:
 
-**2. Prompt-Response Logging (Configurable)**
-- GenAI instrumentation captures LLM interactions (tokens, model, timing)
-- Exported to **Google Cloud Storage** (JSONL), **BigQuery** (external tables), and **Cloud Logging** (dedicated bucket)
-
-| Environment | Prompt-Response Logging |
-|-------------|-------------------------|
-| **Local Development** (`make playground`) | ❌ Disabled by default |
-| **Deployed Environments** (via Terraform) | ✅ **Enabled by default** (privacy-preserving: metadata only, no prompts/responses) |
-
-**To enable locally:** Set `LOGS_BUCKET_NAME` and `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=NO_CONTENT`.
-
-**To disable in deployments:** Edit Terraform config to set `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=false`.
-
-Refer to the Cloud Trace and BigQuery documentation for detailed instructions, example queries, and visualization options.
+- **Traces in Cloud Trace.** `agents-cli run` and `agents-cli playground` ignore `--otel-to-cloud`.
+- **Prompt-response logging** to Google Cloud Storage, BigQuery and Cloud Logging.

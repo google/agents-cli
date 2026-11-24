@@ -43,9 +43,16 @@ describe('Server E2E', () => {
 
   beforeAll(async () => {
     // Serve the compiled dist/ as the container does (`npm test` builds it first).
-    serverProcess = spawn('npx', ['@google/adk-devtools', 'api_server', 'dist', '--host', '127.0.0.1', '--port', '8080'], {
+    serverProcess = spawn('node', ['dist/{{cookiecutter.app_name}}/server.js'], {
       cwd: rootDir,
-      env: { ...process.env, ...dotenvVars },
+      env: {
+        ...process.env,
+        ...dotenvVars,
+        HOST: '127.0.0.1',
+        PORT: '8080',
+        // Stands in for the public URL deploys set; the server binds 127.0.0.1.
+        APP_URL: 'http://localhost:8080',
+      },
       stdio: 'pipe',
     });
 
@@ -80,6 +87,29 @@ describe('Server E2E', () => {
     expect(response.ok).toBe(true);
   });
 
+  it('should serve the A2A agent card', async () => {
+    const response = await fetch(
+      `${baseUrl}/a2a/{{cookiecutter.app_name}}/.well-known/agent-card.json`
+    );
+    expect(response.ok).toBe(true);
+    const card = await response.json();
+    expect(card.name).toBe('{{cookiecutter.root_agent_name}}');
+    // The card advertises APP_URL, not the bind address, so callers can reach it.
+    expect(card.url).toBe('http://localhost:8080/a2a/{{cookiecutter.app_name}}/jsonrpc');
+    for (const transport of card.additionalInterfaces) {
+      expect(transport.url.startsWith('http://localhost:8080/')).toBe(true);
+    }
+  });
+
+  it('should serve app info', async () => {
+    const response = await fetch(`${baseUrl}/apps/{{cookiecutter.app_name}}/app-info`);
+    expect(response.ok).toBe(true);
+    const appInfo = await response.json();
+    expect(appInfo.rootAgentName).toBe('{{cookiecutter.root_agent_name}}');
+    // Lists the LLM agents only; a Workflow root gets 400, as in ADK Python.
+    expect(Object.keys(appInfo.agents).length).toBeGreaterThan(0);
+  });
+
   it('should run agent via /run endpoint', async () => {
     const response = await fetch(`${baseUrl}/run`, {
       method: 'POST',
@@ -101,4 +131,12 @@ describe('Server E2E', () => {
     const events = await response.json();
     expect(events.length).toBeGreaterThan(0);
   }, 30000);
+
+  // Last: it stops the server. Cloud Run and GKE send SIGTERM before SIGKILL.
+  it('should exit promptly on SIGTERM', async () => {
+    const exited = new Promise<number | null>((done) => serverProcess.once('exit', done));
+    serverProcess.kill('SIGTERM');
+    const timeout = new Promise<string>((done) => setTimeout(() => done('timeout'), 5000));
+    expect(await Promise.race([exited, timeout])).toBe(0);
+  }, 10000);
 });

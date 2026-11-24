@@ -27,11 +27,9 @@ import os
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 
-from dotenv import dotenv_values
-
 from google.agents.cli._auth_hints import with_auth_hint
 from google.agents.cli._defaults import GCP_PROJECT_PLACEHOLDER
-from google.agents.cli._project import find_nearest_dotenv
+from google.agents.cli._project import read_nearest_dotenv
 from google.agents.cli.auth import GCLOUD_LOGIN
 
 # google-genai uses ENTERPRISE whenever it's set, ignoring VERTEXAI, and reads
@@ -59,7 +57,7 @@ def warn_if_model_auth_broken(agent_dir: Path) -> None:
     Gemini platform settings but calls another model still runs. Checks nothing
     for the Gemini API (API key) backend.
     """
-    env = {**_read_nearest_dotenv(agent_dir), **os.environ}
+    env = {**read_nearest_dotenv(agent_dir), **os.environ}
     if not uses_gemini_platform(env):
         return
     if env.get("GOOGLE_CLOUD_PROJECT") == GCP_PROJECT_PLACEHOLDER:
@@ -106,17 +104,6 @@ def uses_gemini_platform(env: Mapping[str, str]) -> bool:
         if flag in env:
             return env[flag].strip().lower() in _TRUE_VALUES
     return False
-
-
-def _read_nearest_dotenv(agent_dir: Path) -> dict[str, str]:
-    dotenv_path = find_nearest_dotenv(agent_dir)
-    if dotenv_path is None:
-        return {}
-    return {
-        key: value
-        for key, value in dotenv_values(dotenv_path, encoding="utf-8").items()
-        if value is not None
-    }
 
 
 def _warn_if_no_adc_token() -> None:

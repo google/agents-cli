@@ -28,7 +28,12 @@ from google.agents.cli.eval.cmd_generate import (
     _DEFAULT_CONCURRENCY,
     cmd_generate,
 )
-from google.agents.cli.eval.cmd_grade import cmd_grade, fail_under_option, qps_option
+from google.agents.cli.eval.cmd_grade import (
+    cmd_grade,
+    fail_under_option,
+    prepare_grade_metrics,
+    qps_option,
+)
 
 
 @click.command("run")
@@ -170,6 +175,12 @@ def cmd_run(
         raise click.ClickException(
             "Not inside an agents-cli project (no manifest found)."
         )
+    prepared_metrics = prepare_grade_metrics(
+        project_root=project_root,
+        config_path=config_path,
+        metrics_str=metrics_str,
+        console=console,
+    )
     traces_file = str(_paths.default_traces_path(project_root))
 
     console.rule("[bold]Step 1/2: eval generate[/bold]")
@@ -229,4 +240,5 @@ def cmd_run(
         region=region,
         qps=qps,
         fail_under=fail_under,
+        prepared_metrics=prepared_metrics,
     )

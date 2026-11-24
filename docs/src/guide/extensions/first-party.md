@@ -101,12 +101,13 @@ The Claude template runs a [Claude Agent SDK](https://pypi.org/project/claude-ag
     Garden.
 
     On Agent Runtime the container serves A2A and traces normally. It also serves Agent
-    Runtime's `:query` and `:streamQuery` methods, so `agents-cli run --mode adk` works and
-    an ingress Agent Gateway can govern the agent. The `publish gemini` command is refused, the Console
-    playground cannot invoke the agent, and the Console's session and trace views stay
-    empty. Traces still reach Cloud Trace. Agent Runtime's managed sessions are ADK-only
-    and Cloud SQL isn't set up there automatically, so transcripts stay on the instance
-    unless you set it up by hand (see Notes).
+    Runtime's `:query` and `:streamQuery` methods, so `agents-cli run --mode adk`, the
+    Console playground, and an ingress Agent Gateway work. Choose the session backend
+    with `--session-type` (`agent_platform_sessions`, `cloud_sql`, or `in_memory`):
+    with `agent_platform_sessions`, conversations live in the engine's Agent Platform
+    Sessions and appear in the Console; `cloud_sql` needs manual network setup (see
+    Notes). The `publish gemini` command is refused, and the Console's trace view stays
+    empty; traces still reach Cloud Trace.
 
 ### Scaffold an existing agent
 
@@ -178,6 +179,6 @@ agents-cli deploy                                            # native Cloud Run 
 ### Notes
 
 - **Credentials:** `run` and `eval` call Claude on Gemini platform, so they need ADC and a project with the model enabled. The deployed agent needs `roles/aiplatform.user`. New projects, on Cloud Run and Agent Runtime, run the agent with Agent Identity, and `deploy` grants it. A Cloud Run project created with `--cloud-run-identity-default service_account` (or before Agent Identity became the default) deploys either as the service account passed via `--service-account`, or as the default compute account, so run `agents-cli infra single-project --apply` and deploy with `--service-account <name>-app@<project>.iam.gserviceaccount.com`. `.env` sets `GOOGLE_CLOUD_PROJECT`, and `agents-cli deploy` forwards it to the service (Agent Runtime sets it itself).
-- **Sessions:** with the default `in_memory` session type, transcripts live on the instance, so a conversation that reaches another instance, or outlives a restart, starts fresh. `--session-type cloud_sql` keeps them in Cloud SQL on Cloud Run. On Agent Runtime, `--session-type` doesn't apply: Cloud SQL works there with manual network and database setup (see the project's `.agents/skills/agents-cli-claude/references/claude.md`). Without it, the default shape scales to zero (`--min-instances 0`), so an idle conversation is lost; deploy with `--min-instances 1` to keep a single instance warm.
+- **Sessions:** `--session-type` selects `agent_platform_sessions`, `cloud_sql`, or `in_memory` (rendered into `app/app_utils/settings.py` and overridable by `SESSION_TYPE` in the environment). With `agent_platform_sessions`, sessions live in Agent Platform Sessions (the agent's own engine on Agent Runtime, or a named engine on Cloud Run) so conversations survive restarts and move across instances. `--session-type cloud_sql` provisions Cloud SQL on Cloud Run; on Agent Runtime, Cloud SQL requires manual network and database setup (see the project's `.agents/skills/agents-cli-claude/references/claude.md`). With `in_memory`, transcripts stay on the instance, so deploy with `--min-instances 1` to keep one instance warm.
 - **Sizing:** a tool-using turn takes about 270 MiB, so the default shape (4 GiB, concurrency 8) fits; file-heavy agents need more memory per concurrent session.
 - **Telemetry:** the OpenInference Claude Agent SDK instrumentor records an `invoke_agent` span per turn (model, token usage, cost) and an `execute_tool` span per tool call in Cloud Trace, with `gen_ai.*` attributes. The Claude Code CLI's own spans (each model request, each tool step) are relayed to Cloud Trace through a localhost forwarder and nest under the turn span in the same trace. Message content and tool arguments are redacted unless `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` enables capture. As with ADK agents, every request starts its own trace, so a call to another agent through `remote_agent` shows up as two traces, the caller's and the callee's; `gen_ai.conversation.id` links each side's turns. Python log records go to Cloud Logging (the `adk-otel` log, or `reasoning_engine_stdout` on Agent Runtime, as with ADK agents) with their severity and the turn's trace, and ADK's agent metrics (`gen_ai.invoke_agent.duration`, `gen_ai.execute_tool.duration`, `gen_ai.invoke_agent.inference_calls`, `gen_ai.invoke_agent.tool_calls`) plus `gen_ai.client.token.usage` go to Cloud Monitoring. With `--bq-analytics`, each turn's events also go to BigQuery Agent Analytics: the `agent_events` table and views ADK's plugin writes, so its SDK and dashboards work for Claude agents too.

@@ -437,7 +437,7 @@ continuously in **50–100 ms** chunks rather than waiting for replies;
 | `realtime_input_config` | Turn-taking / VAD (below). |
 | `proactivity` / `enable_affective_dialog` | Legacy models only; both error on 3.8 (below). |
 | `session_resumption` / `context_window_compression` | See "Session lifetime and limits". |
-| `save_live_blob` | Persist audio/video artifacts for debugging or compliance (default `False`). |
+| `save_live_blob` | Saves the user's and the model's audio as artifacts, for debugging or compliance. Only ADK Python 2.14 or higher saves the image frames the user sends, such as camera or screen-share frames. |
 
 Full options: [Configuration](https://adk.dev/live/configuration/index.md).
 

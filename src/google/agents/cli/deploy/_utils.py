@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import itertools
 import logging
 import re
 import shlex
@@ -87,27 +88,38 @@ class MachineShape:
         )
 
 
+# gcloud flags whose value is a comma-joined KEY=VALUE list.
+_GCLOUD_KEY_VALUE_FLAGS = frozenset(
+    f"--{action}-{name}"
+    for action in ("set", "update")
+    for name in ("env-vars", "secrets", "labels")
+)
+
+
 def redact_command(args: list[str]) -> str:
     """``shlex.join(args)`` with every env-var VALUE masked for display.
 
     Any ``KEY=VALUE`` segment is shown as ``KEY=***``, so values propagated from
     the project ``.env`` (which may include secrets) never reach the terminal or
-    CI logs — only the key names are visible. Handles both a single comma-joined
-    ``--update-env-vars`` argument (``K1=V1,K2=V2``) and individual ``KEY=VALUE``
-    args. Only the printed form is masked; the caller executes the real command
-    unredacted.
+    CI logs — only the key names are visible. The value of a gcloud key-value
+    flag (``--update-secrets K1=V1,K2=V2``) is split on commas, so every key
+    stays visible. Any other ``KEY=VALUE`` arg (``kubectl set env`` takes one
+    per variable) is masked from its first ``=``, so a value holding a comma is
+    hidden whole. Only the printed form is masked; the caller executes the real
+    command unredacted.
     """
 
-    def _redact(arg: str) -> str:
-        if "=" not in arg:
-            return arg
-        segments = []
-        for seg in arg.split(","):
-            key, sep, _value = seg.partition("=")
-            segments.append(f"{key}=***" if sep else seg)
-        return ",".join(segments)
+    def _mask(pair: str) -> str:
+        key, sep, _value = pair.partition("=")
+        return f"{key}=***" if sep else pair
 
-    return shlex.join(_redact(str(a)) for a in args)
+    parts = [str(a) for a in args]
+    return shlex.join(
+        ",".join(_mask(pair) for pair in part.split(","))
+        if previous in _GCLOUD_KEY_VALUE_FLAGS
+        else _mask(part)
+        for previous, part in itertools.pairwise(["", *parts])
+    )
 
 
 def resolve_service_name(cfg: ProjectConfig, override: str | None) -> str:

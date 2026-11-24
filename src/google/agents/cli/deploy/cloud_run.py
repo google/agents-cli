@@ -14,16 +14,21 @@
 
 """Cloud Run deployment for ``agents-cli deploy``."""
 
+import contextlib
 import json
 import logging
+import re
 import subprocess
 import sys
-from collections.abc import Mapping
+import tempfile
+from collections.abc import Iterator, Mapping
 from dataclasses import replace
+from pathlib import Path
 
 import backoff
 import click
 import requests
+import yaml
 
 from google.agents.cli import _tools
 from google.agents.cli._gcp_project import (
@@ -57,6 +62,16 @@ from google.agents.cli.deploy._utils import (
     secret_resource_name,
 )
 from google.agents.cli.scaffold.utils.language import get_project_version
+
+# gcloud names the org policy constraint a rejected deploy violated.
+_CONSTRAINT_RE = re.compile(r"constraints/([\w.]+)")
+_INTERNAL_INGRESS = ("internal", "internal-and-cloud-load-balancing")
+# The Admin API's ingress values, as `--ingress` spells them.
+_INGRESS_FROM_API = {
+    "INGRESS_TRAFFIC_ALL": "all",
+    "INGRESS_TRAFFIC_INTERNAL_ONLY": "internal",
+    "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER": "internal-and-cloud-load-balancing",
+}
 
 # Right after a project/repo/service is first created, the Cloud Run Service
 # Agent often isn't yet allowed to pull the (cross-project) image, so the deploy
@@ -128,7 +143,11 @@ def deploy_cloud_run(
     dry_run_validation_report, service_exists = None, None
     already_agent_identity = False
     if dry_run:
-        dry_run_validation_report, service_exists = validate_cloud_run_deployment(
+        (
+            dry_run_validation_report,
+            service_exists,
+            already_agent_identity,
+        ) = validate_cloud_run_deployment(
             project=project,
             region=region,
             service_name=service_name,
@@ -201,16 +220,34 @@ def deploy_cloud_run(
             agent_identity=bool(agent_identity),
         )
     )
-    args.extend(_cloud_run_env_var_args(env_var_map, env_var_changes))
+    env_var_args, env_var_flags = _cloud_run_env_var_args(env_var_map, env_var_changes)
+    args.extend(env_var_args)
     args.extend(secret_args)
     args.extend(_cloud_run_label_args(label_changes))
 
     if no_wait:
         args.append("--async")
 
-    display_cmd = redact_command(args)
+    # gcloud reads the env var values from a flags file, so the printed command
+    # shows them as the flags they stand for, with the values masked.
+    masked_env_vars = [
+        part
+        for flag, values in env_var_flags.items()
+        for part in (flag, ",".join(f"{key}=***" for key in values))
+    ]
+    display_cmd = redact_command([*args, *masked_env_vars])
     if dry_run_validation_report is not None:
         _print_cloud_run_plan(display_cmd, service_exists=service_exists, region=region)
+        if agent_identity or already_agent_identity:
+            _print_agent_identity_grants(
+                _build_agent_identity_principal(
+                    project=project,
+                    project_number=project_number,
+                    region=region,
+                    service=service_name,
+                ),
+                only_missing=already_agent_identity,
+            )
         dry_run_validation_report.raise_if_failed()
         return
 
@@ -282,7 +319,14 @@ def deploy_cloud_run(
 
     click.secho(f"  ▸ {display_cmd}", fg="cyan", dim=True)
 
-    _run_cloud_run_deploy_with_retry(args, project=project)
+    # Without --ingress, a redeploy keeps the service's current ingress.
+    effective_ingress = ingress or _INGRESS_FROM_API.get(
+        (existing_service or {}).get("ingress", "")
+    )
+    with _gcloud_flags_file(env_var_flags) as flags_file_args:
+        _run_cloud_run_deploy_with_retry(
+            [*args, *flags_file_args], project=project, ingress=effective_ingress
+        )
 
     if not no_wait:
         _print_cloud_run_next_steps(
@@ -292,6 +336,7 @@ def deploy_cloud_run(
             service_url=env_var_map.get("APP_URL"),
             agent_identity_principal=agent_identity_principal,
             is_a2a=cfg.is_a2a,
+            ingress=effective_ingress,
         )
 
 
@@ -618,12 +663,20 @@ def _cloud_run_app_url(
 
 def _cloud_run_env_var_args(
     env_var_map: dict[str, str], env_var_changes: KeyValueChanges
-) -> list[str]:
-    """Env var flags for gcloud: the runtime env vars plus any clear or removals."""
+) -> tuple[list[str], dict[str, dict[str, str]]]:
+    """Env var flags for gcloud: the runtime env vars plus any clear or removals.
+
+    Returns the command-line flags, and the flag whose values go in a gcloud
+    flags file (see `_gcloud_flags_file`): ``--update-env-vars``, or
+    ``--set-env-vars`` for a clear, since gcloud doesn't allow
+    ``--clear-env-vars`` with ``--update-env-vars``. ``env_var_map`` always
+    holds the defaults from `_cloud_run_env_vars`, so it is never empty.
+    """
+    if env_var_changes.clear:
+        return [], {"--set-env-vars": env_var_map}
     removals = drop_default_env_var_removals(env_var_changes.removals, env_var_map.keys())
-    return _gcloud_key_value_args(
-        "env-vars", replace(env_var_changes, updates=env_var_map, removals=removals)
-    )
+    args = ["--remove-env-vars", ",".join(removals)] if removals else []
+    return args, {"--update-env-vars": env_var_map}
 
 
 def _cloud_run_secret_args(
@@ -721,6 +774,49 @@ def _print_cloud_run_plan(
     )
 
 
+@contextlib.contextmanager
+def _gcloud_flags_file(flags: Mapping[str, Mapping[str, str]]) -> Iterator[list[str]]:
+    """Write ``flags`` to a gcloud flags file and yield ``["--flags-file", PATH]``.
+
+    gcloud splits a dict flag such as ``--update-env-vars`` on every comma, so
+    a ``.env`` value holding one would be set as extra or broken variables.
+    gcloud's ``^DELIM^`` escape doesn't help on Windows, where gcloud is
+    ``gcloud.cmd`` and cmd.exe strips the carets
+    (https://docs.cloud.google.com/sdk/gcloud/reference/topic/escaping). A YAML
+    flags file passes each value whole in any command interpreter
+    (https://docs.cloud.google.com/sdk/gcloud/reference/topic/flags-file), and
+    keeps the values out of the process list. The file sits in a private
+    temporary folder, which is deleted on exit.
+    """
+    with tempfile.TemporaryDirectory(prefix="agents-cli-gcloud-flags-") as folder:
+        path = Path(folder) / "flags.yaml"
+        path.write_text(
+            yaml.safe_dump(
+                {flag: dict(values) for flag, values in flags.items()},
+                allow_unicode=True,
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+        yield ["--flags-file", str(path)]
+
+
+def _print_agent_identity_grants(principal: str | None, *, only_missing: bool) -> None:
+    """Print the project roles the deploy grants to the agent's principal."""
+    if principal is None:
+        # The deploy skips the grants too, and asks the user to make them.
+        click.echo(
+            "  Would not grant the Agent Identity roles: the agent's principal "
+            "can't be worked out. Grant these after the deploy, to the principal "
+            "`agents-cli deploy --status` prints:"
+        )
+    else:
+        which = "any of these roles it lacks" if only_missing else "these roles"
+        click.echo(f"  Would grant {which} on the project to {principal}:")
+    for role in AGENT_IDENTITY_ROLES:
+        click.echo(f"    {role}")
+
+
 @backoff.on_exception(
     backoff.expo,
     _TransientCloudRunDeployError,
@@ -738,7 +834,9 @@ def _print_cloud_run_plan(
         _CLOUD_RUN_DEPLOY_MAX_TIME,
     ),
 )
-def _run_cloud_run_deploy_with_retry(args: list[str], *, project: str) -> None:
+def _run_cloud_run_deploy_with_retry(
+    args: list[str], *, project: str, ingress: str | None
+) -> None:
     """Run ``gcloud run deploy``, streaming output, retrying transient IAM errors.
 
     Streams stderr to the terminal in real time (char by char, since gcloud
@@ -772,6 +870,17 @@ def _run_cloud_run_deploy_with_retry(args: list[str], *, project: str) -> None:
             "Please enable them by running:\n"
             f"  gcloud services enable cloudbuild.googleapis.com run.googleapis.com --project={project}"
         )
+    constraint = _CONSTRAINT_RE.search(stderr)
+    if constraint:
+        name = constraint.group(1)
+        message = (
+            f"Cloud Run deployment failed: the organization policy {name} doesn't "
+            f"allow this deploy.\n  See what it allows with `gcloud org-policies "
+            f"describe {name} --project={project} --effective`."
+        )
+        if name == "run.allowedIngress":
+            message += _ingress_policy_hint(ingress)
+        raise click.ClickException(message)
     if any(sig in stderr for sig in _CLOUD_RUN_TRANSIENT_DEPLOY_SIGNATURES):
         raise _TransientCloudRunDeployError(
             "Cloud Run deployment failed due to a transient IAM-propagation error "
@@ -783,6 +892,17 @@ def _run_cloud_run_deploy_with_retry(args: list[str], *, project: str) -> None:
     )
 
 
+def _ingress_policy_hint(ingress: str | None) -> str:
+    """Suggest the internal ingress values the rejected deploy didn't use."""
+    others = [v for v in _INTERNAL_INGRESS if v != ingress]
+    rejected = f"--ingress {ingress}" if ingress in _INTERNAL_INGRESS else "ingress all"
+    return (
+        f"\n  It restricts ingress and rejected {rejected}: redeploy with "
+        + " or ".join(f"--ingress {v}" for v in others)
+        + (", whichever it allows." if len(others) > 1 else ".")
+    )
+
+
 def _print_cloud_run_next_steps(
     *,
     service_name: str,
@@ -790,6 +910,7 @@ def _print_cloud_run_next_steps(
     project: str,
     service_url: str | None,
     is_a2a: bool,
+    ingress: str | None,
     agent_identity_principal: str | None = None,
 ) -> None:
     """Print copy-pasteable next steps for talking to a deployed Cloud Run agent.
@@ -819,6 +940,15 @@ def _print_cloud_run_next_steps(
     if agent_identity_principal:
         click.echo(f"\nAgent Identity principal: {agent_identity_principal}")
     click.echo("\nTalk to your agent:")
+    internal = ingress in _INTERNAL_INGRESS
+    if internal:
+        # Outside the VPC the run.app URL answers 404, and the local proxy goes
+        # through that URL too, so both would look like a broken deploy.
+        via_lb = ingress == "internal-and-cloud-load-balancing"
+        click.echo(
+            f"  Ingress is '{ingress}', so the URL below answers only from inside "
+            f"the VPC{', or use your load balancer URL' if via_lb else ''}."
+        )
     if url:
         click.echo(f'  agents-cli run --url {url} --mode {mode} "hello"')
     else:
@@ -827,9 +957,10 @@ def _print_cloud_run_next_steps(
             "  (find <SERVICE_URL> in the Service URL above or via "
             "`agents-cli deploy --status`)"
         )
-    click.echo("\nOr proxy locally, then use the proxy URL:")
-    click.echo(f"  {' '.join(proxy_parts)}")
-    click.echo(f'  agents-cli run --url http://127.0.0.1:8080 --mode {mode} "hello"')
+    if not internal:
+        click.echo("\nOr proxy locally, then use the proxy URL:")
+        click.echo(f"  {' '.join(proxy_parts)}")
+        click.echo(f'  agents-cli run --url http://127.0.0.1:8080 --mode {mode} "hello"')
     if is_a2a:
         click.echo(
             "\nFor ADK agents, the ADK HTTP API is also served — swap --mode a2a for --mode adk."

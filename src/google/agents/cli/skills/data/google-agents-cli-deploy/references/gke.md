@@ -54,7 +54,7 @@ Cloud SQL in GKE uses a **proxy sidecar container** in the pod (unlike Cloud Run
 
 A scaffolded Python project serves `uvicorn app.fast_api_app:app` on port 8080; a Go project serves the binary built from `main.go`. Which routes that app exposes depends on the framework, so check `app/fast_api_app.py` or `main.go`.
 
-> **ADK projects.** The app serves the ADK HTTP surface (`/run_sse`, `/apps/...`) plus A2A (JSON-RPC + agent card — A2A is built into every ADK agent). A2A differs between languages — Python serves both under `/a2a/{app_name}`; Go serves the agent card at the root (`/.well-known/agent-card.json`) and JSON-RPC under `/a2a/` (`/a2a/v1/invoke`, plus `/a2a/invoke` for the v0 protocol).
+> **ADK projects.** The app serves the ADK HTTP surface (`/run_sse`, `/apps/...`) plus A2A (JSON-RPC + agent card — A2A is built into every ADK agent). A2A differs between languages — Python and TypeScript serve both under `/a2a/{app_name}`; Go serves the agent card at the root (`/.well-known/agent-card.json`) and JSON-RPC under `/a2a/` (`/a2a/v1/invoke`, plus `/a2a/invoke` for the v0 protocol); Java and Kotlin serve the agent card at the root and JSON-RPC at `/a2a/remote/v1/message:send`, which takes only the non-streaming `message/send` method.
 
 ## Testing Your Deployed Agent
 
@@ -78,10 +78,10 @@ curl -X POST "http://127.0.0.1:8080/apps/app/users/test-user/sessions" \
 curl -X POST "http://127.0.0.1:8080/run_sse" \
   -H "Content-Type: application/json" \
   -d '{
-    "app_name": "app",
-    "user_id": "test-user",
-    "session_id": "SESSION_ID",
-    "new_message": {"role": "user", "parts": [{"text": "Hello!"}]}
+    "appName": "app",
+    "userId": "test-user",
+    "sessionId": "SESSION_ID",
+    "newMessage": {"role": "user", "parts": [{"text": "Hello!"}]}
   }'
 
 # Live agents: same forward, WebSocket surface

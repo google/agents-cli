@@ -16,9 +16,15 @@ package {{cookiecutter.java_package}};
 
 import com.google.adk.a2a.executor.AgentExecutor;
 import com.google.adk.a2a.executor.AgentExecutorConfig;
+import com.google.adk.agents.BaseAgent;
+import com.google.adk.agents.LlmAgent;
+import com.google.adk.agents.LoopAgent;
+import com.google.adk.agents.ParallelAgent;
+import com.google.adk.agents.SequentialAgent;
 import com.google.adk.artifacts.BaseArtifactService;
 import com.google.adk.memory.BaseMemoryService;
 import com.google.adk.sessions.BaseSessionService;
+import com.google.adk.tools.BaseTool;
 import io.a2a.server.AgentCardValidator;
 import io.a2a.server.ServerCallContext;
 import io.a2a.server.agentexecution.RequestContext;
@@ -45,6 +51,7 @@ import io.a2a.transport.jsonrpc.handler.JSONRPCHandler;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Maybe;
 import java.lang.reflect.Field;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -52,6 +59,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -70,6 +78,13 @@ import org.springframework.web.bind.annotation.RestController;
 public class A2AController implements DisposableBean {
 
   private static final String RPC_PATH = "/a2a/remote/v1/message:send";
+
+  // The skill tag ADK Python and Go give each workflow agent; other non-LLM agents are custom.
+  // The workflow classes can't be subclassed, so an exact class lookup is enough.
+  private static final Map<Class<? extends BaseAgent>, String> WORKFLOW_TYPES = Map.of(
+      SequentialAgent.class, "sequential_workflow",
+      ParallelAgent.class, "parallel_workflow",
+      LoopAgent.class, "loop_workflow");
 
   private final ExecutorService executor = Executors.newCachedThreadPool();
   private final AgentCard agentCard;
@@ -159,25 +174,74 @@ public class A2AController implements DisposableBean {
   }
 
   private static AgentCard agentCard(String appUrl) {
-    List<AgentSkill> skills = Agent.ROOT_AGENT.tools().blockingGet().stream()
-        .map(tool -> new AgentSkill.Builder()
-            .id(Agent.ROOT_AGENT.name() + "-" + tool.name())
-            .name(tool.name())
-            .description(tool.description())
-            .tags(List.of())
-            .build())
-        .toList();
-
     return new AgentCard.Builder()
         .name(Agent.ROOT_AGENT.name())
-        .description(Agent.ROOT_AGENT.description())
+        .description(describe(Agent.ROOT_AGENT))
         .url(appUrl + RPC_PATH)
         .version("1.0.0")
         .capabilities(new AgentCapabilities.Builder().streaming(false).build())
         .defaultInputModes(List.of("text/plain"))
         .defaultOutputModes(List.of("text/plain"))
-        .skills(skills)
+        .skills(skills(Agent.ROOT_AGENT))
         .build();
+  }
+
+  /**
+   * The skills ADK Python and Go put on an agent card: the agent's own, then each direct
+   * sub-agent's, so a workflow or toolless root agent still advertises what it does.
+   */
+  public static List<AgentSkill> skills(BaseAgent agent) {
+    List<AgentSkill> skills = new ArrayList<>(primarySkills(agent));
+    for (BaseAgent sub : agent.subAgents()) {
+      for (AgentSkill skill : primarySkills(sub)) {
+        List<String> tags = new ArrayList<>(List.of("sub_agent:" + sub.name()));
+        tags.addAll(skill.tags());
+        skills.add(skill(sub.name() + "_" + skill.id(), sub.name() + ": " + skill.name(),
+            skill.description(), tags));
+      }
+    }
+    return skills;
+  }
+
+  private static List<AgentSkill> primarySkills(BaseAgent agent) {
+    return agent instanceof LlmAgent llm ? llmSkills(llm) : orchestratorSkills(agent);
+  }
+
+  private static List<AgentSkill> llmSkills(LlmAgent agent) {
+    List<AgentSkill> skills = new ArrayList<>();
+    skills.add(skill(agent.name(), "model", describe(agent), List.of("llm")));
+    for (BaseTool tool : agent.tools().blockingGet()) {
+      skills.add(skill(agent.name() + "-" + tool.name(), tool.name(),
+          textOr(tool.description(), "Tool: " + tool.name()), List.of("llm", "tools")));
+    }
+    return skills;
+  }
+
+  private static List<AgentSkill> orchestratorSkills(BaseAgent agent) {
+    String type = WORKFLOW_TYPES.getOrDefault(agent.getClass(), "custom_agent");
+    String name = WORKFLOW_TYPES.containsKey(agent.getClass()) ? "workflow" : "custom";
+    List<AgentSkill> skills = new ArrayList<>();
+    skills.add(skill(agent.name(), name, describe(agent), List.of(type)));
+    if (!agent.subAgents().isEmpty()) {
+      String orchestrates = agent.subAgents().stream()
+          .map(sub -> sub.name() + ": " + describe(sub))
+          .collect(Collectors.joining("; "));
+      skills.add(skill(agent.name() + "-sub-agents", "sub-agents", "Orchestrates: " + orchestrates,
+          List.of(type, "orchestration")));
+    }
+    return skills;
+  }
+
+  private static String describe(BaseAgent agent) {
+    return textOr(agent.description(), "An ADK agent");
+  }
+
+  private static String textOr(String text, String fallback) {
+    return text == null || text.isBlank() ? fallback : text;
+  }
+
+  private static AgentSkill skill(String id, String name, String description, List<String> tags) {
+    return new AgentSkill.Builder().id(id).name(name).description(description).tags(tags).build();
   }
 
   // AgentExecutor looks a conversation's session up by its A2A context id, but creates a missing

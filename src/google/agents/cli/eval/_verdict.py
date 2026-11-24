@@ -255,6 +255,12 @@ def print_verdict(verdict: Verdict, report_path: str, console: Console) -> None:
             "<previous>.json <new>.json`.",
             markup=False,
         )
+    if verdict.passed and not any(m.threshold is not None for m in verdict.metrics):
+        logging.warning(
+            "No thresholds set, so low scores can't fail this run. Set "
+            "'thresholds' in the eval config or pass --fail-under %s.",
+            FAIL_UNDER_FORM,
+        )
     console.print(f"RESULT: {_result_line(verdict)}", markup=False)
 
 
@@ -290,10 +296,7 @@ def _result_line(verdict: Verdict) -> str:
         return f"FAIL ({'; '.join(reasons)})"
     gated = [m for m in verdict.metrics if m.threshold is not None]
     if not gated:
-        return (
-            "PASS (no thresholds set; add 'thresholds' to the eval config or pass "
-            "--fail-under to gate on scores)"
-        )
+        return "NOT GATED (no thresholds set; scores were not checked)"
     return f"PASS ({'; '.join(_score_vs_threshold(m, '>=') for m in gated)})"
 
 

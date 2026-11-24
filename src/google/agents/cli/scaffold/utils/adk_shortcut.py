@@ -86,7 +86,7 @@ def resolve_recorded_adk_shortcut(base_template: str | None) -> str | None:
 
 
 def record_migrated_base_template(project_dir: pathlib.Path, url: str) -> None:
-    """Write a resolved ``adk@<name>`` URL as the manifest ``base_template``."""
+    """Write a migrated spec, such as a resolved ``adk@<name>`` URL, as ``base_template``."""
     updated = update_acli_metadata(project_dir, {}, base_template=url)
 
     if updated:

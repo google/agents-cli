@@ -14,12 +14,38 @@
 
 """Compile Gradle (Java, Kotlin) and npm (TypeScript) projects before running them."""
 
+import logging
+import os
 from pathlib import Path
 
 import click
 
 from google.agents.cli._runner import run
 from google.agents.cli._tools import is_windows
+
+GRADLE_LANGUAGES = frozenset({"java", "kotlin"})
+
+
+def gradle_executable(project_root: Path) -> str:
+    """The project's Gradle wrapper, or ``gradle`` on PATH for a project without one.
+
+    The wrapper runs the Gradle version the template was written for, whatever
+    Gradle the machine has. Projects scaffolded before the templates shipped it
+    use the system Gradle.
+    """
+    windows = is_windows()
+    wrapper = project_root / ("gradlew.bat" if windows else "gradlew")
+    if not wrapper.is_file():
+        return "gradle"
+    # An unzipped download or a checkout with core.fileMode=false drops the bit.
+    if not windows and not os.access(wrapper, os.X_OK):
+        logging.warning(
+            "%s isn't executable, so using gradle on PATH instead. Run "
+            "`chmod +x gradlew` to use the project's Gradle wrapper.",
+            wrapper,
+        )
+        return "gradle"
+    return str(wrapper.resolve())
 
 
 def gradle_install_dist(project_root: Path) -> Path:
@@ -29,7 +55,7 @@ def gradle_install_dist(project_root: Path) -> Path:
     server's startup time and process tree.
     """
     run(
-        ["gradle", "--quiet", "installDist"],
+        [gradle_executable(project_root), "--quiet", "installDist"],
         cwd=project_root,
         check_err_msg="Failed to build agent",
     )

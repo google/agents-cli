@@ -121,8 +121,8 @@ LANGUAGE_CONFIGS: dict[str, dict[str, Any]] = {
     },
     "java": {
         "lock_file": None,  # Gradle doesn't lock dependencies by default
-        "lock_command": ["gradle", "dependencies"],
-        "lock_command_name": "gradle dependencies",
+        "lock_command": ["./gradlew", "dependencies"],
+        "lock_command_name": "./gradlew dependencies",
         "display_name": "Java",
         "picker_icon": "☕",
         "agent_file": "Agent.java",
@@ -160,7 +160,8 @@ LANGUAGE_CONFIGS: dict[str, dict[str, Any]] = {
         "agent_in_subdirectory": False,
         "version_reader": None,
         "api_base_path": "",
-        "a2a_base_path_factory": None,
+        # adk-devtools serves A2A under /a2a/{app} when started with --a2a.
+        "a2a_base_path_factory": lambda app_name: f"/a2a/{app_name}",
         "default_agent_directory": "app",
         "otel_capture_message_content_default": "NO_CONTENT",
         "base_template_suffix": "_ts",
@@ -180,8 +181,8 @@ LANGUAGE_CONFIGS: dict[str, dict[str, Any]] = {
     },
     "kotlin": {
         "lock_file": None,  # Gradle doesn't lock dependencies by default
-        "lock_command": ["gradle", "dependencies"],
-        "lock_command_name": "gradle dependencies",
+        "lock_command": ["./gradlew", "dependencies"],
+        "lock_command_name": "./gradlew dependencies",
         "display_name": "Kotlin",
         "picker_icon": "🟣",
         "agent_file": "Agent.kt",
@@ -189,7 +190,8 @@ LANGUAGE_CONFIGS: dict[str, dict[str, Any]] = {
         "agent_in_subdirectory": True,
         "version_reader": None,
         "api_base_path": "",
-        "a2a_base_path_factory": None,
+        # Main.kt serves the card at the root and A2A at a fixed path, like Java.
+        "a2a_base_path_factory": lambda _app_name: "",
         "default_agent_directory": "src/main/kotlin",
         "otel_capture_message_content_default": "NO_CONTENT",
         "base_template_suffix": "_kotlin",

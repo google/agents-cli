@@ -29,7 +29,17 @@ from typing import NamedTuple
 import click
 import psutil
 
-from google.agents.cli._project import agent_package_name, agents_root
+from google.agents.cli._local_build import (
+    GRADLE_LANGUAGES,
+    gradle_install_dist,
+    gradle_start_script,
+    npm_build,
+)
+from google.agents.cli._project import (
+    agent_package_name,
+    agents_root,
+    read_nearest_dotenv,
+)
 from google.agents.cli._runner import popen_resolved_detached, redact_cmd
 from google.agents.cli._server_process import (
     DEFAULT_STARTUP_TIMEOUT,
@@ -86,8 +96,9 @@ def ensure_server(
     Args:
         project_root: The project root directory (cwd when running).
         agent_dir: The agent directory name (e.g. ``"investment_agent"``).
-        language: The project language (``"python"`` or ``"go"``). Selects the
-            server launcher. Only takes effect when a new server is started.
+        language: The project language. Selects the server launcher and, for
+            compiled languages, the build that runs first. Only takes effect
+            when a new server is started.
         idle_timeout: Seconds of inactivity before the server is considered
             stale and replaced.  Defaults to 30 minutes.
         otel_to_cloud: When ``True``, export traces to Cloud Trace.
@@ -151,6 +162,9 @@ def ensure_server(
 
     if before_start is not None:
         before_start()
+    build = _BUILD_STEPS.get(language)
+    if build is not None:
+        build(project_root)
     port = _find_free_port()
     pid = _start_server(
         project_root=project_root,
@@ -333,13 +347,110 @@ def _go_serve_command(
     return [*cmd, "api", "-path_prefix", "/", "a2a", "appinfo"]
 
 
+def _java_serve_command(
+    *,
+    project_root: Path,
+    port: int,
+    otel_to_cloud: bool = False,
+    **_,
+) -> list[str]:
+    """Booting command for a Java agent: the start script from ``gradle installDist``.
+
+    Passes the arguments the template Makefile's local-backend target gives
+    ``gradle run``. ``AdkWebServer`` (Spring Boot) takes ``--server.*``
+    arguments and serves the ADK REST API at the root and A2A under /a2a/remote.
+    """
+    _warn_otel_to_cloud_unsupported("Java", otel_to_cloud)
+    return [
+        str(gradle_start_script(project_root)),
+        f"--server.port={port}",
+        "--server.address=127.0.0.1",
+        "--logging.level.root=WARN",
+        "--logging.level.com.google.adk=INFO",
+    ]
+
+
+def _kotlin_serve_command(
+    *,
+    project_root: Path,
+    otel_to_cloud: bool = False,
+    **_,
+) -> list[str]:
+    """Booting command for a Kotlin agent: the start script from ``gradle installDist``.
+
+    The template's Main.kt binds HOST:PORT from the environment (see ``_start_server``).
+    """
+    _warn_otel_to_cloud_unsupported("Kotlin", otel_to_cloud)
+    return [str(gradle_start_script(project_root))]
+
+
+def _typescript_serve_command(
+    *,
+    project_root: Path,
+    port: int,
+    otel_to_cloud: bool = False,
+    **_,
+) -> list[str]:
+    """Booting command for a TypeScript agent, as the template Makefile's local-backend runs it.
+
+    Projects whose package.json has a ``start`` script run it: the template's
+    server.ts, which adds the app-info endpoint ``eval`` reads and binds
+    HOST:PORT (see ``_start_server``). Projects scaffolded before it run
+    ``adk-devtools api_server`` on dist/.
+    """
+    # The template doesn't install the exporter packages --otel_to_cloud needs.
+    _warn_otel_to_cloud_unsupported("TypeScript", otel_to_cloud)
+    if _has_npm_start_script(project_root):
+        return ["npm", "start"]
+    return [
+        "npx",
+        "@google/adk-devtools",
+        "api_server",
+        "dist",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+        # Serves the A2A card and JSON-RPC under /a2a/{app}, for `run --mode a2a`.
+        "--a2a",
+    ]
+
+
+def _has_npm_start_script(project_root: Path) -> bool:
+    try:
+        package = json.loads((project_root / "package.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        # The npm build before this has already failed on an unreadable package.json.
+        return False
+    scripts = package.get("scripts") if isinstance(package, dict) else None
+    return isinstance(scripts, dict) and "start" in scripts
+
+
+def _warn_otel_to_cloud_unsupported(language: str, otel_to_cloud: bool) -> None:
+    if otel_to_cloud:
+        logging.warning(
+            "--otel-to-cloud is not supported for %s agents; ignoring it.", language
+        )
+
+
 # `None` = not supported yet; dispatch_language raises a clear error.
 LANGUAGE_HANDLERS = {
     "python": _python_serve_command,
     "go": _go_serve_command,
-    "java": None,
-    "typescript": None,
-    "kotlin": None,
+    "java": _java_serve_command,
+    "typescript": _typescript_serve_command,
+    "kotlin": _kotlin_serve_command,
+}
+
+# Builds that run before a new server starts, so the build doesn't count against
+# the startup timeout and the port is picked only once it's done. `None` = no
+# separate build: Python has none, and `go run` compiles as it starts.
+_BUILD_STEPS: dict[str, Callable[[Path], object] | None] = {
+    "python": None,
+    "go": None,
+    "java": gradle_install_dist,
+    "typescript": npm_build,
+    "kotlin": gradle_install_dist,
 }
 
 
@@ -384,6 +495,17 @@ def _start_server(
     # inherited value or the template's port-8000 fallback.
     env["APP_URL"] = f"http://127.0.0.1:{port}"
     env.setdefault("PYTHONUNBUFFERED", "1")
+    if language in GRADLE_LANGUAGES:
+        # JVMs don't read .env; the shell wins, as with ADK's load_dotenv_for_agent.
+        env = {**read_nearest_dotenv(project_root), **env}
+        # Kotlin's Main.kt binds HOST:PORT; Java's application.properties reads PORT.
+        env["HOST"] = "127.0.0.1"
+        env["PORT"] = str(port)
+    if language == "typescript":
+        # The template's server.ts binds HOST:PORT; `adk-devtools api_server` takes
+        # flags instead.
+        env["HOST"] = "127.0.0.1"
+        env["PORT"] = str(port)
     if language == "python":
         # Keep `uv run` from re-locking against a machine-wide mirror.
         env.update(uv_index_env(project_root) or {})

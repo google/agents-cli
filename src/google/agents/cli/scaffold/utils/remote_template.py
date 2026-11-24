@@ -31,7 +31,6 @@ import click
 from google.agents.cli._git import is_option_like
 from google.agents.cli._output import Console
 from google.agents.cli._project import DEFAULT_BASE_TEMPLATE
-from google.agents.cli.extension._deprecation import warn_if_agents_cli_repo_template
 
 from .fs import walk_source_tree
 from .language import get_language_config
@@ -102,11 +101,13 @@ class FetchedTemplate(NamedTuple):
         template_dir: Path to the fetched template directory.
         temp_dir: Top-level temporary directory that should be cleaned up.
         repo_root: Root of the cloned repository.
+        spec: The spec that was fetched.
     """
 
     template_dir: pathlib.Path
     temp_dir: pathlib.Path
     repo_root: pathlib.Path
+    spec: RemoteTemplateSpec
 
 
 class _ProjectFallbacks(TypedDict, total=False):
@@ -141,11 +142,11 @@ def parse_agent_spec(agent_spec: str) -> RemoteTemplateSpec | None:
     if agent_spec.startswith("local@") or is_adk_shortcut(agent_spec):
         return None
 
-    # GitHub /tree/ URL pattern
-    tree_pattern = r"^(https?://[^/]+/[^/]+/[^/]+)/tree/([^/]+)/(.*)$"
+    # GitHub /tree/ or GitLab /-/tree/ URL pattern
+    tree_pattern = r"^(https?://[^/]+/[^/]+/(?:[^/]+|.+?/-))/tree/([^/]+)/?(.*)$"
     match = re.match(tree_pattern, agent_spec)
     if match:
-        repo_url = match.group(1)
+        repo_url = match.group(1).removesuffix("/-")
         git_ref = match.group(2)
         template_path = match.group(3)
         return RemoteTemplateSpec(
@@ -262,9 +263,9 @@ def fetch_remote_template(
     if spec.tree_path:
         git_ref, template_path = _split_tree_path(spec.repo_url, spec.tree_path)
         spec = replace(spec, git_ref=git_ref, template_path=template_path)
-    warn_if_agents_cli_repo_template(
-        spec.repo_url, spec.template_path, original_agent_spec
-    )
+    elif spec.template_path and not _is_github_url(spec.repo_url):
+        repo_url, template_path = _resolve_repo_url(spec.repo_url, spec.template_path)
+        spec = replace(spec, repo_url=repo_url, template_path=template_path)
     if is_option_like(spec.git_ref):
         raise RuntimeError(
             f"Invalid git ref {spec.git_ref!r}: pass a branch, tag, or commit, "
@@ -368,7 +369,10 @@ def fetch_remote_template(
             sys.exit(0)
 
         return FetchedTemplate(
-            template_dir=template_dir, temp_dir=temp_path, repo_root=repo_path
+            template_dir=template_dir,
+            temp_dir=temp_path,
+            repo_root=repo_path,
+            spec=spec,
         )
     except Exception as e:
         # Clean up on error
@@ -893,10 +897,9 @@ def parse_acli_version_from_lock(
 def _is_adk_repo_url(repo_url: str) -> bool:
     """True for github.com/google/adk-recipes (or adk-samples), in any URL form."""
     parsed = urllib.parse.urlparse(repo_url)
-    host = parsed.netloc.lower().removeprefix("www.")
     path = parsed.path.strip("/").lower().removesuffix(".git")
     org, _, repo = path.partition("/")
-    return host == "github.com" and org == "google" and repo in _ADK_REPO_NAMES
+    return _is_github_url(repo_url) and org == "google" and repo in _ADK_REPO_NAMES
 
 
 def _split_tree_path(repo_url: str, tree_path: str) -> tuple[str, str]:
@@ -927,3 +930,31 @@ def _split_tree_path(repo_url: str, tree_path: str) -> tuple[str, str]:
         return first, rest
     ref = max(matches, key=lambda name: len(name))
     return ref, tree_path.removeprefix(ref).strip("/")
+
+
+def _is_github_url(repo_url: str) -> bool:
+    host = urllib.parse.urlparse(repo_url).netloc.lower().removeprefix("www.")
+    return host == "github.com"
+
+
+def _resolve_repo_url(repo_url: str, template_path: str) -> tuple[str, str]:
+    """Move leading path segments into the repo URL until the remote answers.
+
+    Shortest first: GitLab namespaces are users and groups, never projects
+    (https://docs.gitlab.com/user/namespace/#types-of-namespaces).
+    """
+    from google.agents.cli._runner import run_resolved
+
+    segments = template_path.split("/")
+    for i in range(len(segments) + 1):
+        candidate = "/".join([repo_url, *segments[:i]])
+        result = run_resolved(
+            ["git", "ls-remote", "--", candidate, "HEAD"],
+            capture_output=True,
+            # Group prefixes fail on purpose; don't let Git Credential Manager
+            # prompt for each one.
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "false"},
+        )
+        if result.returncode == 0:
+            return candidate, "/".join(segments[i:])
+    return repo_url, template_path

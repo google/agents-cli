@@ -54,7 +54,11 @@ from .copy_files import (
 )
 from .language import LANGUAGE_CONFIGS, get_language_config, is_language_enabled
 from .lock_utils import get_lock_filename, is_empty_agent
-from .remote_template import FLAT_AGENT_DIRECTORY, get_base_template_name
+from .remote_template import (
+    FLAT_AGENT_DIRECTORY,
+    RemoteTemplateSpec,
+    get_base_template_name,
+)
 from .upgrade import DependencyReadError, union_python_base_dependencies
 from .version import agents_cli_version_pin, get_current_version
 
@@ -1684,6 +1688,9 @@ def process_template(
                     "**/.venv/*",  # Don't render .venv at any depth
                     "node_modules/**/*",  # Don't render node_modules (TS/JS deps contain {{ }} syntax)
                     "*templates.py",  # Don't render templates files
+                    "gradlew",  # Copy the Gradle wrapper byte for byte
+                    "gradlew.bat",
+                    "gradle/wrapper/*",
                 ],
             }
 
@@ -1722,9 +1729,13 @@ def process_template(
                     )
                     == FLAT_AGENT_DIRECTORY
                 )
-                scaffold_root_files: frozenset[str] = frozenset()
+                scaffold_root_files: frozenset[str] = (
+                    frozenset({"agents-cli-extensions.yaml", "extensions"})
+                    if overlay_is_project
+                    else frozenset()
+                )
                 if go_template_path:
-                    scaffold_root_files = go_overlay.skipped_root_files(
+                    scaffold_root_files |= go_overlay.skipped_root_files(
                         go_template_path, is_flat_structure=is_flat_structure
                     )
                     go_overlay.clear_overlaid_packages(
@@ -1990,11 +2001,105 @@ def process_template(
                         "Updated project name in lock file at %s", lock_file_path
                     )
 
+            _record_template_extension(
+                final_destination,
+                remote_template_path=remote_template_path,
+                recorded_base_template=recorded_base_template,
+                remote_spec=remote_spec,
+                template_repo_root=template_repo_root,
+                overlay_is_project=overlay_is_project,
+            )
+
         finally:
             # Always restore the original working directory
             os.chdir(original_dir)
 
     return rendered_files
+
+
+def _record_template_extension(
+    project_dir: pathlib.Path,
+    *,
+    remote_template_path: pathlib.Path | None,
+    recorded_base_template: str | None,
+    remote_spec: RemoteTemplateSpec | None,
+    template_repo_root: pathlib.Path | None,
+    overlay_is_project: bool,
+) -> None:
+    """Record a template's root agents-cli-extension.yaml in agents-cli-extensions.yaml."""
+    if overlay_is_project or not remote_template_path or not recorded_base_template:
+        return
+    from google.agents.cli._git import is_commit_sha
+    from google.agents.cli._runner import run_resolved
+    from google.agents.cli.extension._loader import load_extension_spec
+    from google.agents.cli.extension._manifest import (
+        EXTENSIONS_FILE,
+        ExtensionEntry,
+        ExtensionListError,
+        upsert_extension_entry,
+    )
+    from google.agents.cli.extension._refs import github_path
+    from google.agents.cli.extension._resolver import LOCAL_SHA
+    from google.agents.cli.extension._spec import EXTENSION_FILE, ExtensionSpecError
+
+    if not (remote_template_path / EXTENSION_FILE).exists():
+        return
+    try:
+        spec = load_extension_spec(project_dir)
+    except ExtensionSpecError as e:
+        logging.warning(
+            "%s: %s; skipping recording it in %s.",
+            project_dir / EXTENSION_FILE,
+            e,
+            EXTENSIONS_FILE,
+        )
+        return
+    if spec is None:
+        return
+
+    if recorded_base_template.startswith("local@"):
+        source = recorded_base_template
+        ref = LOCAL_SHA
+        sha = LOCAL_SHA
+    elif remote_spec is not None:
+        repo = github_path(remote_spec.repo_url) or remote_spec.repo_url.removesuffix(
+            ".git"
+        )
+        source = (
+            f"{repo}#{remote_spec.template_path}" if remote_spec.template_path else repo
+        )
+        ref = remote_spec.git_ref
+        sha = ""
+        if template_repo_root and (template_repo_root / ".git").exists():
+            res = run_resolved(
+                ["git", "-C", str(template_repo_root), "rev-parse", "HEAD"],
+                resolve_executable=False,
+                capture_output=True,
+                text=True,
+            )
+            candidate = res.stdout.strip()
+            if res.returncode == 0 and is_commit_sha(candidate):
+                sha = candidate
+        if not sha:
+            logging.warning(
+                "Could not read the commit of template %s; recorded extension %r "
+                "without a sha.",
+                source,
+                spec.name,
+            )
+    else:
+        return
+
+    manifest = project_dir / EXTENSIONS_FILE
+    entry = ExtensionEntry(
+        name=spec.name, source=source, ref=ref, version=None, sha=sha, scope="project"
+    )
+    try:
+        upsert_extension_entry(manifest, entry)
+    except (OSError, ExtensionListError) as e:
+        raise ValueError(
+            f"Cannot record extension {spec.name!r} in {manifest}: {e}."
+        ) from e
 
 
 def _rename_package(project_dir: pathlib.Path, project_name: str) -> None:

@@ -6,6 +6,7 @@
   "main": "{{cookiecutter.agent_directory}}/agent.ts",
   "scripts": {
     "build": "tsc",
+    "start": "node dist/{{cookiecutter.app_name}}/server.js",
     "dev": "tsc && npx @google/adk-devtools web dist --host 127.0.0.1 --port 8080",
     "run": "tsc && npx @google/adk-devtools run dist/{{cookiecutter.app_name}}/agent.js",
     "test": "tsc && vitest run",

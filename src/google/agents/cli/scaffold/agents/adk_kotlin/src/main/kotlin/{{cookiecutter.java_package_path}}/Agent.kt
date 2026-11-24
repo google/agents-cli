@@ -47,16 +47,32 @@ object Agent {
             // gen_ai.agent.name. Renaming the agent only here makes the two disagree,
             // and anything selecting traces by name stops finding this agent's.
             name = "{{cookiecutter.root_agent_name}}",
-            model =
-                Gemini(
-                    MODEL,
-                    VertexCredentials(
-                        project = System.getenv("GOOGLE_CLOUD_PROJECT"),
-                        location = System.getenv("GOOGLE_CLOUD_LOCATION"),
-                    ),
-                ),
+            model = gemini(),
             description = "A helpful AI assistant.",
             instruction = Instruction("You are a helpful AI assistant designed to provide accurate and useful information."),
             tools = Tools().generatedTools(),
         )
 }
+
+/** The Gemini API when an API key is set and the Gemini platform is off; otherwise the Gemini platform. */
+private fun gemini(): Gemini {
+    val apiKey =
+        System.getenv("GEMINI_API_KEY")?.takeIf { it.isNotBlank() }
+            ?: System.getenv("GOOGLE_API_KEY")?.takeIf { it.isNotBlank() }
+    if (apiKey != null && !usesGeminiPlatform()) {
+        return Gemini(MODEL, apiKey)
+    }
+    return Gemini(
+        MODEL,
+        VertexCredentials(
+            project = System.getenv("GOOGLE_CLOUD_PROJECT"),
+            location = System.getenv("GOOGLE_CLOUD_LOCATION"),
+        ),
+    )
+}
+
+// GOOGLE_GENAI_USE_ENTERPRISE wins when both are set, as in google-genai.
+private fun usesGeminiPlatform(): Boolean =
+    (System.getenv("GOOGLE_GENAI_USE_ENTERPRISE") ?: System.getenv("GOOGLE_GENAI_USE_VERTEXAI"))
+        ?.trim()
+        ?.lowercase() in setOf("true", "1")

@@ -3,6 +3,31 @@
 All notable changes to this project will be documented in this file.
 
 
+## [1.16.0] - 2026-11-24
+
+- **First-party extensions and templates under `google/agents-cli/extensions/` now resolve from `google/agents-cli-extensions`.**
+  - `agents-cli extension update <name>` is highly recommended to update an extension origin to the new one.
+  - `create`, `scaffold enhance` and `scaffold upgrade` update the template spec as well, unless a project is locked to an older agents-cli version.
+- Projects scaffolded from a template that includes an extension now record that extension properly.
+- Extensions from pre-approved sources now install without a trust prompt only at a concrete release tag such as `v1.2.3`.
+- Extension templates can opt into `--session-type` on `agent_runtime` by setting `settings.agent_runtime_session_types` in `.template/templateconfig.yaml`.
+- `agents-cli scaffold create --agent` now fetches templates from GitLab repos in nested groups and accepts GitLab `/-/tree/<ref>/<path>` links.
+  - https://github.com/google/agents-cli/issues/98
+- `agents-cli scaffold create` now uses the appropriate model and endpoint for checking Gemini platform credentials.
+  - https://github.com/google/agents-cli/issues/101
+- An unknown `--agent` value in `agents-cli create` now lists the built-in templates you can use.
+- Go projects scaffolded without a deployment target now document commands in a more accurate manner.
+- Playground banners, load tests and dataset guidance were improved in scaffolded projects.
+- `agents-cli deploy` to Cloud Run now handles env var values that contain commas.
+  - https://github.com/google/agents-cli/issues/100
+- `agents-cli deploy` to Cloud Run now names the organization policy that rejected a deploy, and for `constraints/run.allowedIngress` suggests the `--ingress` values left to try.
+- `agents-cli deploy --dry-run` for Cloud Run with Agent Identity now lists the IAM roles the deploy grants and the principal that receives them.
+- `agents-cli eval run` and `eval grade` without thresholds now end with `RESULT: NOT GATED` and a warning on how to set one, instead of `RESULT: PASS`. The exit code is unchanged (0). 
+- `agents-cli eval optimize` accepts inline datasets in `--config`, and its `--config` and `--dataset` paths now work from subfolders. Config files with missing files, invalid JSON or wrongly typed fields fail with a clear error instead of a traceback.
+  - https://github.com/google/agents-cli/issues/99
+- `agents-cli eval run` now validates the eval metrics before running inference, so it fails immediately when a metric is misconfigured.
+- Locally executed `custom_function_file` evaluation metrics can now import helper files in the same directory.
+
 ## [1.15.0] - 2026-11-17
 
 - **First-party extensions and templates move to `google/agents-cli-extensions`.** Installing one from `google/agents-cli` shows a deprecation warning that points to the new location.

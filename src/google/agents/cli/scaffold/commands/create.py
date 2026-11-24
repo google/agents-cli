@@ -49,6 +49,7 @@ from google.agents.cli._project import (
 from google.agents.cli._skills_check import find_parent_workspace_skills
 from google.agents.cli._symlinks import find_repo_boundary
 from google.agents.cli.dev.cmd_playground import LANGUAGE_HANDLERS as PLAYGROUND_HANDLERS
+from google.agents.cli.extension._deprecation import move_template_if_deprecated
 
 from ..utils import adk_shortcut, cli_options, go_overlay, remote_template, template
 from ..utils.cli_options import InteractionMode
@@ -60,6 +61,9 @@ from ..utils.logging import display_welcome_banner
 
 # Export the shared decorator for use by other commands
 __all__ = ["create"]
+
+# The forms --agent accepts besides a built-in template name.
+_TEMPLATE_REPO_FORMS = "<org>/<repo>[/<path>]@<tag>, local@<path>"
 
 console = Console()
 
@@ -660,7 +664,12 @@ def _resolve_specified_agent(
             else:
                 raise ValueError(f"Invalid agent number: {agent_num}")
         except ValueError as err:
-            raise click.UsageError(f"Invalid agent name or number: {agent}") from err
+            names = ", ".join(a["name"] for a in template.get_available_agents().values())
+            raise click.UsageError(
+                f"Invalid agent name or number: {agent}\n"
+                f"  Built-in templates: {names}\n"
+                f"  Or a template repo: {_TEMPLATE_REPO_FORMS}"
+            ) from err
 
     return AgentSelection(
         agent=agent,
@@ -773,6 +782,9 @@ def _resolve_remote_spec(
     None so the caller can fall back to local agent-name resolution.
     """
     adk_shortcut.reject_adk_shortcut(agent)
+    # Shared by --agent and the interactive URL prompt. The rewritten spec is
+    # what gets fetched and recorded as base_template.
+    agent = move_template_if_deprecated(agent)
     remote_spec = remote_template.parse_agent_spec(agent)
     if not remote_spec:
         return None
@@ -786,7 +798,7 @@ def _resolve_remote_spec(
         final_agent=f"remote_{hash(agent)}",
         template_source_path=fetched.template_dir,
         temp_dir_to_clean=str(fetched.temp_dir),
-        remote_spec=remote_spec,
+        remote_spec=fetched.spec,
         recorded_spec=agent,
         bq_analytics=bq_analytics,
         template_repo_root=fetched.repo_root,
@@ -858,7 +870,7 @@ def _select_agent_interactively(
         )
     else:
         names = [x["name"] for x in agents.values()]
-        repo = "a template repo: <org>/<repo>[/<path>]@<tag>, local@<path>"
+        repo = f"a template repo: {_TEMPLATE_REPO_FORMS}"
         if names:
             # -y takes the first agent, so it is only offered when there is one.
             fixes = [
@@ -1179,9 +1191,12 @@ def _load_template_config(
             logging.debug(
                 "Applied CLI overrides to local template config: %s", cli_overrides
             )
-    # Warn if using a hidden (experimental) agent template
+    # Warn if using a hidden template, or one of a language still behind an experiment
     if final_agent and not remote_spec:
-        if config.get("hidden", False):
+        language = config.get("settings", {}).get("language", "python")
+        if config.get("hidden", False) or LANGUAGE_CONFIGS.get(language, {}).get(
+            "experiment"
+        ):
             logging.warning(
                 "'%s' is an experimental template and is not fully supported for agentic development.",
                 final_agent,
@@ -1376,25 +1391,23 @@ def _resolve_session_type(
 
     Non-Python agents and agents that don't require session management always
     use in-memory sessions. For Python agents that require sessions, the value
-    depends on the deployment target (agent_runtime handles sessions itself);
-    session-type selection is offered only for supported agents on cloud_run/gke,
-    limited to the agent's ``session_types`` setting when it has one; its first
-    entry is the default.
+    depends on the deployment target: ``cloud_run`` and ``gke`` always offer
+    selection, while ``agent_runtime`` does only when the template opts in with
+    ``settings.agent_runtime_session_types`` (default templates use Agent
+    Runtime's managed sessions). Selection is limited to the target's list when
+    set; its first entry is the default.
     """
     settings = config.get("settings", {})
     requires_session = settings.get("requires_session", False)
-    supported = settings.get("session_types")
+    supported = _validate_session_types(
+        settings.get("session_types"), "settings.session_types"
+    )
     if supported is None:
         supported = list(template.SESSION_TYPES)
-    elif (
-        not isinstance(supported, list)
-        or not supported
-        or not all(isinstance(s, str) and s in template.SESSION_TYPES for s in supported)
-    ):
-        raise click.ClickException(
-            f"The template's settings.session_types ({supported!r}) must be a non-empty "
-            f"list of session types from: {', '.join(template.SESSION_TYPES)}."
-        )
+    agent_runtime_supported = _validate_session_types(
+        settings.get("agent_runtime_session_types"),
+        "settings.agent_runtime_session_types",
+    )
 
     if not requires_session:
         # Agents that don't manage sessions always use in-memory sessions.
@@ -1405,6 +1418,8 @@ def _resolve_session_type(
             )
         return "in_memory"
     elif final_deployment == "agent_runtime":
+        if agent_runtime_supported is not None:
+            return _pick_session_type(session_type, agent_runtime_supported, mode)
         if session_type:
             logging.warning(
                 "--session-type cannot be used with agent_runtime deployment target, it will be unset. "
@@ -1412,23 +1427,7 @@ def _resolve_session_type(
             )
             return "none"
     elif final_deployment in ("cloud_run", "gke"):
-        if session_type and session_type not in supported:
-            raise click.UsageError(
-                f"--session-type {session_type} is not supported by this agent. "
-                f"Valid options: {', '.join(supported)}."
-            )
-        if session_type:
-            return session_type
-
-        if mode.interactive:
-            return template.prompt_session_type_selection(choices=supported)
-
-        if mode.auto_approve and not mode.quiet:
-            logging.info(
-                "--session-type not specified. Defaulting to '%s' in auto-approve mode.",
-                supported[0],
-            )
-        return supported[0]
+        return _pick_session_type(session_type, supported, mode)
 
     if session_type and session_type != "in_memory":
         logging.warning(
@@ -1436,6 +1435,43 @@ def _resolve_session_type(
             "it will be ignored and in-memory sessions will be used."
         )
     return "in_memory"
+
+
+def _validate_session_types(raw: object, setting_name: str) -> list[str] | None:
+    if raw is None:
+        return None
+    if (
+        not isinstance(raw, list)
+        or not raw
+        or not all(isinstance(s, str) and s in template.SESSION_TYPES for s in raw)
+    ):
+        raise click.ClickException(
+            f"The template's {setting_name} ({raw!r}) must be a non-empty "
+            f"list of session types from: {', '.join(template.SESSION_TYPES)}."
+        )
+    return [str(s) for s in raw]
+
+
+def _pick_session_type(
+    session_type: str | None, supported: list[str], mode: InteractionMode
+) -> str:
+    if session_type and session_type not in supported:
+        raise click.UsageError(
+            f"--session-type {session_type} is not supported by this agent. "
+            f"Valid options: {', '.join(supported)}."
+        )
+    if session_type:
+        return session_type
+
+    if mode.interactive:
+        return template.prompt_session_type_selection(choices=supported)
+
+    if mode.auto_approve and not mode.quiet:
+        logging.info(
+            "--session-type not specified. Defaulting to '%s' in auto-approve mode.",
+            supported[0],
+        )
+    return supported[0]
 
 
 def _resolve_cicd_runner(

@@ -15,6 +15,7 @@
 """agents-cli playground command — start local agent playground."""
 
 import logging
+import os
 import shlex
 from pathlib import Path
 
@@ -23,10 +24,16 @@ from rich.panel import Panel
 
 from google.agents.cli import _local_auth_check
 from google.agents.cli._click import is_set_on_command_line
+from google.agents.cli._local_build import (
+    GRADLE_LANGUAGES,
+    gradle_install_dist,
+    npm_build,
+)
 from google.agents.cli._output import Console
 from google.agents.cli._project import (
     agents_root,
     chdir_project_root,
+    read_nearest_dotenv,
     read_project_config,
     require_agent_directory,
 )
@@ -69,7 +76,8 @@ def cmd_playground(port, host, reload_agents, otel_to_cloud):
     chdir_project_root()
     cfg = read_project_config()
     require_agent_directory(cfg)
-    _local_auth_check.warn_if_model_auth_broken(Path.cwd() / cfg.agent_directory)
+    agent_dir = Path.cwd() / cfg.agent_directory
+    _local_auth_check.warn_if_model_auth_broken(agent_dir)
     # Use 127.0.0.1 instead of localhost to avoid IPv6 resolution issues on Windows.
     browser_host = "127.0.0.1" if host == "0.0.0.0" else host
 
@@ -85,6 +93,16 @@ def cmd_playground(port, host, reload_agents, otel_to_cloud):
 
     _print_banner(url, args)
     env = uv_index_env(Path.cwd()) if cfg.language == "python" else None
+    if cfg.language in GRADLE_LANGUAGES:
+        # JVMs don't read .env; the shell wins, as with ADK's load_dotenv_for_agent.
+        # Kotlin's Main.kt binds HOST:PORT; Java's A2A card advertises APP_URL.
+        env = {
+            **read_nearest_dotenv(agent_dir),
+            **os.environ,
+            "HOST": host,
+            "PORT": str(port),
+            "APP_URL": f"http://{browser_host}:{port}",
+        }
     run(args, print_cmd=False, env=env, check_err_msg="Failed to start playground")
 
 
@@ -153,8 +171,7 @@ def _build_go_playground(
             _ADK_GO_HOST_FLAG_SINCE,
         )
     # `adk-go web` has no reload.
-    if reload_agents and is_set_on_command_line("reload_agents"):
-        logging.warning("--reload_agents is not supported by `adk-go web`; ignoring it.")
+    _warn_ignored_flags("`adk-go web`", reload_agents=reload_agents)
 
     url = f"http://{url_host}:{port}/ui/"
     args += ["--port", str(port)]
@@ -176,13 +193,104 @@ def _build_go_playground(
     return url, args
 
 
+def _build_java_playground(
+    *,
+    cfg,
+    browser_host: str,
+    host: str,
+    port: int,
+    reload_agents: bool,
+    otel_to_cloud: bool,
+) -> tuple[str, list[str]]:
+    """Build the (banner URL, command) for a Java playground (``AdkWebServer`` dev UI)."""
+    _warn_ignored_flags(
+        "Java agents", reload_agents=reload_agents, otel_to_cloud=otel_to_cloud
+    )
+    script = gradle_install_dist(Path.cwd())
+    url = f"http://{browser_host}:{port}/dev-ui/?app={cfg.app_name}"
+    args = [
+        str(script),
+        f"--server.port={port}",
+        f"--server.address={host}",
+        "--logging.level.root=WARN",
+        "--logging.level.com.google.adk=INFO",
+    ]
+    return url, args
+
+
+def _build_kotlin_playground(
+    *,
+    cfg,
+    browser_host: str,
+    port: int,
+    reload_agents: bool,
+    otel_to_cloud: bool,
+    **_,
+) -> tuple[str, list[str]]:
+    """Build the (banner URL, command) for a Kotlin playground (``AdkDevServer``).
+
+    The template's Main.kt binds HOST:PORT from the environment and adds the dev
+    UI with ``--dev``.
+    """
+    _warn_ignored_flags(
+        "Kotlin agents", reload_agents=reload_agents, otel_to_cloud=otel_to_cloud
+    )
+    script = gradle_install_dist(Path.cwd())
+    url = f"http://{browser_host}:{port}/dev-ui/?app={cfg.app_name}"
+    return url, [str(script), "--dev"]
+
+
+def _build_typescript_playground(
+    *,
+    cfg,
+    browser_host: str,
+    host: str,
+    port: int,
+    reload_agents: bool,
+    otel_to_cloud: bool,
+) -> tuple[str, list[str]]:
+    """Build the (banner URL, command) for a TypeScript (``adk-devtools web``) playground.
+
+    Mirrors the template Makefile's playground target.
+    """
+    # adk-devtools reloads the agent module but keeps serving the Runner it cached,
+    # and --otel_to_cloud needs exporter packages the template doesn't install.
+    _warn_ignored_flags(
+        "TypeScript agents", reload_agents=reload_agents, otel_to_cloud=otel_to_cloud
+    )
+    npm_build(Path.cwd())
+    url = f"http://{browser_host}:{port}/dev-ui/?app={cfg.app_name}"
+    args = [
+        "npx",
+        "@google/adk-devtools",
+        "web",
+        "dist",
+        "--host",
+        host,
+        "--port",
+        str(port),
+    ]
+    return url, args
+
+
+def _warn_ignored_flags(
+    target: str, *, reload_agents: bool, otel_to_cloud: bool = False
+) -> None:
+    """Warn once about the flags ``target`` can't honor; reload's default stays quiet."""
+    flags = ["--otel-to-cloud"] if otel_to_cloud else []
+    if reload_agents and is_set_on_command_line("reload_agents"):
+        flags.append("--reload_agents")
+    if flags:
+        logging.warning("Ignoring %s: not supported by %s.", " and ".join(flags), target)
+
+
 # `None` = not supported yet; dispatch_language raises a clear error.
 LANGUAGE_HANDLERS = {
     "python": _build_python_playground,
     "go": _build_go_playground,
-    "java": None,
-    "typescript": None,
-    "kotlin": None,
+    "java": _build_java_playground,
+    "typescript": _build_typescript_playground,
+    "kotlin": _build_kotlin_playground,
 }
 
 

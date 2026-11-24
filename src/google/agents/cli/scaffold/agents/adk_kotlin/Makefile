@@ -23,7 +23,7 @@ endif
 
 # Download dependencies and compile the project
 install:
-	gradle classes -q
+	./gradlew classes -q
 
 # ==============================================================================
 # Playground Targets
@@ -35,9 +35,9 @@ playground:
 	@echo "| Starting your agent playground...                                           |"
 	@echo "|                                                                             |"
 	@echo "| ADK Web: http://localhost:8080                                              |"
-	@echo "| Try asking: What's the weather in San Francisco?                            |"
+	@echo "| Try asking: What can you help me with?                                      |"
 	@echo "==============================================================================="
-	gradle -q run --args="--dev"
+	./gradlew -q run --args="--dev"
 
 # ==============================================================================
 # Local Development Commands
@@ -45,7 +45,7 @@ playground:
 
 # Launch the local API server on port 8080 (what the container serves)
 local-backend:
-	gradle -q run
+	./gradlew -q run
 
 # ==============================================================================
 # Backend Deployment Targets
@@ -56,18 +56,9 @@ local-backend:
 # Usage: make deploy [PORT=8080]
 #   PORT=8080 - Specify container port
 deploy:
-	PROJECT_ID=$$(gcloud config get-value project) && \
-	gcloud run deploy {{cookiecutter.project_name}} \
-		--source . \
-		--memory "4Gi" \
-		--project $$PROJECT_ID \
-		--region "us-east1" \
-		--no-allow-unauthenticated \
-		--no-cpu-throttling \
-		--labels "created-by=agents-cli" \
-		--update-env-vars "GOOGLE_CLOUD_PROJECT=$$PROJECT_ID,GOOGLE_CLOUD_LOCATION=global,GOOGLE_GENAI_USE_VERTEXAI=True" \
-		$(if $(PORT),--port=$(PORT))
+	agents-cli deploy $(if $(PORT),--port $(PORT))
 {%- endif %}
+{%- if cookiecutter.deployment_target != 'none' %}
 
 # ==============================================================================
 # Infrastructure Setup
@@ -77,6 +68,7 @@ deploy:
 setup-dev-env:
 	PROJECT_ID=$$(gcloud config get-value project) && \
 	(cd deployment/terraform/single-project && terraform init && terraform apply --var-file vars/env.tfvars --var project_id=$$PROJECT_ID --auto-approve)
+{%- endif %}
 
 # ==============================================================================
 # Testing & Build
@@ -84,16 +76,16 @@ setup-dev-env:
 
 # Run tests
 test:
-	gradle -q test
+	./gradlew -q test
 
 # Run code quality checks (without -q, which hides ktlint's findings)
 lint:
-	gradle ktlintCheck
+	./gradlew ktlintCheck
 
 # Build the application
 build:
-	gradle -q installDist
+	./gradlew -q installDist
 
 # Clean build artifacts
 clean:
-	gradle -q clean
+	./gradlew -q clean

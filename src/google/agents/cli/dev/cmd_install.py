@@ -22,6 +22,7 @@ import click
 
 from google.agents.cli import _tools
 from google.agents.cli._fs import delete_folder
+from google.agents.cli._local_build import gradle_executable
 from google.agents.cli._project import (
     chdir_project_root,
     find_project_root,
@@ -131,7 +132,7 @@ def _install_gradle(*, clean: bool, locked: bool) -> None:
     tasks = ["clean", "testClasses"] if clean else ["testClasses"]
     # No --quiet: Gradle's progress shows a long first download isn't stuck.
     run(
-        ["gradle", *tasks],
+        [gradle_executable(Path.cwd()), *tasks],
         check_err_msg="Failed to resolve dependencies or compile the project",
     )
 

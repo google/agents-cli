@@ -19,24 +19,33 @@ from __future__ import annotations
 import click
 
 from google.agents.cli.extension._pypi import PypiError, index_label, uses_public_index
-from google.agents.cli.extension._refs import ExtensionRef
+from google.agents.cli.extension._refs import ExtensionRef, is_release_tag
 
 
 def confirm_trust(ref: ExtensionRef, *, auto_approve: bool) -> bool:
     """Return True if it's OK to install/run this extension's code.
 
-    Verified extensions are trusted. Everything else prompts unless
-    `auto_approve`.
+    Verified extensions are trusted at a release tag, or at any version for a
+    pypi package from public PyPI. Everything else prompts unless `auto_approve`.
     """
-    if auto_approve or is_verified(ref):
+    if auto_approve or _is_verified_release(ref):
         return True
+    reason = (
+        "is not a release, so it is not verified"
+        if is_verified(ref)
+        else "is not verified"
+    )
     click.echo()
     click.secho(
-        f"  Extension source {ref.raw!r}{_origin(ref)} is not verified. It can run "
+        f"  Extension source {ref.raw!r}{_origin(ref)} {reason}. It can run "
         "arbitrary code on your machine when its commands are invoked.",
         fg="yellow",
     )
     return click.confirm("  Install and trust this extension?", default=False)
+
+
+def _is_verified_release(ref: ExtensionRef) -> bool:
+    return is_verified(ref) and (ref.kind == "pypi" or is_release_tag(ref.ref))
 
 
 def is_verified(ref: ExtensionRef) -> bool:

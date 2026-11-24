@@ -102,7 +102,9 @@ Evaluates responses using custom Python code.
 | `name` | yes | Unique identifier for the metric. |
 | `custom_function` | one of | Python source containing `def evaluate(instance):`. Receives an evaluation instance, returns a numeric score or a `{'score', 'explanation'}` dict. |
 | `custom_function_file` | one of | Path to a `.py` file containing `def evaluate(instance):`, **resolved relative to the eval config file's directory** (absolute paths honored). Keeps the metric a real, lintable/testable module instead of an inline blob. Mutually exclusive with `custom_function`. Works with both `execution` modes (for `remote`, the file's source is uploaded). |
-| `execution` | no | Where the function runs. `"local"` (default) — executed in the CLI process; no GCP project or region required; **runs with the CLI's privileges**, so only use trusted code. `"remote"` — uploaded and executed inside the `CodeExecutionMetric` sandbox; requires a configured GCP project + region. |
+| `execution` | no | Where the function runs. `"local"` (default) — executed in the CLI process (and does not use the project's `.venv`); no GCP project or region required; **runs with the CLI's privileges**, so only use trusted code. `"remote"` — uploaded and executed inside the `CodeExecutionMetric` sandbox; requires a configured GCP project + region. |
+
+Local `custom_function_file` metrics load with the file's directory on `sys.path` and `__file__` set, so they can import other modules in that directory as top-level imports. With `execution: remote`, only the single file's source text is uploaded.
 
 > **Local metrics grade cases concurrently.** Build the client once per thread, never inside `evaluate()`, which re-does ADC and the TLS handshake every case. Per thread rather than per process: one client cannot serve several threads behind a client certificate. `tests/eval/response_quality.py` has the shape to copy.
 

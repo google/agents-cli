@@ -80,7 +80,7 @@ AGENTS_CLI_DISABLE_OVERRIDES=1 agents-cli run --url https://<service-url> --mode
 ```bash
 agents-cli create my-lc-agent --agent google/agents-cli-extensions/core/langchain/template -d cloud_run
 cd my-lc-agent && agents-cli install
-agents-cli run "hello"                     # in-process graph invocation
+agents-cli run "hello"                     # in-process graph invocation, tool calls shown
 agents-cli eval generate --dataset tests/eval/datasets/basic-dataset.json -o tests/eval/output/
 agents-cli eval grade --traces tests/eval/output/<dataset>.json --config tests/eval/eval_config.yaml
 agents-cli deploy                          # native deploy (by deployment target)

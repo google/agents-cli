@@ -25,7 +25,7 @@ import click
 from google.agents.cli.__init__ import __version__
 from google.agents.cli._fs import delete_folder, make_folders_writable
 from google.agents.cli._trust import require_confirmation
-from google.agents.cli.extension._deprecation import warn_if_agents_cli_repo_ref
+from google.agents.cli.extension._deprecation import move_if_deprecated
 from google.agents.cli.extension._loader import (
     RECOVERY_COMMANDS,
     current_extension_set,
@@ -55,10 +55,11 @@ from google.agents.cli.extension._refs import (
 from google.agents.cli.extension._resolver import (
     CopyChangedError,
     ResolverError,
+    discard_copy,
     materialize,
     pin_ref,
     resolve_sha,
-    unstamp,
+    restore_hint,
 )
 from google.agents.cli.extension._skills import (
     SkillError,
@@ -177,7 +178,7 @@ def _check_command_conflicts(spec: ExtensionSpec | None, scope: str) -> None:
     default=None,
     help=(
         "Pin a branch, tag, or SHA (for pypi@, write pypi@<package>==<version> "
-        f"instead). For a first-party extension, {LATEST} pins the latest release."
+        f"instead). {LATEST} pins the newest vX.Y.Z tag."
     ),
 )
 @require_confirmation("Install this extension?")
@@ -204,7 +205,7 @@ def cmd_add(
             "--ref does not apply to a local@ extension: a local folder has no "
             "branches or tags. Drop --ref."
         )
-    warn_if_agents_cli_repo_ref(ref, global_=global_)
+    ref = move_if_deprecated(ref, pin=ref_override)
 
     root = scope_root(scope)
     if root is None:
@@ -229,7 +230,7 @@ def cmd_add(
         ref = pin_ref(ref)
     except ResolverError as e:
         raise click.ClickException(str(e)) from e
-    # After pinning, so the prompt names the version that would be installed.
+    # After pinning: a release pin skips the prompt, and the prompt names the pin.
     if not confirm_trust(ref, auto_approve=auto_approve):
         raise click.ClickException("Aborted: extension not trusted.")
     try:
@@ -259,7 +260,7 @@ def cmd_add(
         # entry pointing at nothing, and its commands silently fall back to the
         # built-ins until the copy is back.
         if name in installed_extensions:
-            raise _still_recorded(e.format_message(), name) from e
+            raise _still_recorded(e.format_message(), ref, extension_dir) from e
         raise
 
     entry = ExtensionEntry.for_ref(ref, name=name, sha=sha, scope=scope)
@@ -292,22 +293,22 @@ def _materialize_or_fail(
     ref: ExtensionRef, sha: str, root: Path, installed_extensions: set[str]
 ) -> tuple[str, Path]:
     try:
-        return materialize(ref, sha, vendored_extensions_dir(root), ref_flag="--ref")
+        return materialize(ref, sha, vendored_extensions_dir(root))
     except CopyChangedError as e:
-        name = e.extension_dir.name
-        if name in installed_extensions:
-            unstamp(e.extension_dir)
-            raise _still_recorded(str(e), name) from e
-        # Nothing records a new copy, so a half-made one would linger.
-        delete_folder(e.extension_dir)
+        discard_copy(e.extension_dir)
+        if e.extension_dir.name in installed_extensions:
+            raise _still_recorded(str(e), ref, e.extension_dir) from e
         raise click.ClickException(str(e)) from e
     except ResolverError as e:
         raise click.ClickException(str(e)) from e
 
 
-def _still_recorded(message: str, name: str) -> click.ClickException:
+def _still_recorded(
+    message: str, ref: ExtensionRef, extension_dir: Path
+) -> click.ClickException:
     return click.ClickException(
-        f"{message}\n  {name!r} is still recorded; restore its copy with: agents-cli install"
+        f"{message}\n  {extension_dir.name!r} is still recorded; to restore its "
+        f"copy, {restore_hint(ref, extension_dir)}"
     )
 
 

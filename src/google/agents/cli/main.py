@@ -70,6 +70,7 @@ class _MainGroup(LazyGroup):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._extensions_applied = False
+        self._extended_groups: set[LazyGroup] = set()
 
     def list_commands(self, ctx):
         self._apply_extensions()
@@ -305,6 +306,7 @@ class _MainGroup(LazyGroup):
                 dotted,
             )
             return False
+        self._extended_groups.add(parent)
         parent.add_override(
             sub_name,
             self._synthesize(resolved, leaf=sub_name, display=f"{group_name} {sub_name}"),
@@ -312,6 +314,14 @@ class _MainGroup(LazyGroup):
             resolved.first_party,
         )
         return True
+
+    def _reset_extensions(self) -> None:
+        """Remove the installed extension commands and apply extensions again on next lookup."""
+        self.clear_overrides()
+        for group in self._extended_groups:
+            group.clear_overrides()
+        self._extended_groups.clear()
+        self._extensions_applied = False
 
     def invoke(self, ctx: click.Context) -> None:
         # duration_ms covers dispatch through exit. Interpreter startup, imports

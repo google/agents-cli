@@ -133,7 +133,7 @@ async function runUser(
           appName: '{{cookiecutter.app_name}}',
           userId,
           sessionId,
-          newMessage: { role: 'user', parts: [{ text: 'Hello! Weather in New York?' }] },
+          newMessage: { role: 'user', parts: [{ text: 'Hello! What can you help me with?' }] },
         }),
       });
       const latency = Date.now() - reqStart;

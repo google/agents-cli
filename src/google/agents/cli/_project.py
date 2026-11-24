@@ -27,6 +27,7 @@ from typing import Any
 
 import click
 import yaml
+from dotenv import dotenv_values
 
 # Fallback for manifests written before the framework key existed. Those are all
 # ADK; new projects get the value from their template.
@@ -504,3 +505,15 @@ def find_nearest_dotenv(start_dir: Path) -> Path | None:
         if candidate.is_file():
             return candidate
     return None
+
+
+def read_nearest_dotenv(start_dir: Path) -> dict[str, str]:
+    """The values in the nearest ``.env`` at or above ``start_dir``; keys without one are dropped."""
+    dotenv_path = find_nearest_dotenv(start_dir)
+    if dotenv_path is None:
+        return {}
+    return {
+        key: value
+        for key, value in dotenv_values(dotenv_path, encoding="utf-8").items()
+        if value is not None
+    }

@@ -34,6 +34,14 @@ from rich.markup import escape
 from rich.prompt import Prompt
 
 from google.agents.cli._output import Console
+from google.agents.cli.extension._manifest import (
+    EXTENSIONS_FILE,
+    ExtensionEntry,
+    ExtensionListError,
+    check_extension_list,
+    read_extension_entries,
+    upsert_extension_entry,
+)
 
 from .cli_options import InteractionMode
 from .upgrade import (
@@ -217,6 +225,7 @@ def run_create_command(
 def display_results(
     groups: dict[str, list[FileCompareResult]],
     dep_resolutions: list[DependencyResolution],
+    extension_entries: list[ExtensionEntry],
     dry_run: bool = False,
 ) -> None:
     """Display the comparison results grouped by action."""
@@ -265,6 +274,7 @@ def display_results(
         console.print()
 
     display_dependency_changes(dep_resolutions)
+    display_extension_changes(extension_entries)
 
 
 def display_dependency_changes(dep_resolutions: list[DependencyResolution]) -> None:
@@ -287,6 +297,57 @@ def display_dependency_changes(dep_resolutions: list[DependencyResolution]) -> N
         elif resolution.status == "removed":
             console.print(f"  [yellow]-[/yellow] Remove: {dep_name}{old_ver}")
     console.print()
+
+
+def pending_template_extensions(
+    project_dir: pathlib.Path, template_project: pathlib.Path
+) -> list[ExtensionEntry]:
+    """Return the template's extension entries to be merged into the project.
+
+    Raises click.ClickException when the template has entries and the project's
+    extension list cannot be read.
+    """
+    template_entries = read_extension_entries(template_project / EXTENSIONS_FILE)
+    if not template_entries:
+        return []
+    manifest = project_dir / EXTENSIONS_FILE
+    try:
+        check_extension_list(manifest)
+    except (OSError, ExtensionListError) as e:
+        raise click.ClickException(
+            f"Cannot record template extensions in {manifest}: {e}.\n"
+            "No project files were changed. Fix the file, then rerun."
+        ) from e
+    recorded = set(read_extension_entries(manifest))
+    return [entry for entry in template_entries if entry not in recorded]
+
+
+def display_extension_changes(entries: list[ExtensionEntry]) -> None:
+    """Display the extension entries to record, if any."""
+    if not entries:
+        return
+
+    console.print(f"[bold]Extension changes ({EXTENSIONS_FILE}):[/bold]")
+    for entry in entries:
+        console.print(
+            f"  [green]+[/green] Record: {escape(entry.name)} ({escape(entry.source)})"
+        )
+    console.print()
+
+
+def record_template_extensions(
+    project_dir: pathlib.Path, entries: list[ExtensionEntry]
+) -> None:
+    """Upsert ``entries`` into the project's extension list."""
+    manifest = project_dir / EXTENSIONS_FILE
+    for entry in entries:
+        try:
+            upsert_extension_entry(manifest, entry)
+        except (OSError, ExtensionListError) as e:
+            raise click.ClickException(
+                f"Project files were updated, but template extensions were not "
+                f"recorded in {manifest}: {e}. Fix the cause and rerun."
+            ) from e
 
 
 def handle_conflict(
@@ -492,6 +553,7 @@ def run_three_way_merge(
     pre_apply_hook: Callable[[pathlib.Path], bool] | None = None,
     post_apply_hook: Callable[[pathlib.Path, str], None] | None = None,
     post_apply_no_changes_hook: Callable[[pathlib.Path, str], None] | None = None,
+    rendered_manifest_hook: Callable[[pathlib.Path], None] | None = None,
 ) -> MergeResult:
     """Shared 3-way merge pipeline used by both *upgrade* and *enhance*.
 
@@ -521,6 +583,10 @@ def run_three_way_merge(
             ``post_apply_hook`` when no project file or dependency needs
             changing -- for a caller that records something the merge never
             writes itself, such as the manifest.
+        rendered_manifest_hook: Optional callback invoked with the newly
+            generated template directory right after it is rendered, so the
+            caller can inspect what ``create`` resolved into its manifest before
+            the temporary directory is deleted.
 
     Returns:
         ``MergeResult.DONE`` if the pipeline completed (changes applied, user
@@ -566,6 +632,9 @@ def run_three_way_merge(
             old_template_project = old_template_dir / project_name
             new_template_project = new_template_dir / project_name
 
+        if rendered_manifest_hook:
+            rendered_manifest_hook(new_template_project)
+
         console.print()
 
         # ── Compare ──────────────────────────────────────────────────
@@ -605,10 +674,12 @@ def run_three_way_merge(
                     operation_label,
                 )
 
+        extension_entries = pending_template_extensions(project_dir, new_template_project)
+
         console.print()
 
         # ── Display ──────────────────────────────────────────────────
-        display_results(groups, dep_resolutions, dry_run)
+        display_results(groups, dep_resolutions, extension_entries, dry_run)
 
         total_changes = (
             len(groups["auto_update"])
@@ -617,7 +688,7 @@ def run_three_way_merge(
             + len(groups["conflict"])
         )
         has_dep_changes = any(r.status != "unchanged" for r in dep_resolutions)
-        if total_changes == 0 and not has_dep_changes:
+        if total_changes == 0 and not has_dep_changes and not extension_entries:
             console.print(
                 "[bold green]✅[/bold green] No changes needed to project files or "
                 "dependencies."
@@ -679,6 +750,9 @@ def run_three_way_merge(
                 "[dim] Dependencies updated — run [bold]agents-cli install[/bold] "
                 "to install the new versions.[/dim]"
             )
+
+        if not dry_run:
+            record_template_extensions(project_dir, extension_entries)
 
         # ── Post-apply hook (e.g. metadata update) ───────────────────
         if post_apply_hook and not dry_run:

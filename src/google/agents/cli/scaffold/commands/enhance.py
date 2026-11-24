@@ -38,6 +38,11 @@ from google.agents.cli._project import (
 )
 from google.agents.cli._runner import run_resolved
 from google.agents.cli._tools import ToolNotFoundError, require_tool
+from google.agents.cli.extension._deprecation import (
+    move_template_if_deprecated,
+    moved_template_spec,
+    warn_template_moved,
+)
 
 from ..utils import adk_shortcut, remote_template
 from ..utils.backup import make_backup_pre_apply_hook
@@ -297,7 +302,8 @@ def check_and_execute_with_saved_config(
         cli_overrides: CLI args to pass through (e.g., cicd_runner from original command)
         force: If True, include --force in subprocess args (skipped for old versions)
         dry_run: If True, include --dry-run in subprocess args (skipped for old versions)
-        migrated_base_template: Resolved ``adk@<name>`` URL, recorded before the subprocess
+        migrated_base_template: Resolved ``adk@<name>`` URL or moved template spec,
+            recorded before the subprocess
 
     Returns:
         True if config was used and executed successfully.
@@ -311,18 +317,34 @@ def check_and_execute_with_saved_config(
     project_config = find_project_config(project_dir)
     if not project_config:
         return False
-    if migrated_base_template:
-        project_config.base_template = migrated_base_template
-
-    display_params = get_display_params_from_config(project_config)
-    if not display_params:
-        return False
 
     current_version = get_current_version()
     project_version = project_config.acli_version
     use_different_version = _should_use_different_version(
         project_version, current_version
     )
+    # The subprocess runs the project's own CLI, which renders from the template
+    # the project was made from, as upgrade's old snapshot does: the moved one may
+    # need a newer CLI. Interactive mode renders here, so it keeps the moved one.
+    recorded = project_config.base_template
+    moved_template = _moved_recorded_template(recorded)
+    if recorded and moved_template and migrated_base_template == moved_template:
+        if not mode.interactive and use_different_version:
+            logging.info(
+                "agents-cli %s renders from the recorded base_template %s, which "
+                "is left as is.",
+                project_version,
+                recorded,
+            )
+            migrated_base_template = None
+        else:
+            warn_template_moved(recorded, moved_template)
+    if migrated_base_template:
+        project_config.base_template = migrated_base_template
+
+    display_params = get_display_params_from_config(project_config)
+    if not display_params:
+        return False
 
     # Show detected configuration
     _display_saved_config(
@@ -658,18 +680,24 @@ def _build_enhance_create_args(
 def _stale_manifest_keys_for_target(
     cli_overrides: dict[str, Any],
     project_config: ProjectConfig,
+    rendered_session_type: str | None,
 ) -> list[str]:
     """Return manifest keys that should be removed for the resolved target.
 
-    agent_runtime handles sessions through Gemini platform internally, so any
-    stored session_type is meaningless there. cloud_run and gke both consume
-    session_type in their templates, so the value must carry through for them.
+    agent_runtime handles sessions through Gemini platform internally unless the
+    template opted into ``agent_runtime_session_types`` (in which case the new
+    template's manifest records a concrete session type). cloud_run and gke
+    both consume session_type in their templates, so the value must carry
+    through for them.
     """
     effective_deployment = cli_overrides.get(
         "deployment_target",
         project_config.deployment_target,
     )
-    if effective_deployment == "agent_runtime":
+    if effective_deployment == "agent_runtime" and rendered_session_type in (
+        None,
+        "none",
+    ):
         return ["session_type"]
     return []
 
@@ -730,7 +758,8 @@ def _run_smart_merge(
         mode: Interaction mode controlling backup, confirm and conflict prompts
         dry_run: If True, preview changes without applying
         prefer_new: If True, resolve conflicts in favor of new template
-        migrated_base_template: Resolved ``adk@<name>`` URL to record once applied
+        migrated_base_template: Resolved ``adk@<name>`` URL or moved template spec
+            to record once applied
 
     Returns:
         True if smart-merge completed successfully, False otherwise
@@ -751,6 +780,16 @@ def _run_smart_merge(
         mode=mode,
     )
 
+    rendered_session_type: str | None = None
+
+    def _capture_rendered_manifest(new_template_dir: pathlib.Path) -> None:
+        nonlocal rendered_session_type
+        if not (new_template_dir / "agents-cli-manifest.yaml").is_file():
+            return
+        rendered = find_project_config(new_template_dir)
+        if rendered is not None:
+            rendered_session_type = rendered.session_type
+
     # -- Post-apply hook: update manifest with new config --------------------
     def _update_metadata(
         proj_dir: pathlib.Path, lang: str, *, stamp_version: bool = True
@@ -764,14 +803,19 @@ def _run_smart_merge(
             effective_deployment = cli_overrides.get(
                 "deployment_target", project_config.deployment_target
             )
-            if "session_type" in metadata_updates and effective_deployment not in (
-                "cloud_run",
-                "gke",
-            ):
+            keeps_session_type = effective_deployment in ("cloud_run", "gke") or (
+                effective_deployment == "agent_runtime"
+                and rendered_session_type not in (None, "none")
+            )
+            if "session_type" in metadata_updates and not keeps_session_type:
                 # create renders in-memory sessions outside cloud_run/gke; record
                 # that so later runs don't replay (and re-warn about) the ignored value.
                 metadata_updates["session_type"] = "in_memory"
-            stale_keys = _stale_manifest_keys_for_target(cli_overrides, project_config)
+            stale_keys = _stale_manifest_keys_for_target(
+                cli_overrides,
+                project_config,
+                rendered_session_type=rendered_session_type,
+            )
         region = metadata_updates.pop("region", None)
         if not (metadata_updates or stale_keys or migrated_base_template or region):
             return
@@ -802,6 +846,7 @@ def _run_smart_merge(
         pre_apply_hook=backup_hook,
         post_apply_hook=_update_metadata,
         post_apply_no_changes_hook=_update_metadata_only,
+        rendered_manifest_hook=_capture_rendered_manifest,
     )
     return result is MergeResult.DONE
 
@@ -1005,19 +1050,21 @@ def enhance(
             f"--base-template takes a template this CLI ships, not '{base_template}'.\n{hint}"
         )
 
-    # Resolve a recorded adk@<name> in memory; it reaches the manifest only once
-    # applied, or before the saved-config subprocess. Skip it when --force
+    # Resolve a recorded adk@<name>, or a template that moved to the extensions
+    # repo, in memory; it reaches the manifest only once applied, or before the
+    # saved-config subprocess. Skip it when --force
     # applies a template the user named: the recorded one goes unused and may
     # be a removed recipe.
     replaces_recorded_template = force and (
         template_path != pathlib.Path(".") or bool(base_template) or adk
     )
     project_config = find_project_config(current_dir)
+    recorded_template = project_config.base_template if project_config else None
     migrated_base_template: str | None = None
     if project_config and not replaces_recorded_template:
         migrated_base_template = adk_shortcut.resolve_recorded_adk_shortcut(
             project_config.base_template
-        )
+        ) or _moved_recorded_template(project_config.base_template)
         if migrated_base_template:
             project_config.base_template = migrated_base_template
 
@@ -1064,6 +1111,14 @@ def enhance(
             # Run smart-merge: with overrides if provided, or same-config
             # comparison if user kept all defaults (overrides is empty dict)
             effective_overrides = overrides if overrides else None
+            if (
+                has_cli_overrides
+                and recorded_template
+                and migrated_base_template
+                and migrated_base_template == _moved_recorded_template(recorded_template)
+            ):
+                # The saved-config step, which warns on its own path, didn't run.
+                warn_template_moved(recorded_template, migrated_base_template)
             if _run_smart_merge(
                 project_dir=current_dir,
                 project_config=project_config,
@@ -1468,7 +1523,8 @@ def enhance(
     existing_config = find_project_config(pathlib.Path.cwd())
     if replaces_recorded_template:
         recorded_base = (
-            agent_spec
+            # create fetches the moved spec, so record that one.
+            move_template_if_deprecated(agent_spec)
             if template_path != pathlib.Path(".")
             and remote_template.is_template_spec(agent_spec)
             else base_template
@@ -1760,6 +1816,15 @@ def _template_spec(template_path: pathlib.Path) -> str:
     pathlib turns ``https://`` into ``https:/``, and ``/`` into ``\\`` on Windows.
     """
     return re.sub(r"^([a-zA-Z][\w+.-]+):/(?!/)", r"\1://", template_path.as_posix())
+
+
+def _moved_recorded_template(base_template: str | None) -> str | None:
+    """The new-repo spec for a recorded template that moved, else None.
+
+    Doesn't warn: a version-locked subprocess may still render from the
+    recorded spec, so the warning waits until the moved one is used.
+    """
+    return moved_template_spec(base_template) if base_template else None
 
 
 def _base_template_for_language(language: str) -> str:

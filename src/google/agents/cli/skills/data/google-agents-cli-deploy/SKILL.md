@@ -13,7 +13,7 @@ description: >
 metadata:
   author: Google
   license: Apache-2.0
-  version: 1.15.0
+  version: 1.16.0
   requires:
     bins:
       - agents-cli
@@ -135,6 +135,7 @@ agents-cli infra single-project --apply
 | `--clear-labels` | Remove all resource labels (Cloud Run keeps its reserved `created-by` label). Combine with `--labels` to replace the label set; the clear is applied first. Cannot be combined with `--remove-labels`. | Agent Runtime, Cloud Run |
 | `--framework` | Framework the deployed container implements (defaults to `framework:` in `agents-cli-manifest.yaml`, which the template sets; `google-adk` when absent). Sets `agent_framework` on the deployment, which picks the Google Cloud console playground and the runtime contract the deployment declares. The API owns the accepted values ([reference](https://docs.cloud.google.com/gemini-enterprise-agent-platform/reference/rest/v1/projects.locations.reasoningEngines#ReasoningEngineSpec)) | Agent Runtime |
 | `--iap` | Enable Identity-Aware Proxy | Cloud Run |
+| `--ingress` | `all` (default), `internal` or `internal-and-cloud-load-balancing`. Use an internal value when the org policy `constraints/run.allowedIngress` rejects `all`; the `run.app` URL then answers only from the VPC (see `references/cloud-run.md`) | Cloud Run |
 | `--image` | Prebuilt container image URI (skips source build). On Agent Runtime the image must be in Artifact Registry and readable by the Agent Runtime service agent (`roles/artifactregistry.reader`); can't be combined with `--build-args` | All |
 | `--no-wait` | Start deployment and return immediately | Agent Runtime, Cloud Run |
 | `--status` | Check the status of a pending `--no-wait` deployment | Agent Runtime, Cloud Run |

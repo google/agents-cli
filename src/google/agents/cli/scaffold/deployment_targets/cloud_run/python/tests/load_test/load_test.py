@@ -60,7 +60,7 @@ class ChatStreamUser(HttpUser):
             "session_id": session_id,
             "new_message": {
                 "role": "user",
-                "parts": [{"text": "Hello! Weather in New york?"}],
+                "parts": [{"text": "Hello! What can you help me with?"}],
             },
             "streaming": True,
         }

@@ -93,14 +93,16 @@ curl -X POST "$SERVICE_URL/run_sse" \
   -H "Content-Type: application/json" \
   -H "$AUTH" \
   -d '{
-    "app_name": "app",
-    "user_id": "test-user",
-    "session_id": "SESSION_ID",
-    "new_message": {"role": "user", "parts": [{"text": "Hello!"}]}
+    "appName": "app",
+    "userId": "test-user",
+    "sessionId": "SESSION_ID",
+    "newMessage": {"role": "user", "parts": [{"text": "Hello!"}]}
   }'
 ```
 
-> **Common mistake:** Using `{"message": "Hello!", "user_id": "...", "session_id": "..."}` returns `422 Field required`. The ADK HTTP server expects the `new_message` / `parts` schema shown above, and the session must already exist.
+> **Common mistake:** Using `{"message": "Hello!", "userId": "...", "sessionId": "..."}` returns `422 Field required`. The ADK HTTP server expects the `newMessage` / `parts` schema shown above, and the session must already exist.
+>
+> **Use the camelCase field names** (`appName`, `userId`, `sessionId`, `newMessage`): Go, Java and TypeScript agents read only those, and Python and Kotlin also accept the snake_case spellings.
 
 ## GKE Deployment
 

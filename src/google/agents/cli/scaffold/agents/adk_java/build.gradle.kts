@@ -23,9 +23,10 @@ repositories {
 }
 
 val adkVersion = "1.14.0"
-// The A2A SDK and Spring Boot versions google-adk-a2a and google-adk-dev are built on.
+// The A2A SDK version google-adk-a2a is built on; 0.3.4 breaks the JSON-RPC request binding.
 val a2aVersion = "0.3.2.Final"
-val springBootVersion = "4.0.2"
+// The newest patch of the 4.0 line google-adk-dev is built on, for the Tomcat, Netty and Spring fixes it manages.
+val springBootVersion = "4.0.10"
 
 dependencies {
     // Keeps every Spring Boot module on the version google-adk-dev needs.
@@ -36,6 +37,19 @@ dependencies {
     implementation("com.google.adk:google-adk-a2a:$adkVersion")
     // A2A JSON-RPC server
     implementation("io.github.a2asdk:a2a-java-sdk-transport-jsonrpc:$a2aVersion")
+    // Pins for advisories the ADK and Spring Boot dependency sets still carry.
+    constraints {
+        // bcprov 1.82: GHSA-9pwp-9qqc-pr26 (critical) and GHSA-qp49-qgx5-5m26 (high), fixed in 1.85;
+        // keep bcpkix/bcutil aligned on the same BouncyCastle release.
+        implementation("org.bouncycastle:bcprov-jdk18on:1.85")
+        implementation("org.bouncycastle:bcutil-jdk18on:1.85")
+        implementation("org.bouncycastle:bcpkix-jdk18on:1.85")
+        // guava 33.5.0-jre: GHSA-xxph-c9ww-hj94 (high), fixed in 33.7.2.
+        implementation("com.google.guava:guava:33.7.2-jre")
+        // httpcore5 5.4: GHSA-hf6x-8p5f-cgmf and GHSA-v3jc-474w-2wm6 (high), fixed in 5.4.3.
+        implementation("org.apache.httpcomponents.core5:httpcore5:5.4.3")
+        implementation("org.apache.httpcomponents.core5:httpcore5-h2:5.4.3")
+    }
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     // Gradle 9 no longer puts the JUnit Platform launcher on the test classpath.
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
@@ -57,7 +71,7 @@ tasks.test {
     }
 }
 
-// Usage: gradle loadTest -Pstaging.url=http://127.0.0.1:8080 [-Pload.duration=30] [-Pload.users=10] [-Pload.ramp=2]
+// Usage: ./gradlew loadTest -Pstaging.url=http://127.0.0.1:8080 [-Pload.duration=30] [-Pload.users=10] [-Pload.ramp=2]
 val loadTest by tasks.registering(Test::class) {
     description = "Runs the load tests against a running server."
     group = "verification"

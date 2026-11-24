@@ -43,6 +43,7 @@ Tier: TypeAlias = Literal["verified", "first_party", "third_party"]
 LATEST = ":latest"
 # Recorded as the ref of an extension added without one.
 UNPINNED_REF = "HEAD"
+_RELEASE_TAG_RE = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+")
 
 # Schemes an extension may be cloned from: the set `--agent` already accepts for
 # a template repo (scaffold/utils/remote_template.py), plus ssh://, which is how
@@ -228,6 +229,23 @@ def parse_ref(raw: str, *, ref_override: str | None = None) -> ExtensionRef:
     )
 
 
+def github_path(url: str) -> str | None:
+    """Return the path of a github.com URL, without ``.git``, whatever its scheme.
+
+    For a clone URL that is ``org/repo``; a browse URL keeps the rest, such as
+    ``org/repo/tree/main/docs``.
+    """
+    scp = _SCP_RE.match(url)
+    if scp is not None:
+        host, path = scp.group("host"), scp.group("path")
+    else:
+        parts = urlsplit(url)
+        host, path = parts.hostname or "", parts.path
+    if host.lower().removeprefix("www.") != "github.com":
+        return None
+    return path.strip("/").removesuffix(".git")
+
+
 def is_pypi_reference(raw: str) -> bool:
     """Whether ``raw`` is a ``pypi@`` reference, in any letter case."""
     raw = raw.strip()
@@ -236,6 +254,11 @@ def is_pypi_reference(raw: str) -> bool:
     if scp is not None and "/" in scp.group("path"):
         return False
     return raw[: len(PYPI_PREFIX)].lower() == PYPI_PREFIX
+
+
+def is_release_tag(ref: str | None) -> bool:
+    """Whether ``ref`` is an agents-cli release tag, such as ``v1.2.3``."""
+    return ref is not None and _RELEASE_TAG_RE.fullmatch(ref) is not None
 
 
 def strip_pin(value: str) -> str:
@@ -315,22 +338,6 @@ def pypi_source(package: str, version: str | None, selector: str | None) -> str:
     return f"{PYPI_PREFIX}{package}{pin}{f'#{selector}' if selector else ''}"
 
 
-def is_from_agents_cli_repo(ref: ExtensionRef) -> bool:
-    """Whether ``ref`` installs from the agents-cli repo, by shorthand or in full."""
-    if ref.kind == "first_party":
-        return True
-    if ref.kind == "github":
-        return ref.upstream.lower() == AGENTS_CLI_REPO
-    if ref.kind == "git" and ref.url is not None:
-        return is_agents_cli_repo_url(ref.url)
-    return False
-
-
-def is_agents_cli_repo_url(url: str) -> bool:
-    """Whether ``url`` points at github.com/google/agents-cli, over any scheme."""
-    return (_github_location(url) or "").lower() == AGENTS_CLI_REPO
-
-
 def _github_repo(url: str) -> str | None:
     """Return ``org/repo`` if ``url`` clones a github.com repo over https or ssh."""
     # Plain http could be tampered with, so it never names a trusted repo.
@@ -339,20 +346,7 @@ def _github_repo(url: str) -> str | None:
         "ssh",
     ):
         return None
-    return _github_location(url)
-
-
-def _github_location(url: str) -> str | None:
-    """Return the ``org/repo`` path of a github.com URL, whatever its scheme."""
-    scp = _SCP_RE.match(url)
-    if scp is not None:
-        host, path = scp.group("host"), scp.group("path")
-    else:
-        parts = urlsplit(url)
-        host, path = parts.hostname or "", parts.path
-    if host.lower().removeprefix("www.") != "github.com":
-        return None
-    return path.strip("/").removesuffix(".git")
+    return github_path(url)
 
 
 def _tier(repo: str | None) -> Tier:

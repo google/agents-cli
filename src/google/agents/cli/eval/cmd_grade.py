@@ -28,6 +28,7 @@ from google.agents.cli._agent_platform_types import types
 from google.agents.cli._output import Console
 from google.agents.cli.eval import _paths, _verdict
 from google.agents.cli.eval.eval_utils import (
+    PreparedMetrics,
     load_eval_dotenv,
     prepare_eval_metrics,
     print_results_table,
@@ -196,6 +197,7 @@ def cmd_grade(
     region: str | None = None,
     qps: float = DEFAULT_QPS,
     fail_under: tuple[str, ...] = (),
+    prepared_metrics: PreparedMetrics | None = None,
 ) -> None:
     """Score populated agent traces against one or more metrics."""
     console = Console()
@@ -208,9 +210,6 @@ def cmd_grade(
     # configured backend -- GEMINI_API_KEY (AI Studio) or GOOGLE_CLOUD_* (Gemini platform).
     load_eval_dotenv(project_root or Path.cwd())
 
-    # Default config path in case one is not explicitly supplied
-    default_config_path = None
-
     if not traces_path or not output_path or not config_path:
         try:
             if not project_root:
@@ -219,21 +218,18 @@ def cmd_grade(
             _project.require_agent_directory(cfg)
         except Exception as e:
             raise click.ClickException(
-                "Must be in a valid agent project directory unless both --traces and --output are specified."
+                "Must be in a valid agent project directory unless --traces, --output, and --config are specified."
             ) from e
 
         if not traces_path:
             traces_path = str(_paths.default_traces_dir(project_root))
         if not output_path:
             output_path = str(_paths.default_grade_results_dir(project_root))
-        if not config_path:
-            config_path = str(_paths.default_eval_config(project_root))
-            default_config_path = config_path
 
-    prepared = prepare_eval_metrics(
+    prepared = prepared_metrics or prepare_grade_metrics(
+        project_root=project_root,
         config_path=config_path,
         metrics_str=metrics_str,
-        default_config_path=default_config_path,
         console=console,
     )
     metrics = prepared.metrics
@@ -316,6 +312,26 @@ def cmd_grade(
     # report it as "Evaluation failed."
     if not verdict.passed:
         raise click.exceptions.Exit(1)
+
+
+def prepare_grade_metrics(
+    *,
+    project_root: Path | None,
+    config_path: str | None,
+    metrics_str: str | None,
+    console: Console | None = None,
+) -> PreparedMetrics:
+    """Resolve the default config path and load metric definitions."""
+    default_config_path = None
+    if not config_path and project_root is not None:
+        config_path = str(_paths.default_eval_config(project_root))
+        default_config_path = config_path
+    return prepare_eval_metrics(
+        config_path=config_path,
+        metrics_str=metrics_str,
+        default_config_path=default_config_path,
+        console=console,
+    )
 
 
 def _drop_genai_afc_advice(record: logging.LogRecord) -> bool:

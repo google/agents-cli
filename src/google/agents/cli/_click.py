@@ -113,6 +113,10 @@ class LazyGroup(click.Group):
         """Serve `name` with `cmd` from extension `extension_name`."""
         self._overrides[name] = _Override(cmd, extension_name, first_party)
 
+    def clear_overrides(self) -> None:
+        """Stop serving the commands added with `add_override`."""
+        self._overrides.clear()
+
     @property
     def hidden_commands(self) -> frozenset[str]:
         """Names registered with `hidden=True`: invocable, but not listed."""

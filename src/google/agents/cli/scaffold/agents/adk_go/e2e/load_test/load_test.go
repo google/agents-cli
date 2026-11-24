@@ -269,7 +269,7 @@ func runA2AMessage(client *http.Client, baseURL, idToken string, results *LoadTe
 			Message: a2aMessageWithContext{
 				MessageID: messageID,
 				Role:      "user",
-				Parts:     []a2aPart{{Kind: "text", Text: "Hello! Weather in New York?"}},
+				Parts:     []a2aPart{{Kind: "text", Text: "Hello! What can you help me with?"}},
 				ContextID: contextID,
 			},
 		},

@@ -15,16 +15,19 @@
 """Shared utility functions for agents-cli eval commands."""
 
 import datetime
+import enum
 import functools
+import importlib.util
 import json
 import logging
 import math
 import os
 import re
+import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, get_args
+from typing import Any, assert_never
 
 import backoff
 import click
@@ -35,7 +38,11 @@ from google.agents.cli._agent_platform_types import types as vertex_types
 from google.agents.cli._output import Console
 from google.agents.cli._project import find_nearest_dotenv
 
-Execution = Literal["local", "remote"]
+
+class Execution(enum.StrEnum):
+    LOCAL = "local"
+    REMOTE = "remote"
+
 
 # The Eval Service in Gemini platform supports only a subset of GCP regions. Default to
 # `global` rather than the project deploy region (which may be unsupported);
@@ -153,15 +160,31 @@ def _compile_custom_function(source: str, metric_name: str):
     return evaluate_fn
 
 
+def _parse_execution(raw: object, metric_name: str) -> Execution:
+    """Validate and return a custom metric's ``execution`` mode."""
+    if isinstance(raw, str):
+        try:
+            return Execution(raw)
+        except ValueError:
+            pass
+    raise click.ClickException(
+        f"Custom metric '{metric_name}': invalid 'execution' "
+        f"value '{raw}'. Expected one of {[e.value for e in Execution]}."
+    )
+
+
 def _resolve_custom_function_file(
-    m_dict: dict, metric_name: str, config_path: str | None
+    m_dict: dict,
+    metric_name: str,
+    config_path: str | None,
+    execution: Execution,
 ) -> None:
-    """Inline a metric's ``custom_function_file`` into ``custom_function``.
+    """Resolve a metric's ``custom_function_file`` into ``custom_function``.
 
     Reads the referenced Python file -- resolved relative to the eval config
-    file's directory (absolute paths honored) -- so the rest of the pipeline
-    treats it identically to an inline ``custom_function`` (compiled for local
-    execution, or uploaded for ``execution: remote``). Mutates ``m_dict``.
+    file's directory (absolute paths honored) -- and loads it as a module for
+    local execution or inlines its source for ``execution: remote``. Mutates
+    ``m_dict``.
     """
     file_ref = m_dict.pop("custom_function_file", None)
     if file_ref is None:
@@ -180,8 +203,42 @@ def _resolve_custom_function_file(
             f"Custom metric '{metric_name}': custom_function_file not found: "
             f"{file_ref} (resolved to {path}, relative to the eval config directory)."
         )
-    with open(path, encoding="utf-8") as f:
-        m_dict["custom_function"] = f.read()
+    if execution is Execution.REMOTE:
+        with open(path, encoding="utf-8") as f:
+            m_dict["custom_function"] = f.read()
+    elif execution is Execution.LOCAL:
+        m_dict["custom_function"] = _load_custom_function_module(path, metric_name)
+    else:
+        assert_never(execution)
+
+
+def _load_custom_function_module(path: str, metric_name: str) -> Callable[[Any], Any]:
+    """Import ``path`` as a Python module with its directory on ``sys.path`` and return ``evaluate``."""
+    safe_name = re.sub(r"\W+", "_", metric_name).strip("_")
+    module_name = f"_custom_metric_{safe_name}"
+    module_dir = os.path.dirname(path)
+    if module_dir not in sys.path:
+        sys.path.insert(0, module_dir)
+    try:
+        spec = importlib.util.spec_from_file_location(module_name, path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Cannot load module spec from {path}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+    except Exception as e:
+        sys.modules.pop(module_name, None)
+        raise click.ClickException(
+            f"Failed to load custom_function_file for metric '{metric_name}': {e}"
+        ) from e
+    evaluate_fn = getattr(module, "evaluate", None)
+    if not callable(evaluate_fn):
+        sys.modules.pop(module_name, None)
+        raise click.ClickException(
+            f"Custom metric '{metric_name}' must define a callable named "
+            "'evaluate(instance)' in custom_function_file."
+        )
+    return evaluate_fn
 
 
 def load_eval_config(config_path: str) -> tuple[list[str], dict, dict[str, float]]:
@@ -418,10 +475,10 @@ def prepare_eval_metrics(
                     "names."
                 )
             try:
-                _resolve_custom_function_file(m_dict, m_name, config_path)
+                execution = _parse_execution(m_dict.pop("execution", "local"), m_name)
+                _resolve_custom_function_file(m_dict, m_name, config_path, execution)
                 if "custom_function" in m_dict:
-                    execution = m_dict.pop("execution", "local")
-                    if execution == "local":
+                    if execution is Execution.LOCAL:
                         fn_value = m_dict["custom_function"]
                         if isinstance(fn_value, str):
                             fn_value = _compile_custom_function(fn_value, m_name)
@@ -432,17 +489,13 @@ def prepare_eval_metrics(
                             )
                         )
                         local_custom_count += 1
-                    elif execution == "remote":
+                    elif execution is Execution.REMOTE:
                         metrics.append(
                             vertex_types.CodeExecutionMetric.model_validate(m_dict)
                         )
                         remote_custom_count += 1
                     else:
-                        raise click.ClickException(
-                            f"Custom metric '{m_name}': invalid 'execution' "
-                            f"value '{execution}'. Expected one of "
-                            f"{list(get_args(Execution))}."
-                        )
+                        assert_never(execution)
                 else:
                     if resolved_builtin and not _defines_own_metric_body(m_dict):
                         m_dict["name"] = resolved_builtin

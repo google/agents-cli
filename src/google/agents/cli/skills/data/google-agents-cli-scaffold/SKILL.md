@@ -3,7 +3,8 @@ name: google-agents-cli-scaffold
 description: >
   This skill should be used when the user wants to "create an agent project",
   "start a new ADK project", "build me a new agent", "add CI/CD to my project",
-  "add deployment", "enhance my project", or "upgrade my project".
+  "add deployment", "enhance my project", "upgrade my project", or
+  "migrate my Claude Agent SDK agent to GCP".
   Part of the agents-cli skills suite.
   Covers `agents-cli scaffold create`, `scaffold enhance`, and `scaffold upgrade` commands,
   template options, deployment targets, and the prototype-first workflow.
@@ -12,7 +13,7 @@ description: >
 metadata:
   author: Google
   license: Apache-2.0
-  version: 1.15.0
+  version: 1.16.0
   requires:
     bins:
       - agents-cli
@@ -92,6 +93,16 @@ agents-cli scaffold enhance . --cicd-runner <runner>
 
 Run this from inside the project directory (or pass the path instead of `.`).
 
+**Migrating an existing non-ADK agent (e.g. Claude Agent SDK):** pass the framework template positionally so `enhance` overlays it while backing up replaced user files into `.agents-cli-original/`:
+
+```bash
+agents-cli scaffold enhance google/agents-cli-extensions/core/claude/template \
+  --deployment-target <agent_runtime|cloud_run> \
+  --session-type <agent_platform_sessions|cloud_sql|in_memory>
+```
+
+Immediately after `enhance` finishes, read the template's bundled skill and migration playbook in the project (`.agents/skills/agents-cli-claude/SKILL.md` and `.agents/skills/agents-cli-claude/references/migrate-claude-agent.md`) and follow every phase in order.
+
 ### Upgrade a Project
 
 Upgrade an existing project to a newer agents-cli version, intelligently applying updates while preserving your customizations:
@@ -154,7 +165,7 @@ agents-cli scaffold enhance . --cicd-runner github_actions
 | Target | Description |
 |--------|-------------|
 | `agent_runtime` | Managed by Google (Agent Runtime). Container-based — Agent Runtime builds the project Dockerfile. Sessions handled automatically. |
-| `cloud_run` | Container-based deployment. More control; you build and deploy the Dockerfile. |
+| `cloud_run` | Container-based deployment. More control; `agents-cli deploy` builds the project Dockerfile with Cloud Build (a source deploy), or deploys a prebuilt image with `--image`. |
 | `gke` | Container-based on GKE Autopilot. Full Kubernetes control. |
 | `none` | No deployment scaffolding. Code only (still includes a Dockerfile). |
 
@@ -174,7 +185,7 @@ agents-cli scaffold enhance . --deployment-target agent_runtime
 
 ### Agent Runtime and session_type
 
-When using `agent_runtime` as the deployment target, Agent Runtime manages sessions internally. If your code sets a `session_type`, clear it — Agent Runtime overrides it.
+For built-in **ADK** templates (`adk_python`, `adk_go`), `agent_runtime` manages sessions internally — omit `--session-type` (if your ADK code sets a `session_type`, clear it). Extension templates that manage their own session store (such as `google/agents-cli-extensions/core/claude/template`) **do** accept `--session-type` (`agent_platform_sessions`, `cloud_sql`, or `in_memory`) on `agent_runtime`.
 
 ---
 
@@ -225,7 +236,7 @@ This is useful for:
 - **NEVER `mkdir` before `create`** — the CLI creates the directory; pre-creating it causes enhance mode instead of create mode
 - **NEVER create a Git repo or push to remote without asking** — confirm repo name, public vs private, and whether the user wants it created at all
 - **Always ask before choosing CI/CD runner** — present GitHub Actions and Cloud Build as options, don't default silently
-- **Agent Runtime clears session_type** — if deploying to `agent_runtime`, remove any `session_type` setting from your code
+- **Agent Runtime clears session_type on ADK templates** — omit `--session-type` on `agent_runtime` for ADK agents (opt-in extension templates such as the Claude template do accept `--session-type` on `agent_runtime`)
 - **Start with `--prototype`** for quick iteration — add deployment later with `enhance`
 - **Project names** must be ≤26 characters, lowercase, letters/numbers/hyphens only
 - **NEVER write A2A code from scratch** — A2A is built into the scaffolded app (the `adk_python` and `adk_go` templates and framework templates alike); each language's A2A surface (import paths, `AgentCard` schema etc.) is non-trivial and changes across versions. Scaffold normally; never hand-write the A2A surface. (The only sanctioned A2A hand-edit is *removing* the generated wiring for a **Live** agent, which can't be served over A2A — see `/google-agents-cli-adk-code`, `references/adk-python-live.md`.)

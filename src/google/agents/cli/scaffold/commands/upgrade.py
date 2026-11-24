@@ -14,6 +14,7 @@
 
 """Upgrade command for upgrading existing projects to newer Agents CLI versions."""
 
+import dataclasses
 import filecmp
 import logging
 import pathlib
@@ -28,17 +29,22 @@ from rich.prompt import Prompt
 from google.agents.cli import _tools
 from google.agents.cli._output import Console, configure_logging
 from google.agents.cli._project import find_project_config, find_project_root
+from google.agents.cli.extension._deprecation import move_template_if_deprecated
 
 from ..utils import adk_shortcut
 from ..utils.backup import make_backup_pre_apply_hook
 from ..utils.cli_options import InteractionMode
+from ..utils.eval_migration import migrate_legacy_evalsets, warn_legacy_eval_config
 from ..utils.generation_metadata import metadata_to_cli_args
 from ..utils.language import get_language_config
 from ..utils.merge import (
     MergeResult,
     copy_file,
     display_dependency_changes,
+    display_extension_changes,
     is_fetchable_version,
+    pending_template_extensions,
+    record_template_extensions,
     run_create_command,
     run_three_way_merge,
 )
@@ -51,10 +57,8 @@ from ..utils.upgrade import (
     DependencyResolution,
     categorize_file,
     collect_all_files,
-    migrate_legacy_evalsets,
     migrate_legacy_python_config,
     update_acli_metadata,
-    warn_legacy_eval_config,
 )
 from ..utils.version import get_current_version
 
@@ -199,6 +203,9 @@ def _run_force_upgrade(
         )
         display_dependency_changes(dep_resolutions)
 
+        extension_entries = pending_template_extensions(project_dir, template_project)
+        display_extension_changes(extension_entries)
+
         _warn_force_mode_risks(agent_directory, agent_file)
 
         if dry_run:
@@ -246,6 +253,8 @@ def _run_force_upgrade(
                 "Project files were updated, but dependencies were not. "
                 "Fix the error above and rerun."
             )
+
+        record_template_extensions(project_dir, extension_entries)
 
         update_acli_metadata(
             project_dir,
@@ -386,16 +395,28 @@ def upgrade(
     )
     if migrated_base_template:
         metadata.base_template = migrated_base_template
+    # The old snapshot renders from the spec the project was made from, so the
+    # merge sees what changed; the new one renders from where the template moved.
+    moved_base_template = (
+        move_template_if_deprecated(metadata.base_template)
+        if metadata.base_template
+        else metadata.base_template
+    )
     # Once applied, the manifest records the canonical name (adk -> adk_python).
     # metadata keeps the recorded name: the old CLI replayed by the merge needs it.
-    recorded_base_template = migrated_base_template or resolve_agent_alias(
-        metadata.base_template
-    )
+    if moved_base_template != metadata.base_template:
+        recorded_base_template = moved_base_template
+    else:
+        recorded_base_template = migrated_base_template or resolve_agent_alias(
+            metadata.base_template
+        )
 
     # Get project name and CLI args from metadata
     project_name = metadata.project_name or project_dir.name
     agent_directory = metadata.agent_directory or "app"
-    cli_args = metadata_to_cli_args(metadata)
+    cli_args = metadata_to_cli_args(
+        dataclasses.replace(metadata, base_template=moved_base_template)
+    )
     old_cli_args = metadata_to_cli_args(metadata, target_version=old_version)
 
     mode = InteractionMode(interactive=interactive, auto_approve=auto_approve)

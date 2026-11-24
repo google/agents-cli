@@ -20,6 +20,7 @@ from pathlib import Path
 import click
 
 from google.agents.cli import _tools
+from google.agents.cli._local_build import gradle_executable
 from google.agents.cli._project import chdir_project_root, read_project_config
 from google.agents.cli._runner import run
 from google.agents.cli._uv_index import sync_failure_message, uv_index_env
@@ -128,7 +129,7 @@ def _lint_java(*, fix: bool, mypy: bool, skip_codespell: bool, skip_ty: bool) ->
         "Java", fix=fix, mypy=mypy, skip_ty=skip_ty, skip_codespell=skip_codespell
     )
     run(
-        ["gradle", "checkstyleMain", "checkstyleTest"],
+        [gradle_executable(Path.cwd()), "checkstyleMain", "checkstyleTest"],
         check_err_msg="Checkstyle found issues",
     )
 
@@ -189,7 +190,7 @@ def _lint_kotlin(*, fix: bool, mypy: bool, skip_codespell: bool, skip_ty: bool) 
         "Kotlin", mypy=mypy, skip_ty=skip_ty, skip_codespell=skip_codespell
     )
     task = "ktlintFormat" if fix else "ktlintCheck"
-    run(["gradle", task], check_err_msg="ktlint found issues")
+    run([gradle_executable(Path.cwd()), task], check_err_msg="ktlint found issues")
 
 
 def _warn_unsupported_flags(language: str, **flags: bool) -> None:

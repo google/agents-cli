@@ -8,7 +8,8 @@
 | `--deployment-target` | `-d` | `agent_runtime` with `-y`; otherwise required unless `--prototype` | Deployment target (`agent_runtime`, `cloud_run`, `gke`, `none`) |
 | `--region` | | `us-east1` | GCP region |
 | `--prototype` | `-p` | off | Skip CI/CD and Terraform (recommended for first pass) |
-| `--session-type` | | — | Session storage (`in_memory`, `cloud_sql`, `agent_platform_sessions`). Use with `cloud_run` or `gke` targets (Agent Runtime in Gemini platform manages sessions itself). |
+| `--session-type` | | — | Session storage (`in_memory`, `cloud_sql`, `agent_platform_sessions`). Used on `cloud_run` and `gke`, and on `agent_runtime` for templates that opt in (such as the Claude template; ADK templates manage sessions internally on `agent_runtime`). |
+| `--agent-gateway` / `--no-agent-gateway` | | off | Prepare `Dockerfile` for an egress Agent Gateway (`AGENT_GATEWAY_ROOT_CERTIFICATES`; `agent_runtime` only) |
 | `--cicd-runner` | | — | CI/CD runner (`github_actions`, `google_cloud_build`, `skip`) |
 | `--agent-directory` | `-dir` | `app/` | Custom agent code directory inside the project; may be nested, e.g. `src/my_agent` |
 | `--agent-guidance-filename` | | `GEMINI.md` | Coding agent guidance file (`GEMINI.md`, `CLAUDE.md`, or `AGENTS.md`) |
@@ -51,6 +52,7 @@ For all available flags, run `agents-cli scaffold create --help`.
 | `--cicd-runner` | | — | Add CI/CD runner (`github_actions`, `google_cloud_build`, `skip`) |
 | `--agent-directory` | `-dir` | `app/` | Agent code directory. Pass if not using the default. |
 | `--session-type` | | — | Session storage (`in_memory`, `cloud_sql`, `agent_platform_sessions`) |
+| `--agent-gateway` / `--no-agent-gateway` | | — | Add or remove egress Agent Gateway `Dockerfile` CA setup (`agent_runtime` only) |
 | `--region` | | `us-east1` | GCP region |
 | `--dry-run` | | off | Preview changes without applying them (requires saved metadata) |
 | `--force` | | off | Force overwrite all files (skip smart-merge comparison) |

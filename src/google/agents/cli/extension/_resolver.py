@@ -29,9 +29,8 @@ from typing import Any
 
 import yaml
 from filelock import FileLock, Timeout
-from packaging.version import InvalidVersion, Version
+from packaging.version import Version
 
-from google.agents.cli.__init__ import __version__
 from google.agents.cli._fs import delete_folder, first_copy_error, make_folders_writable
 from google.agents.cli._git import is_commit_sha, is_option_like
 from google.agents.cli._runner import run_resolved
@@ -50,8 +49,8 @@ from google.agents.cli.extension._pypi import (
 )
 from google.agents.cli.extension._refs import (
     LATEST,
-    UNPINNED_REF,
     ExtensionRef,
+    is_release_tag,
     pypi_source,
 )
 from google.agents.cli.extension._spec import EXTENSION_FILE, TEMPLATE_DIR
@@ -60,8 +59,6 @@ from google.agents.cli.scaffold.utils.fs import source_ignore_patterns
 # An extension name becomes a directory component under the vendoring root, so it
 # must not contain path separators or traversal — reject anything else.
 _SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
-
-_RELEASE_TAG_RE = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+")
 
 
 def validate_extension_name(name: str) -> str:
@@ -87,9 +84,8 @@ _TRUSTED_REF_PREFIXES = ("refs/remotes/origin", "refs/tags")
 # Seconds to wait for the shared git-cache lock before giving up.
 _CACHE_LOCK_TIMEOUT_SECONDS = 120
 
-# Records what a vendored copy was materialized from, so sync can detect a
-# stale or partial copy (dir exists but doesn't match its source) instead of
-# trusting mere directory existence.
+# Records what a vendored copy was materialized from, so install can tell a
+# copy that matches its pin from one it must not use or replace.
 STAMP_FILE = ".agents-cli-extension-sha"
 
 # Recorded as the pin of a `local@` extension, which has no commit to point at.
@@ -231,23 +227,30 @@ class CopyChangedError(ResolverError):
 def read_stamp(extension_dir: Path) -> str | None:
     """Return what an extension dir was materialized from, or None if unstamped."""
     stamp = extension_dir / STAMP_FILE
-    if not stamp.exists():
+    if not stamp.is_file():
         return None
     return stamp.read_text(encoding="utf-8").strip() or None
 
 
-def unstamp(extension_dir: Path) -> None:
-    """Delete the stamp, so the next `agents-cli install` copies the extension again."""
+def discard_copy(extension_dir: Path) -> None:
+    """Delete a copy that may be incomplete, so the next `agents-cli install` fetches it.
+
+    Warns when it cannot. The stamp goes first, so a copy only partly deleted
+    never passes as current.
+    """
     try:
         (extension_dir / STAMP_FILE).unlink(missing_ok=True)
     except OSError as e:
-        # A stale stamp would pass a half-replaced copy as current.
-        logging.warning(
-            "Could not mark %s as incomplete (%s). Delete that folder, then run "
-            "`agents-cli install`.",
-            extension_dir,
-            e,
-        )
+        logging.debug("Could not delete the stamp of %s: %s", extension_dir, e)
+    delete_folder(extension_dir)
+
+
+def restore_hint(ref: ExtensionRef, extension_dir: Path) -> str:
+    """How to get the recorded copy back after `discard_copy`."""
+    # Install never replaces an existing pinned copy, so a leftover one must go first.
+    if ref.kind != "local" and os.path.lexists(extension_dir):
+        return f"delete {extension_dir}, then run agents-cli install"
+    return "run agents-cli install"
 
 
 def expected_stamp(ref: ExtensionRef, sha: str) -> str:
@@ -256,7 +259,7 @@ def expected_stamp(ref: ExtensionRef, sha: str) -> str:
     For a git ref that is the pinned SHA, and for a pypi ref the wheel's sha256.
     A ``local@`` ref has no commit to pin — its recorded pin is the constant
     ``LOCAL_SHA`` — so its copy is stamped with a hash of the source tree instead.
-    Comparing that hash is what lets sync notice edits to a local source;
+    Comparing that hash is what lets install notice edits to a local source;
     comparing the pin would only match the sentinel against itself and never
     refresh.
     """
@@ -425,34 +428,21 @@ def _resolve_commit_sha(ref: ExtensionRef) -> str:
 
 
 def pin_ref(ref: ExtensionRef) -> ExtensionRef:
-    """Pin an unpinned first-party or pypi ref, or ``LATEST``, to a release.
+    """Pin an unversioned pypi ref, or ``LATEST``, to its newest release.
 
-    A first-party ref gets the newest release tag no newer than the running
-    CLI; an unversioned pypi ref gets the newest release, recorded as ``==<version>``.
+    A pypi ref is recorded as ``==<version>``, a git ref as its newest
+    ``vX.Y.Z`` tag. Other refs are returned unchanged.
     """
     if ref.kind == "pypi":
         return _pin_pypi_release(ref)
-    if ref.ref == LATEST and ref.kind != "first_party":
-        raise ResolverError(
-            f"{LATEST} is only for first-party and pypi@ extensions; pin a branch, "
-            "tag, or SHA instead."
-        )
-    # UNPINNED_REF reads back as "no ref", which pins the latest release.
-    if ref.kind == "first_party" and ref.ref == UNPINNED_REF:
-        raise ResolverError(
-            f"{UNPINNED_REF} is not supported for a first-party extension; pin main to follow "
-            f"the default branch, or {LATEST} for the latest release."
-        )
-    if ref.kind == "first_party" and ref.ref in (None, LATEST):
-        tag = _pick_release(_list_release_tags(ref), ref)
-        logging.info(
-            "Using %s, the latest release of %s for agents-cli %s.",
-            tag,
-            ref.upstream,
-            __version__,
-        )
-        return replace(ref, ref=tag)
-    return ref
+    if ref.ref != LATEST:
+        return ref
+    # add and update refuse a ref for a local@ extension before this. The
+    # extension's `requires.agents_cli` range, checked on install, says whether
+    # the release runs on this CLI.
+    tag = _newest_release(_list_release_tags(ref))
+    logging.info("Using %s, the latest release of %s.", tag, ref.upstream)
+    return replace(ref, ref=tag)
 
 
 def _pin_pypi_release(ref: ExtensionRef) -> ExtensionRef:
@@ -476,7 +466,7 @@ def _list_release_tags(ref: ExtensionRef) -> list[str]:
         line.partition("\t")[2].removeprefix("refs/tags/")
         for line in result.stdout.splitlines()
     )
-    tags = [name for name in names if _RELEASE_TAG_RE.fullmatch(name)]
+    tags = [name for name in names if is_release_tag(name)]
     if not tags:
         raise ResolverError(
             f"{ref.upstream!r} has no release tags; pin a branch, tag, or SHA instead."
@@ -484,30 +474,17 @@ def _list_release_tags(ref: ExtensionRef) -> list[str]:
     return tags
 
 
+def _newest_release(tags: Sequence[str]) -> str:
+    """The highest of ``vX.Y.Z`` tags, compared as versions.
+
+    Compared as strings, ``v1.9.0`` would beat ``v1.10.0``.
+    """
+    return sorted(tags, key=Version)[-1]
+
+
 def _git_reason(result: subprocess.CompletedProcess) -> str:
     stderr = " ".join(result.stderr.split())
     return f" ({stderr})" if stderr else ""
-
-
-def _pick_release(tags: Sequence[str], ref: ExtensionRef) -> str:
-    # A release newer than the running CLI may need commands it doesn't have yet.
-    running = _running_release()
-    eligible = [tag for tag in tags if running is None or Version(tag) <= running]
-    if not eligible:
-        raise ResolverError(
-            f"{ref.upstream!r} has no release at or below agents-cli {__version__}; "
-            "upgrade agents-cli, or pin a branch, tag, or SHA instead."
-        )
-    return max(eligible, key=Version)
-
-
-def _running_release() -> Version | None:
-    # A source build has no release to match, so it gets the newest one.
-    try:
-        running = Version(__version__)
-    except InvalidVersion:
-        return None
-    return None if running.is_devrelease else running
 
 
 def _extension_name_from_dir(extension_dir: Path, fallback: str) -> str:
@@ -576,7 +553,6 @@ def materialize(
     dest_root: Path,
     *,
     name: str | None = None,
-    ref_flag: str | None = None,
 ) -> tuple[str, Path]:
     """Vendor an extension directory into ``dest_root/<extension_name>``.
 
@@ -590,15 +566,13 @@ def materialize(
     regardless of what the upstream ``agents-cli-extension.yaml`` declares.  This
     prevents an extension rename upstream from silently relocating (and losing) the
     vendored copy.
-
-    ``ref_flag`` is the caller's flag for pinning a ref, named in error hints.
     """
     dest_root.mkdir(parents=True, exist_ok=True)
     if ref.kind == "local":
         return _materialize_local(ref, dest_root, name=name)
     if ref.kind == "pypi":
         return _materialize_pypi(ref, sha, dest_root, name=name)
-    return _materialize_commit(ref, sha, dest_root, name=name, ref_flag=ref_flag)
+    return _materialize_commit(ref, sha, dest_root, name=name)
 
 
 def _materialize_local(
@@ -635,15 +609,12 @@ def _materialize_commit(
     dest_root: Path,
     *,
     name: str | None,
-    ref_flag: str | None,
 ) -> tuple[str, Path]:
     checkout = _checkout(ref, sha)
     if ref.kind == "first_party":
-        sub = (
-            _first_party_source(checkout, ref, sha, ref_flag)
-            if ref.selector
-            else checkout
-        )
+        # Only an entry recorded before the move to the extensions repo reaches
+        # here: add and update rewrite a new one first.
+        sub = _first_party_source(checkout, ref, sha) if ref.selector else checkout
     else:
         sub = _inside(checkout, ref.selector) if ref.selector else checkout
     if not (sub / EXTENSION_FILE).exists():
@@ -764,9 +735,7 @@ def _is_on_branch_or_tag(repo_dir: Path, sha: str) -> bool:
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
-def _first_party_source(
-    checkout: Path, ref: ExtensionRef, sha: str, ref_flag: str | None
-) -> Path:
+def _first_party_source(checkout: Path, ref: ExtensionRef, sha: str) -> Path:
     """Find the extension directory for ``ref.selector`` under extensions/."""
     sub = _inside(checkout, f"extensions/{ref.selector}")
     if (sub / EXTENSION_FILE).exists():
@@ -789,16 +758,10 @@ def _first_party_source(
             f"or its {TEMPLATE_DIR}/ at {sha}. Install one of the extensions found under "
             f"it instead:\n{commands}"
         )
-    upgrade = (
-        "upgrade agents-cli for a newer release, "
-        if ref.ref and _RELEASE_TAG_RE.fullmatch(ref.ref)
-        else ""
-    )
-    example = f", for example {ref_flag} main" if ref_flag and ref.ref != "main" else ""
     raise ResolverError(
         f"no first-party extension {ref.selector!r} in {ref.upstream} at {ref.ref or sha}. "
-        f"Check the name, {upgrade}or pin a branch, tag, or commit where it "
-        f"exists{example}."
+        f"Check the name, or move it to the extensions repo with "
+        f"`agents-cli extension update`."
     )
 
 

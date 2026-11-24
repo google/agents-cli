@@ -25,7 +25,7 @@ ADK `reasoning_engine` routes this project does not serve. Say so before recomme
 |---|---|
 | `LlmAgent`, `Agent`, `google.adk.tools` | `langchain.agents.create_agent`, plain Python functions as tools, or any compiled `StateGraph` |
 | `adk web`, `adk run` | `agents-cli playground` (runs `langgraph dev`) |
-| ADK runner behind `agents-cli run` | `agents-cli run` invokes the graph in-process |
+| ADK runner behind `agents-cli run` | `agents-cli run` invokes the graph in-process and prints tool calls and responses the same way |
 | `agents-cli eval dataset synthesize`, `eval optimize` | Unavailable: both drive the agent through ADK. The command says so and exits |
 | Add an `LlmAgent` in `app/agent.py` | Change the graph in `app/agent.py`; keep the name `root_agent` |
 

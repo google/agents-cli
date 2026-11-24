@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import shutil
 import stat
 import tempfile
@@ -32,10 +33,12 @@ import click
 from google.agents.cli.__init__ import __version__
 from google.agents.cli._fs import delete_folder, first_copy_error, make_folders_writable
 from google.agents.cli._trust import require_confirmation
-from google.agents.cli.extension._deprecation import (
-    warn_if_installed_from_agents_cli_repo,
+from google.agents.cli.extension._deprecation import move_if_deprecated
+from google.agents.cli.extension._loader import (
+    is_inline_extension,
+    is_out_of_range,
+    load_extension_spec,
 )
-from google.agents.cli.extension._loader import is_out_of_range, load_extension_spec
 from google.agents.cli.extension._manifest import (
     EXTENSIONS_FILE,
     ExtensionEntry,
@@ -60,9 +63,11 @@ from google.agents.cli.extension._resolver import (
     LOCAL_SHA,
     CopyChangedError,
     ResolverError,
+    discard_copy,
     materialize,
     pin_ref,
     resolve_sha,
+    restore_hint,
     validate_extension_name,
 )
 from google.agents.cli.extension._skills import (
@@ -130,8 +135,8 @@ class _Updated:
     default=None,
     help=(
         "Re-pin NAME to this branch, tag, or SHA, or for a pypi@ extension to "
-        f"this version. For first-party and pypi@ extensions, {LATEST} pins the "
-        "latest release, and works without NAME."
+        f"this version. {LATEST} pins the newest release (vX.Y.Z tag for git), "
+        "and works without NAME."
     ),
 )
 @require_confirmation("Update extension(s) and replace their skills?")
@@ -253,6 +258,20 @@ def _update_scope(
 
 def _update_entry(run: _ScopeRun, entry: ExtensionEntry) -> _Outcome:
     """Check that the entry can be updated, back up its copy, then advance it."""
+    try:
+        validate_extension_name(entry.name)
+    except ResolverError as e:
+        logging.warning("Skipping extension %r: %s", entry.name, e)
+        return "skipped"
+    extension_dir = vendored_extensions_dir(run.root) / entry.name
+    if not os.path.lexists(extension_dir) and is_inline_extension(run.root, entry.name):
+        logging.warning(
+            "Skipped %r%s: it comes from the project template; update it with "
+            "`agents-cli scaffold upgrade`.",
+            entry.name,
+            _scope_label(run, entry.name),
+        )
+        return "skipped"
     ref = _parse_entry_ref(run, entry)
     if ref is None:
         return "skipped"
@@ -270,7 +289,6 @@ def _update_entry(run: _ScopeRun, entry: ExtensionEntry) -> _Outcome:
             "Skipped %r%s (not trusted).", entry.name, _scope_label(run, entry.name)
         )
         return "skipped"
-    extension_dir = vendored_extensions_dir(run.root) / entry.name
     try:
         backup = _back_up_copy(ref, extension_dir, run.backup_dir)
     except OSError as e:
@@ -278,8 +296,9 @@ def _update_entry(run: _ScopeRun, entry: ExtensionEntry) -> _Outcome:
             run,
             entry,
             ref,
+            extension_dir,
             f"could not back up the old copy ({first_copy_error(e)})",
-            "kept",
+            old_copy="kept",
         )
         return "skipped"
     return _advance(run, entry, ref, extension_dir, backup)
@@ -288,23 +307,22 @@ def _update_entry(run: _ScopeRun, entry: ExtensionEntry) -> _Outcome:
 def _parse_entry_ref(run: _ScopeRun, entry: ExtensionEntry) -> ExtensionRef | None:
     """The ref to update the entry from.
 
-    Returns None when its name or ref is invalid (with a warning), or when a
+    Returns None when its ref is invalid (with a warning), or when a
     batch ``--to :latest`` doesn't apply to it.
     """
     try:
-        validate_extension_name(entry.name)
-        warn_if_installed_from_agents_cli_repo(entry.name, entry.source, run.scope)
         ref = parse_ref(
             entry.source,
             ref_override=run.to or _recorded_ref(entry),
         )
-        if (
-            run.updates_all
-            and run.to == LATEST
-            and ref.kind not in ("first_party", "pypi")
-        ):
+        # A typed --to carries over, and so does a recorded branch; a recorded
+        # tag or SHA names other code in the new repo.
+        moved = move_if_deprecated(ref, pin=run.to, recorded=_recorded_ref(entry))
+        if moved is not ref:
+            return pin_ref(moved)
+        if run.updates_all and run.to == LATEST and ref.kind == "local":
             logging.info(
-                "Kept %r: --to %s moves first-party and pypi@ extensions only.",
+                "Kept %r: --to %s doesn't apply to a local@ extension.",
                 entry.name,
                 LATEST,
             )
@@ -369,9 +387,10 @@ def _report_skipped(
     run: _ScopeRun,
     entry: ExtensionEntry,
     ref: ExtensionRef,
+    extension_dir: Path,
     reason: str,
-    old_copy: _OldCopy,
     *,
+    old_copy: _OldCopy,
     no_old_copy_hint: str = _NO_OLD_COPY_HINT,
 ) -> None:
     logging.warning(
@@ -379,7 +398,7 @@ def _report_skipped(
         entry.name,
         _scope_label(run, entry.name),
         reason,
-        _old_copy_status(entry, ref, old_copy, no_old_copy_hint),
+        _old_copy_status(entry, ref, extension_dir, old_copy, no_old_copy_hint),
     )
 
 
@@ -393,14 +412,18 @@ def _scope_suffix(scope: str, name: str, at_both_scopes: frozenset[str]) -> str:
 
 
 def _old_copy_status(
-    entry: ExtensionEntry, ref: ExtensionRef, old_copy: _OldCopy, no_old_copy_hint: str
+    entry: ExtensionEntry,
+    ref: ExtensionRef,
+    extension_dir: Path,
+    old_copy: _OldCopy,
+    no_old_copy_hint: str,
 ) -> str:
     if old_copy == "kept":
         # A local@ entry's sha is the word "local", not a pin.
         return "kept the old copy" if ref.kind == "local" else f"kept {entry.sha[:7]}"
     if old_copy == "none":
         return f"deleted the refused copy (there was no old copy). {no_old_copy_hint}"
-    return "could not restore the old copy; run agents-cli install"
+    return f"could not restore the old copy; {restore_hint(ref, extension_dir)}"
 
 
 def _advance(
@@ -454,9 +477,7 @@ def _fetch_and_materialize_new_version(ref: ExtensionRef, extension_dir: Path) -
     new_sha = resolve_sha(ref)
     # name=extension_dir.name pins the vendored dir to the stable id (see
     # materialize) so an update survives an upstream rename.
-    materialize(
-        ref, new_sha, extension_dir.parent, name=extension_dir.name, ref_flag="--to"
-    )
+    materialize(ref, new_sha, extension_dir.parent, name=extension_dir.name)
     return new_sha
 
 
@@ -471,11 +492,22 @@ def _restore_changed_copy(
         delete_folder(extension_dir)
         restored = not (extension_dir.exists() or extension_dir.is_symlink())
     else:
-        restored = _materialize_old_pin(entry, ref, extension_dir)
-    if not restored:
-        logging.warning(
-            "The copy of %r may be incomplete; run agents-cli install.", entry.name
-        )
+        restored = _materialize_old_pin(entry, extension_dir)
+    if restored:
+        return
+    if ref.kind != "local":
+        discard_copy(extension_dir)
+    what_is_left = (
+        "may be incomplete"
+        if extension_dir.exists() or extension_dir.is_symlink()
+        else "is missing"
+    )
+    logging.warning(
+        "The copy of %r %s; %s.",
+        entry.name,
+        what_is_left,
+        restore_hint(ref, extension_dir),
+    )
 
 
 def _restore_backup(entry: ExtensionEntry, extension_dir: Path, backup: Path) -> bool:
@@ -519,11 +551,13 @@ def _swap_in_backup(extension_dir: Path, backup: Path) -> None:
         delete_folder(work)
 
 
-def _materialize_old_pin(
-    entry: ExtensionEntry, ref: ExtensionRef, extension_dir: Path
-) -> bool:
+def _materialize_old_pin(entry: ExtensionEntry, extension_dir: Path) -> bool:
     try:
-        materialize(ref, entry.sha, extension_dir.parent, name=entry.name)
+        # From the recorded source, as `install` does: a move to the extensions
+        # repo changes `ref`, but the old pin is a commit of the source it came from.
+        # _parse_entry_ref already parsed this source, so it parses again here.
+        old_ref = parse_ref(entry.source, ref_override=entry.sha)
+        materialize(old_ref, entry.sha, extension_dir.parent, name=entry.name)
     except (ResolverError, OSError) as e:
         logging.warning("Could not restore the previous pin for %r: %s", entry.name, e)
         return False
@@ -540,7 +574,7 @@ def _restore_and_report(
     reason: str,
 ) -> None:
     old_copy = _restore_refused_copy(entry, ref, extension_dir, backup)
-    _report_skipped(run, entry, ref, reason, old_copy)
+    _report_skipped(run, entry, ref, extension_dir, reason, old_copy=old_copy)
 
 
 def _restore_refused_copy(
@@ -549,8 +583,7 @@ def _restore_refused_copy(
     """Put the previously pinned copy back after refusing to advance to a new one.
 
     Returns what happened to the old copy. Unless it is back, it deletes the
-    refused copy (or warns that it could not), so the loader asks for
-    `agents-cli install`, as the skip message does.
+    refused copy, or warns that it could not.
     """
     if backup is not None:
         restored = _restore_backup(entry, extension_dir, backup)
@@ -558,10 +591,10 @@ def _restore_refused_copy(
         delete_folder(extension_dir)
         return "none"
     else:
-        restored = _materialize_old_pin(entry, ref, extension_dir)
+        restored = _materialize_old_pin(entry, extension_dir)
     if restored:
         return "kept"
-    delete_folder(extension_dir)
+    discard_copy(extension_dir)
     return "lost"
 
 
@@ -609,8 +642,9 @@ def _skills_refused(
         run,
         entry,
         ref,
+        extension_dir,
         f"the new version's skills cannot be installed ({reason})",
-        old_copy,
+        old_copy=old_copy,
         no_old_copy_hint=(
             f"Fix the cause, then run `agents-cli extension update {entry.name}` again"
         ),

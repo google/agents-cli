@@ -30,7 +30,7 @@ playground:
 	@echo "| Starting your agent playground...                                           |"
 	@echo "|                                                                             |"
 	@echo "| Open: http://127.0.0.1:8501/ui/                                             |"
-	@echo "| Try asking: What's the weather in San Francisco?                            |"
+	@echo "| Try asking: What can you help me with?                                      |"
 	@echo "==============================================================================="
 
 	go run . web --port 8501 api -path_prefix / webui -api_server_address=
@@ -107,9 +107,12 @@ deploy:
 		echo "  kubectl get svc {{cookiecutter.project_name}} -n {{cookiecutter.project_name}}"; \
 	fi
 {%- endif %}
+{%- if cookiecutter.deployment_target in ('cloud_run', 'gke') %}
 
 # Alias for 'make deploy' for backward compatibility
 backend: deploy
+{%- endif %}
+{%- if cookiecutter.deployment_target != 'none' %}
 
 # ==============================================================================
 # Infrastructure Setup
@@ -119,6 +122,7 @@ backend: deploy
 setup-dev-env:
 	PROJECT_ID=$$(gcloud config get-value project) && \
 	(cd deployment/terraform/single-project && terraform init && terraform apply --var-file vars/env.tfvars --var project_id=$$PROJECT_ID --auto-approve)
+{%- endif %}
 
 # ==============================================================================
 # Testing & Code Quality

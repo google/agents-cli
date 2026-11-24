@@ -12,6 +12,8 @@ For how to size cpu/memory/workers/concurrency together (and avoid OOM), see **S
 
 ## Dockerfile
 
+Without `--image`, `agents-cli deploy` runs a source deploy (`gcloud run deploy --source .`): it uploads the project to a `run-sources-*` bucket, Cloud Build builds the `Dockerfile` into the `cloud-run-source-deploy` Artifact Registry repository, and the console shows the deployment type as Source. Pass `--image` with a prebuilt image for a Container deploy.
+
 Scaffolded projects include a `Dockerfile`:
 * Python uses a single-stage build with `uv` for dependency management.
 * Go uses a multi-stage build — a `golang` builder image compiles the binary, which is copied into a slim runtime image.
@@ -22,7 +24,7 @@ Check the project root `Dockerfile` for the exact configuration.
 
 A scaffolded Python project serves `uvicorn app.fast_api_app:app` on port 8080; a Go project serves the binary built from `main.go`. Which routes that app exposes depends on the framework, so check `app/fast_api_app.py` or `main.go`.
 
-> **ADK projects.** The app serves the ADK HTTP surface (`/run_sse`, `/apps/...`) plus A2A (JSON-RPC + agent card — A2A is built into every ADK agent). A2A differs between languages — Python serves both under `/a2a/{app_name}`; Go serves the agent card at the root (`/.well-known/agent-card.json`) and JSON-RPC under `/a2a/` (`/a2a/v1/invoke`, plus `/a2a/invoke` for the v0 protocol).
+> **ADK projects.** The app serves the ADK HTTP surface (`/run_sse`, `/apps/...`) plus A2A (JSON-RPC + agent card — A2A is built into every ADK agent). A2A differs between languages — Python and TypeScript serve both under `/a2a/{app_name}`; Go serves the agent card at the root (`/.well-known/agent-card.json`) and JSON-RPC under `/a2a/` (`/a2a/v1/invoke`, plus `/a2a/invoke` for the v0 protocol); Java and Kotlin serve the agent card at the root and JSON-RPC at `/a2a/remote/v1/message:send`, which takes only the non-streaming `message/send` method.
 
 ## Session Types
 
@@ -42,7 +44,9 @@ Cloud SQL session infrastructure (instance, database, Cloud SQL Unix socket volu
 
 ## Network & Ingress
 
-Default ingress is `INGRESS_TRAFFIC_ALL` (public). To restrict, change the `ingress` setting in `service.tf` to `INGRESS_TRAFFIC_INTERNAL_ONLY` (VPC only) or `INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER` (internal + GCLB).
+Default ingress is `all`. `agents-cli deploy --ingress internal` (VPC only) or `--ingress internal-and-cloud-load-balancing` (VPC plus Cloud Load Balancing) restricts it; projects whose org policy `constraints/run.allowedIngress` rejects `all` need one of these. The `run.app` URL, and `gcloud run services proxy` which goes through it, then answer 404 from outside the VPC.
+
+The generated `service.tf` sets `ingress = "INGRESS_TRAFFIC_ALL"`, so change it too when you deploy with `--ingress`, or `terraform apply` resets it.
 
 IAP (Identity-Aware Proxy) can be enabled by running `agents-cli deploy --iap` (Cloud Run only), which adds Google identity authentication without code changes. IAP is configured by the deploy flag, not by a generated Terraform variable.
 

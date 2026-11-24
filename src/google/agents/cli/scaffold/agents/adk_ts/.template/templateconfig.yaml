@@ -13,13 +13,12 @@
 # limitations under the License.
 
 description: "TypeScript agent"
-hidden: true
 example_question: "What's the weather in San Francisco?"
 settings:
   language: "typescript"
   requires_session: false
-  deployment_targets: ["cloud_run", "gke", "none"]
+  deployment_targets: ["cloud_run", "none"]
   extra_dependencies: []
-  tags: ["adk", "typescript"]
+  tags: ["adk", "typescript", "a2a"]
   frontend_type: "None"
   agent_directory: "app"

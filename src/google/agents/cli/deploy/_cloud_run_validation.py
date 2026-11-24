@@ -78,17 +78,17 @@ def validate_cloud_run_deployment(
     secrets: Mapping[str, str],
     image: str | None,
     project_number: str | None,
-) -> tuple[ValidationReport, bool | None]:
+) -> tuple[ValidationReport, bool | None, bool]:
     """Check what a Cloud Run deploy needs, and print the results.
 
     ``image`` is a prebuilt container, so the deploy skips the build. With no
     ``region``, gcloud picks one. Also returns whether the service exists, or
-    None when that is unknown.
+    None when that is unknown, and whether it already runs with Agent Identity.
     """
     click.echo(_VALIDATION_HEADER)
     token = _get_token()
     if token is None:
-        return _report_results([_no_credentials_result()]), None
+        return _report_results([_no_credentials_result()]), None, False
     # gcloud makes the deploy requests, so the checks run as its account. The
     # service lookup keeps the get_access_token() token, like the deploy's own
     # lookup in _is_cloud_run_create.
@@ -241,7 +241,7 @@ def validate_cloud_run_deployment(
             else r
             for r in results
         ]
-    return _report_results(results), service_exists
+    return _report_results(results), service_exists, already_agent_identity
 
 
 def _check_cloud_run_service(

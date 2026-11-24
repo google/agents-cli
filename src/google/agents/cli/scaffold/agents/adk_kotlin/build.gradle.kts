@@ -18,7 +18,7 @@ plugins {
     kotlin("jvm") version "2.3.20"
     // Generates `generatedTools()` from @Tool methods.
     id("com.google.devtools.ksp") version "2.3.9"
-    // Code style checks: `gradle ktlintCheck`, or `gradle ktlintFormat` to fix.
+    // Code style checks: `./gradlew ktlintCheck`, or `./gradlew ktlintFormat` to fix.
     id("org.jlleitschuh.gradle.ktlint") version "14.2.0"
     application
 }
@@ -28,11 +28,19 @@ repositories {
 }
 
 val adkVersion = "1.4.0"
+// The A2A Java SDK and Ktor versions the ADK Kotlin A2A module and web server are built on.
+val a2aVersion = "1.3.2.Final"
+val ktorVersion = "3.6.0"
 
 dependencies {
     implementation("com.google.adk:google-adk-kotlin-core:$adkVersion")
     implementation("com.google.adk:google-adk-kotlin-webserver:$adkVersion")
     ksp("com.google.adk:google-adk-kotlin-processor:$adkVersion")
+    // Serves A2A next to the ADK API; see A2aServer.kt.
+    implementation("org.a2aproject.sdk:a2a-java-sdk-server-common:$a2aVersion")
+    implementation("org.a2aproject.sdk:a2a-java-sdk-transport-jsonrpc:$a2aVersion")
+    // The ADK web server's engine, for the A2A routes.
+    implementation("io.ktor:ktor-server-core:$ktorVersion")
     testImplementation(kotlin("test"))
     // Gradle 9 no longer puts the JUnit Platform launcher on the test classpath.
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
@@ -42,15 +50,16 @@ tasks.test {
     useJUnitPlatform()
 }
 
-java {
-    sourceCompatibility = JavaVersion.VERSION_17
-    targetCompatibility = JavaVersion.VERSION_17
+// Target Java 17 from whichever JDK 17+ runs Gradle, rather than requiring an
+// installed JDK 17 toolchain.
+tasks.withType<JavaCompile>().configureEach {
+    options.release = 17
 }
 
 kotlin {
-    jvmToolchain(17)
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
+        freeCompilerArgs.add("-Xjdk-release=17")
     }
 }
 

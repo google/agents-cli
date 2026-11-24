@@ -2,6 +2,10 @@
 
 This directory contains evaluation datasets for testing agent behavior.
 
+`basic-dataset.json` tests the sample weather agent the project was created with.
+When you replace that agent, replace these cases with prompts your agent should
+handle; otherwise `agents-cli eval run` grades it on weather questions.
+
 ## Running Evaluations
 
 ### Default Dataset

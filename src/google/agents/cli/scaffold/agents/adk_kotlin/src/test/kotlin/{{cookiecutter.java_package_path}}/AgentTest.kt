@@ -16,7 +16,7 @@ package {{cookiecutter.java_package}}
 
 // These tests cover the sample tools in Agent.kt. When you replace or remove
 // the sample tools, replace these tests with tests for your own tools, or
-// `gradle build` stops compiling.
+// `./gradlew build` stops compiling.
 
 import kotlin.test.Test
 import kotlin.test.assertContains

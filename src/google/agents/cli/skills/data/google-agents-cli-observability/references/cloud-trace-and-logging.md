@@ -2,6 +2,9 @@
 
 > **Assumes `/google-agents-cli-scaffold` scaffolding.** Observability infrastructure is provisioned by Terraform in scaffolded projects.
 
+> **ADK Java, Kotlin and TypeScript.** These templates export no traces yet and get no `telemetry.tf`,
+> so this file doesn't apply to them.
+
 > **Feature gaps in ADK Go.** Traces and logs are exported over OTLP to `telemetry.googleapis.com`.
 > Three things below are **ADK Python only**: the BigQuery Agent Analytics plugin (`--bq-analytics`),
 > the GCS completion upload (`OTEL_INSTRUMENTATION_GENAI_COMPLETION_HOOK`) that backs prompt-response

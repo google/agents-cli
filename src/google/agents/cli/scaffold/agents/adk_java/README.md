@@ -8,6 +8,8 @@ A Java agent built with Google's Agent Development Kit (ADK).
 {{cookiecutter.project_name}}/
 ├── build.gradle.kts         # Gradle build file
 ├── settings.gradle.kts      # Gradle project settings
+├── gradlew, gradlew.bat     # Gradle wrapper: runs the pinned Gradle version
+├── gradle/wrapper/          # Gradle wrapper version and launcher
 ├── src/
 │   ├── main/
 │   │   ├── java/{{cookiecutter.java_package_path}}/
@@ -37,7 +39,7 @@ A Java agent built with Google's Agent Development Kit (ADK).
 ## Requirements
 
 - Java 17 or later
-- Gradle 9.5 or later
+- No Gradle install needed: `./gradlew` downloads the version the project pins
 - Google Cloud SDK (`gcloud`)
 - A Google Cloud project with Gemini platform enabled
 
@@ -71,19 +73,30 @@ A Java agent built with Google's Agent Development Kit (ADK).
 | `make clean` | Clean build artifacts |
 | `make lint` | Run code quality checks |
 | `make local-backend` | Start server on port 8080 |
-| `make deploy` | Deploy to Cloud Run |
+{%- if cookiecutter.deployment_target in ('cloud_run', 'gke') %}
+| `make deploy` | Deploy to {{ 'GKE' if cookiecutter.deployment_target == 'gke' else 'Cloud Run' }} |
+{%- endif %}
 | `make load-test` | Run load tests (requires running server) |
 | `make inspector` | Launch A2A Protocol Inspector |
+{%- if cookiecutter.deployment_target != 'none' %}
 | `make setup-dev-env` | Set up Terraform infrastructure |
+{%- endif %}
+{%- if cookiecutter.deployment_target == 'cloud_run' %}
 | `make publish-gemini` | Register agent with Gemini (alias of `make publish-gemini-enterprise`) |
+{%- endif %}
 
 ## Deployment
+{%- if cookiecutter.deployment_target in ('cloud_run', 'gke') %}
 
 ### Quick Deploy
 
 ```bash
 make deploy
 ```
+{%- else %}
+
+This project has no deployment target. Add one with `agents-cli scaffold enhance --deployment-target <target>`.
+{%- endif %}
 
 ### CI/CD Pipeline
 {%- if cookiecutter.cicd_runner == 'google_cloud_build' %}

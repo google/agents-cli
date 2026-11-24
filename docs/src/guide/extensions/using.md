@@ -90,7 +90,7 @@ When both scopes define the same command, **project wins**; `agents-cli info` sh
 
 ## Trust
 
-Extensions from `google/agents-cli`, `google/agents-cli-extensions` and `google/adk-recipes` are verified and trusted automatically, whether you add them with the shorthand form (`agents-cli extension add <name>`), an `org/repo` reference, or an https or ssh URL. So is the `google-agents-cli-extensions` package added with `pypi@`, when it comes from PyPI rather than an index set in `UV_DEFAULT_INDEX`, `UV_INDEX_URL` or `PIP_INDEX_URL`. Every other reference **prompts before install**, since its commands run arbitrary code when invoked. The `--yes` flag skips the prompt and trusts every extension, so use it only for automation and bootstrap.
+Extensions from `google/agents-cli`, `google/agents-cli-extensions` and `google/adk-recipes` are verified and trusted automatically at a release tag such as `v1.2.3`, whether you add them with the shorthand form (`agents-cli extension add <name>`), an `org/repo` reference, or an https or ssh URL. A shorthand name added without `--ref` pins a release tag, so it installs without a prompt. An `org/repo` or URL added without `--ref` follows the default branch, so it prompts, as does a verified extension at a branch such as `main`, a commit, or any other tag. The `google-agents-cli-extensions` package added with `pypi@` is trusted automatically at any version, when it comes from PyPI rather than an index set in `UV_DEFAULT_INDEX`, `UV_INDEX_URL` or `PIP_INDEX_URL`. Every other reference **prompts before install**, since its commands run arbitrary code when invoked. The `--yes` flag skips the prompt and trusts every extension, so use it only for automation and bootstrap.
 
 ---
 
@@ -106,7 +106,10 @@ Extensions pin exact content, like a lockfile: a git extension pins a commit SHA
     - Each copied skill folder gets a `.agents-cli-extension` marker file that holds the extension name and the skill name. A skill folder without this file, or copied under a new folder name, is yours. A folder whose file names another extension belongs to that extension. Neither is overwritten. Don't delete the marker: without it, `agents-cli` treats the folder as yours and no longer replaces or removes it.
     - If a skill folder is yours or another extension's, `extension add` stops with an error, changes no skill, and records nothing.
     - While it copies or deletes skills, `agents-cli` uses hidden folders named `.<name>.incoming` and `.<name>.outgoing` in the skills folder. Don't keep your own files under these names, because they can be overwritten.
-- **`agents-cli install`** re-materializes any missing or stale vendored copy from the pinned SHA, so CI and fresh checkouts get the exact reviewed code, and commands and overrides work immediately. It never advances a pin.
+- **`agents-cli install`** fetches any missing vendored copy from the pinned SHA, so CI and fresh checkouts get the exact reviewed code, and commands and overrides work immediately. It never advances a pin.
+    - It never replaces an existing copy of a git or `pypi@` extension. If the copy was made from a different SHA than `agents-cli-extensions.yaml` pins, or has no record of its version, `agents-cli install` warns and leaves the copy and its skills as they are. To use the pin, delete the copy and run `agents-cli install` again. To move the pin, run `extension update <name> --to <ref>`.
+    - It also leaves a symlink or a file at the copy's path as it is, for any extension. Delete it and run `agents-cli install` again.
+    - It does re-copy a `local@` extension whose source changed since the copy was taken.
     - It re-copies all of an extension's skills when any of them is missing or differs from the vendored copy. Caches such as `__pycache__` and `.DS_Store` don't count.
     - It deletes the skills of extensions that are no longer recorded, for example after a teammate removed one. It deletes none in these cases:
         - An extension list for that skills folder can't be fully read. Fix that list first.

@@ -46,7 +46,7 @@ import org.junit.jupiter.api.Test;
  *   <li>_ID_TOKEN: Bearer token for authentication (optional)</li>
  * </ul>
  *
- * <p>Run with: gradle loadTest -Pstaging.url=http://localhost:8080
+ * <p>Run with: ./gradlew loadTest -Pstaging.url=http://localhost:8080
  */
 @Tag("load")
 class LoadTest {
@@ -151,7 +151,7 @@ class LoadTest {
                     "kind": "message",
                     "messageId": "%s",
                     "role": "user",
-                    "parts": [{"kind": "text", "text": "Hello! Weather in New York?"}]
+                    "parts": [{"kind": "text", "text": "Hello! What can you help me with?"}]
                 }
             }
         }

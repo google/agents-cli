@@ -17,12 +17,14 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 import click
 
 from google.agents.cli._fs import delete_path
 from google.agents.cli._trust import require_confirmation
+from google.agents.cli.extension._loader import is_inline_extension
 from google.agents.cli.extension._manifest import (
     EXTENSIONS_FILE,
     ExtensionListError,
@@ -87,8 +89,12 @@ def cmd_remove(name: str, global_: bool, auto_approve: bool) -> None:
             ) from e
         if scope == "user" and unreadable_project_list is not None:
             raise _project_list_unreadable_error(name, unreadable_project_list)
-        skills_removed = _remove_skills_or_fail(scope, root, safe_name, global_=global_)
         extension_dir = vendored_extensions_dir(root) / safe_name
+        if not os.path.lexists(extension_dir) and is_inline_extension(root, safe_name):
+            raise click.ClickException(
+                f"Cannot remove extension {name!r}: it comes from the project template."
+            )
+        skills_removed = _remove_skills_or_fail(scope, root, safe_name, global_=global_)
         try:
             delete_path(extension_dir)
         except OSError as e:

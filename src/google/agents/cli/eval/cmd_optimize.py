@@ -19,6 +19,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -46,6 +47,74 @@ class OptimizationConfigData:
     print_detailed_results: bool
 
 
+def _read_json(path: str, description: str, hint: str = "") -> dict:
+    """Read a JSON file that must hold an object.
+
+    A missing file, bad JSON or a non-object top level raises a ClickException.
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            content = json.load(f)
+    except OSError as e:
+        raise click.ClickException(
+            f"Couldn't read the {description} '{path}': {e.strerror or e}.{hint}"
+        ) from e
+    except ValueError as e:  # JSONDecodeError, or a file that isn't UTF-8
+        raise click.ClickException(
+            f"The {description} '{path}' isn't valid JSON: {e}."
+        ) from e
+    if not isinstance(content, dict):
+        raise click.ClickException(
+            f"The {description} '{path}' must be a JSON object, "
+            f"got {type(content).__name__}."
+        )
+    return content
+
+
+def _load_dataset_entry(value: Any, field_name: str) -> dict | None:
+    """Load a config dataset entry given as an inline dict or a JSON file path.
+
+    File paths are relative to the project root.
+    """
+    if value is None or isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        return _read_json(
+            value,
+            f"'{field_name}' file",
+            hint="\n  Paths in the optimization config are relative to the project root.",
+        )
+    raise click.ClickException(
+        f"'{field_name}' in the optimization config must be a file path or a JSON "
+        f"object, got {type(value).__name__}."
+    )
+
+
+_TYPE_NAMES: dict[type, str] = {
+    dict: "a JSON object",
+    str: "a string",
+    bool: "true or false",
+}
+
+
+def _config_value(
+    config: dict, key: str, expected: type, default: Any, label: str = ""
+) -> Any:
+    """Return config[key], or `default` if it's missing or null.
+
+    Any other value of the wrong type raises a ClickException.
+    """
+    value = config.get(key)
+    if value is None:
+        return default
+    if not isinstance(value, expected):
+        raise click.ClickException(
+            f"'{label or key}' in the optimization config must be "
+            f"{_TYPE_NAMES[expected]}, got {type(value).__name__}."
+        )
+    return value
+
+
 def _load_configs_and_datasets(
     config_path: str | None, dataset_file: str | None, target_metric: str | None
 ) -> OptimizationConfigData:
@@ -62,27 +131,28 @@ def _load_configs_and_datasets(
 
     eval_config = {}
     if config_path:
-        with open(config_path, encoding="utf-8") as f:
-            combined_config = json.load(f)
-            eval_config = combined_config.get("eval_config", {})
-            optimizer_config = combined_config.get("optimizer_config", {})
-            train_dataset_path = combined_config.get("train_dataset")
-            validation_dataset_path = combined_config.get("validation_dataset")
-            log_level = combined_config.get("log_level", "WARNING")
-            print_detailed_results = combined_config.get("print_detailed_results", False)
+        combined_config = _read_json(config_path, "optimization config")
+        eval_config = _config_value(combined_config, "eval_config", dict, {})
+        _config_value(eval_config, "criteria", dict, None, "eval_config.criteria")
+        optimizer_config = _config_value(combined_config, "optimizer_config", dict, {})
+        log_level = _config_value(combined_config, "log_level", str, "WARNING")
+        print_detailed_results = _config_value(
+            combined_config, "print_detailed_results", bool, False
+        )
 
-            if train_dataset_path is not None:
-                with open(train_dataset_path, encoding="utf-8") as f_in:
-                    train_dataset = json.load(f_in)
-
-            if validation_dataset_path is not None:
-                with open(validation_dataset_path, encoding="utf-8") as f_in:
-                    validation_dataset = json.load(f_in)
+        # --dataset overrides the config datasets, so don't load them.
+        if not dataset_file:
+            train_dataset = _load_dataset_entry(
+                combined_config.get("train_dataset"), "train_dataset"
+            )
+            validation_dataset = _load_dataset_entry(
+                combined_config.get("validation_dataset"), "validation_dataset"
+            )
 
     # Target metric resolution
     # 1. CLI --target-metric flag overrides everything
     if target_metric:
-        existing_config = eval_config.get("criteria", {}).get(target_metric)
+        existing_config = (eval_config.get("criteria") or {}).get(target_metric)
         eval_config["criteria"] = {
             target_metric: existing_config if existing_config is not None else 1.0
         }
@@ -96,8 +166,7 @@ def _load_configs_and_datasets(
     # Dataset resolution
     # 1. CLI --dataset overrides everything
     if dataset_file:
-        with open(dataset_file, encoding="utf-8") as f:
-            train_dataset = json.load(f)
+        train_dataset = _read_json(dataset_file, "dataset")
         validation_dataset = None
 
     # 2. Error if train_dataset is missing
@@ -194,6 +263,7 @@ def _execute_optimization_run(
     "--dataset",
     "dataset_file",
     required=False,
+    type=click.Path(exists=True, dir_okay=False, resolve_path=True),
     help="Path to an EvaluationDataset JSON file. Overrides datasets in the config file.",
 )
 @click.option(
@@ -206,6 +276,7 @@ def _execute_optimization_run(
     "--config",
     "config_path",
     default=None,
+    type=click.Path(exists=True, dir_okay=False, resolve_path=True),
     help="Path to a combined JSON config file for advanced settings.",
 )
 def cmd_optimize(dataset_file, target_metric, config_path):
@@ -228,6 +299,7 @@ def cmd_optimize(dataset_file, target_metric, config_path):
         - optimizer_config (ADK GEPARootAgentPromptOptimizerConfig)
         - log_level (string, e.g., 'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'). Default is 'WARNING'.
         - print_detailed_results (boolean). Set to true to enable printing detailed results. Default is false.
+      Dataset file paths inside the config are relative to the project root.
     - Default Paths: By default, it looks for a JSON config file in
       tests/eval/optimization_config.json.
     """

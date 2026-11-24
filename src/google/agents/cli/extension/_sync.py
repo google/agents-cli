@@ -28,7 +28,11 @@ from google.agents.cli._fs import is_real_dir
 from google.agents.cli.extension._deprecation import (
     warn_if_installed_from_agents_cli_repo,
 )
-from google.agents.cli.extension._loader import incompatible_spec, load_extension_spec
+from google.agents.cli.extension._loader import (
+    incompatible_spec,
+    inline_extension_name,
+    load_extension_spec,
+)
 from google.agents.cli.extension._manifest import (
     EXTENSIONS_FILE,
     ExtensionEntry,
@@ -40,11 +44,11 @@ from google.agents.cli.extension._resolver import (
     STAMP_FILE,
     CopyChangedError,
     ResolverError,
+    discard_copy,
     expected_stamp,
     fingerprint,
     materialize,
     read_stamp,
-    unstamp,
     validate_extension_name,
 )
 from google.agents.cli.extension._skills import (
@@ -128,10 +132,17 @@ def _sync_scope(
 ) -> list[str]:
     """Restore one scope's copies, then its skills; returns the re-materialized names."""
     extension_list = read_extension_list(scope_root / EXTENSIONS_FILE, warn=True)
-    for entry in extension_list.entries:
-        warn_if_installed_from_agents_cli_repo(entry.name, entry.source, scope)
     vendored_dir = vendored_extensions_dir(scope_root)
-    states = _restore_copies(extension_list.entries, vendored_dir)
+    inline_name = inline_extension_name(scope_root)
+    for entry in extension_list.entries:
+        try:
+            validate_extension_name(entry.name)
+        except ResolverError:
+            continue
+        if entry.name == inline_name and not os.path.lexists(vendored_dir / entry.name):
+            continue
+        warn_if_installed_from_agents_cli_repo(entry.name, entry.source)
+    states = _restore_copies(extension_list.entries, vendored_dir, inline_name)
     vendored_names = [name for name, state in states.items() if state != "missing"]
     skills_dir = skills_dir_for_scope(scope, scope_root)
     other_list = other_scope_list(scope, scope_root, warn=warn_other)
@@ -187,7 +198,7 @@ def _sync_scope(
 
 
 def _restore_copies(
-    entries: list[ExtensionEntry], vendored_dir: Path
+    entries: list[ExtensionEntry], vendored_dir: Path, inline_name: str | None
 ) -> dict[str, _CopyState]:
     """Restore each entry's vendored copy; returns the state of each copy by name."""
     states: dict[str, _CopyState] = {}
@@ -199,52 +210,57 @@ def _restore_copies(
         except ResolverError as e:
             logging.warning("Skipping extension %r: %s", entry.name, e)
             continue
-        states[entry.name] = _restore_copy(entry, vendored_dir / entry.name)
+        extension_dir = vendored_dir / entry.name
+        if entry.name == inline_name and not os.path.lexists(extension_dir):
+            continue
+        states[entry.name] = _restore_copy(entry, extension_dir)
     return states
 
 
 def _restore_copy(entry: ExtensionEntry, extension_dir: Path) -> _CopyState:
-    """Re-materialize the vendored copy when it is missing or stale.
+    """Materialize the vendored copy when it is missing or empty, or for `local@`, stale.
 
     Returns "restored" when it restored the copy, "usable" when the copy on
     disk matches its source or could not be restored but is used as it is, and
-    "missing" when there is no copy to use or the copy may be incomplete.
+    "missing" when there is no copy to use, the copy may be incomplete, or
+    install left the copy as it is.
     """
     try:
         ref = parse_ref(entry.source, ref_override=entry.sha)
-        # Re-materialize when the copy is missing OR no longer matches
-        # its source: a bumped pin, a partial copy, or — for a local
-        # path, whose source is a working tree rather than a commit —
-        # any edit made to it since the copy was taken.
-        if is_real_dir(extension_dir) and read_stamp(extension_dir) == expected_stamp(
-            ref, entry.sha
-        ):
-            return "usable"
+        if os.path.lexists(extension_dir) and not is_real_dir(extension_dir):
+            _warn_not_a_folder(entry, extension_dir)
+            return "missing"
+        # An empty folder counts as missing.
+        if is_real_dir(extension_dir) and os.listdir(extension_dir):
+            stamp = read_stamp(extension_dir)
+            if stamp == expected_stamp(ref, entry.sha):
+                return "usable"
+            # A local source is a working tree, so a copy that differs is only
+            # out of date. A pinned copy is reviewed code: replacing it would
+            # trust a pin that changed without it.
+            if ref.kind != "local":
+                _warn_copy_differs_from_pin(entry, extension_dir, stamp)
+                return "missing"
         # name=entry.name pins the vendored dir to the stable id (see
         # materialize) so a restore survives an upstream rename.
         materialize(ref, entry.sha, extension_dir.parent, name=entry.name)
     except CopyChangedError as e:
-        # A failed swap can leave the copy half deleted.
-        unstamp(extension_dir)
-        what_is_left = (
-            "may be incomplete" if os.path.lexists(extension_dir) else "is missing"
-        )
+        # A failed swap can leave the copy half deleted, and the next run only
+        # fetches a missing copy.
+        discard_copy(extension_dir)
         logging.warning(
-            "Could not restore extension %r from %s: %s. The copy %s, so its skills "
-            "were left as they are. Check the folder's permissions and free disk "
-            "space, then run `agents-cli install` again.",
+            "Could not restore extension %r from %s: %s. %s",
             entry.name,
             entry.source,
             str(e).rstrip("."),
-            what_is_left,
+            _failed_copy_advice(entry, extension_dir),
         )
         return "missing"
     except (ResolverError, RefParseError, OSError) as e:
         # A clone can hold the committed copy without the author's local
-        # source, so its skills install from that copy. A git copy that could
-        # not be restored is from another pin, so the installed skills stay.
-        # Checked by source, as `ref` is unset when parse_ref failed. A copy
-        # without its stamp may be half deleted, so it is not used.
+        # source, so its skills install from that copy. Checked by source, as
+        # `ref` is unset when parse_ref failed. A copy without its stamp may be
+        # half deleted, so it is not used.
         local_copy = entry.source.startswith("local@") and is_real_dir(extension_dir)
         if local_copy and not os.path.isfile(extension_dir / STAMP_FILE):
             logging.warning(
@@ -267,6 +283,56 @@ def _restore_copy(entry: ExtensionEntry, extension_dir: Path) -> _CopyState:
         return "usable" if local_copy else "missing"
     _warn_if_incompatible(entry.name, extension_dir)
     return "restored"
+
+
+def _warn_not_a_folder(entry: ExtensionEntry, extension_dir: Path) -> None:
+    what = "a symlink" if os.path.islink(extension_dir) else "not a folder"
+    logging.warning(
+        "Left extension %r as it is: %s is %s, so `agents-cli install` did not "
+        "restore it or its skills. Delete it, then run `agents-cli install` again.",
+        entry.name,
+        extension_dir,
+        what,
+    )
+
+
+def _warn_copy_differs_from_pin(
+    entry: ExtensionEntry, extension_dir: Path, stamp: str | None
+) -> None:
+    made_from = f"was made from {stamp}" if stamp else "has no record of its version"
+    logging.warning(
+        "Left extension %r as it is: its copy in %s %s, but %s pins %s. `agents-cli "
+        "install` never replaces a pinned copy, so any commands in that copy still "
+        "load and its skills were left as they are. To use the pin, "
+        "delete that folder and run `agents-cli install` again. To move the pin, "
+        "run `agents-cli extension update %s --to <ref>`.",
+        entry.name,
+        extension_dir,
+        made_from,
+        EXTENSIONS_FILE,
+        entry.sha,
+        entry.name,
+    )
+
+
+def _failed_copy_advice(entry: ExtensionEntry, extension_dir: Path) -> str:
+    if not os.path.lexists(extension_dir):
+        return (
+            "The copy is missing, so its skills were left as they are. Check the "
+            "folder's permissions and free disk space, then run `agents-cli "
+            "install` again."
+        )
+    if entry.source.startswith("local@"):
+        return (
+            "The copy may be incomplete, so its skills were left as they are. Check "
+            "the folder's permissions and free disk space, then run `agents-cli "
+            "install` again."
+        )
+    # Install keeps a pinned copy without a matching stamp, so only deleting it helps.
+    return (
+        f"The copy may be incomplete, so its skills were left as they are. Delete "
+        f"{extension_dir}, then run `agents-cli install` again."
+    )
 
 
 def _warn_if_incompatible(extension_name: str, extension_dir: Path) -> None:

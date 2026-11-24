@@ -21,6 +21,7 @@ import base64
 import json
 import logging
 import mimetypes
+import time
 import uuid
 from pathlib import Path
 from typing import NamedTuple
@@ -91,11 +92,18 @@ from google.agents.cli.run._multimodal import (
     build_adk_sse_parts,
     build_agent_runtime_message,
 )
+from google.agents.cli.scaffold.utils.language import (
+    a2a_base_path,
+    get_language_config,
+)
 
 _ARTIFACTS_DIR = Path(".google-agents-cli") / "artifacts"
 
 # Fixed user id so a --session-id from one run resolves on the next.
 _CLI_USER_ID = "cli-user"
+
+# How long a local run waits for a newly started server's A2A card.
+_LOCAL_A2A_CARD_TIMEOUT = 15
 
 
 class _DispatchTarget(NamedTuple):
@@ -163,6 +171,15 @@ def _resolve_dispatch_target(
     chdir_project_root()
     cfg = read_project_config()
     require_agent_directory(cfg)
+    resolved_app_name = app_name or cfg.app_name
+    a2a_path = a2a_base_path(cfg.language, resolved_app_name)
+    if mode == MODE_A2A and a2a_path is None:
+        # Fail before building and starting a server that serves no A2A card.
+        language = get_language_config(cfg.language)["display_name"]
+        raise click.UsageError(
+            f"--mode a2a isn't supported for {language} agents, which serve no A2A "
+            "endpoints. Use --mode adk instead."
+        )
     agent_dir = Path.cwd() / cfg.agent_directory
     server = ensure_server(
         Path.cwd(),
@@ -173,15 +190,37 @@ def _resolve_dispatch_target(
     )
     if server.started:
         _print_local_server_banner(server.port, server.pid, keep_running=start_server)
+    if mode == MODE_A2A and server.started:
+        _wait_for_local_a2a_card(f"http://127.0.0.1:{server.port}{a2a_path}")
     base_path = api_base_path(cfg.language)
     return _DispatchTarget(
         service_url=f"http://127.0.0.1:{server.port}{base_path}",
         headers={},
         mode=mode or MODE_ADK,
-        app_name=app_name or cfg.app_name,
+        app_name=resolved_app_name,
         started_server=server.started,
         server_pid=server.pid,
     )
+
+
+def _wait_for_local_a2a_card(a2a_base: str) -> None:
+    """Wait until a newly started local server serves its A2A card.
+
+    The server counts as ready once it answers HTTP, but some (adk-devtools)
+    mount their A2A routes only after that. On timeout this returns, and the
+    card probe that follows reports the failure.
+    """
+    card_url = f"{a2a_base}{AGENT_CARD_WELL_KNOWN_PATH}"
+    deadline = time.monotonic() + _LOCAL_A2A_CARD_TIMEOUT
+    while time.monotonic() < deadline:
+        try:
+            status = httpx.get(card_url, timeout=5).status_code
+            if status == 200:
+                return
+            logging.debug("Agent card at %s not ready yet: HTTP %s", card_url, status)
+        except httpx.TransportError:
+            pass  # Not accepting connections yet; retry until the deadline.
+        time.sleep(0.5)
 
 
 def _print_local_server_banner(port: int, pid: int | None, *, keep_running: bool) -> None:

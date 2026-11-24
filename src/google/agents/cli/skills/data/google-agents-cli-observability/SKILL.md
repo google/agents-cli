@@ -13,7 +13,7 @@ description: >
 metadata:
   author: Google
   license: Apache-2.0
-  version: 1.15.0
+  version: 1.16.0
   requires:
     bins:
       - agents-cli
@@ -22,7 +22,7 @@ metadata:
 
 # Observability Guide
 
-> **Cloud Trace** works out of the box — no infrastructure needed. **Prompt-response logging** and **BigQuery Agent Analytics** require Terraform-provisioned infrastructure (service account, GCS bucket, BigQuery dataset). Run `agents-cli infra single-project --apply --project PROJECT_ID` to provision these resources. Go projects get the BigQuery telemetry stack too; the GCS completion upload behind prompt-response logging and the BigQuery Agent Analytics plugin are Python only. See `references/cloud-trace-and-logging.md` for details, env vars, and verification commands. If your project isn't scaffolded yet, see `/google-agents-cli-scaffold` first.
+> **Cloud Trace** needs no infrastructure. ADK Java, Kotlin and TypeScript projects export no traces yet. **Prompt-response logging** and **BigQuery Agent Analytics** require Terraform-provisioned infrastructure (service account, GCS bucket, BigQuery dataset). Run `agents-cli infra single-project --apply --project PROJECT_ID` to provision these resources. Go projects get the BigQuery telemetry stack too; the GCS completion upload behind prompt-response logging and the BigQuery Agent Analytics plugin are Python only. See `references/cloud-trace-and-logging.md` for details, env vars, and verification commands. If your project isn't scaffolded yet, see `/google-agents-cli-scaffold` first.
 
 ### Deployment order
 
@@ -48,22 +48,20 @@ Either delete the deployment and start over, or keep the SDK-deployed instance �
 
 ## Observability Tiers
 
-Choose the right level of observability based on your needs:
-
 | Tier | What It Does | Scope | Default State | Best For |
 |------|-------------|-------|---------------|----------|
-| **Cloud Trace** | Distributed tracing — execution flow, latency, errors via OpenTelemetry spans | All templates, all environments | Always enabled | Debugging latency, understanding agent execution flow |
+| **Cloud Trace** | Distributed tracing — execution flow, latency, errors via OpenTelemetry spans | All environments; not ADK Java, Kotlin or TypeScript | Always enabled | Debugging latency, understanding agent execution flow |
 | **Prompt-Response Logging** | GenAI interactions exported to GCS, BigQuery, and Cloud Logging | Scaffolded ADK Python and Claude projects | Disabled locally, enabled when deployed | Auditing LLM interactions, compliance |
 | **BigQuery Agent Analytics** | Structured agent events (LLM calls, tool use, outcomes) to BigQuery | ADK Python agents with the plugin enabled; Claude template agents | Opt-in (`--bq-analytics` at scaffold time) | Conversational analytics, custom dashboards, LLM-as-judge evals |
 | **Third-Party Integrations** | External observability platforms (AgentOps, Phoenix, MLflow, etc.) | Any OpenTelemetry-instrumented agent | Opt-in, per-provider setup | Team collaboration, specialized visualization, prompt management |
 
-**Ask the user** which tier(s) they need — they can be combined. Cloud Trace is always on; the others are additive.
+**Ask the user** which tier(s) they need — they can be combined.
 
 ---
 
 ## Cloud Trace
 
-Scaffolded agents use OpenTelemetry to emit distributed traces. Every agent invocation produces spans that track the full execution flow.
+Scaffolded agents (except ADK Java, Kotlin and TypeScript, whose templates wire no exporter yet) use OpenTelemetry to emit distributed traces. Every agent invocation produces spans that track the full execution flow.
 
 ### Span Hierarchy
 
@@ -82,7 +80,7 @@ invoke_workflow (top-level run)
 | Deployment | Setup |
 |-----------|-------|
 | **Agent Runtime** | Automatic — exporters wired at startup, gated on `GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY` (set by deploy); exports to Cloud Trace/Logging + the Agent Runtime page in the Google Cloud console |
-| **Cloud Run / GKE (scaffolded)** | Automatic — exporters wired at startup, exports to Cloud Trace/Logging |
+| **Cloud Run / GKE (scaffolded)** | Automatic, except ADK Java, Kotlin, TypeScript — exporters wired at startup, exports to Cloud Trace/Logging |
 | **Cloud Run / GKE (manual)** | Configure OpenTelemetry exporter in your app |
 | **Local dev** | Works with `agents-cli playground`; traces visible in Cloud Console |
 
@@ -147,7 +145,7 @@ Many third-party observability platforms can ingest agent telemetry (via OpenTel
 
 | Issue | Solution |
 |-------|----------|
-| No traces in Cloud Trace | Verify telemetry setup runs at startup and the SA has the `cloudtrace.agent` role. **ADK Python:** `fast_api_app.py` uses `get_fast_api_app(otel_to_cloud=True)`; **ADK Go:** `observability.go` build the exporter manually. Agent Runtime additionally gates this on `GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY`. |
+| No traces in Cloud Trace | **ADK Java, Kotlin, TypeScript:** expected, no exporter is wired. Otherwise verify telemetry setup runs at startup and the SA has the `cloudtrace.agent` role. **ADK Python:** `fast_api_app.py` uses `get_fast_api_app(otel_to_cloud=True)`; **ADK Go:** `observability.go` build the exporter manually. Agent Runtime additionally gates this on `GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY`. |
 | Prompt-response data not appearing | Check `LOGS_BUCKET_NAME` is set; verify SA has `storage.objectCreator` on the bucket; check app logs for telemetry setup warnings |
 | Content in traces/events (unwanted) | **ADK Python:** `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=NO_CONTENT` keeps content out of spans/events. **ADK Go:** any value other than `1`/`true` does, so unset it or set `false`. NOTE: GCS/BigQuery completions still capture full content — to stop that, remove `LOGS_BUCKET_NAME`/`OTEL_INSTRUMENTATION_GENAI_COMPLETION_HOOK` (drop the upload block in `service.tf`) |
 | BigQuery Analytics not logging | **ADK Python:** verify the plugin is configured in `app/agent.py`; **Claude:** check the startup log for a BigQuery Agent Analytics warning. Both: check `BQ_ANALYTICS_DATASET_ID` env var is set |

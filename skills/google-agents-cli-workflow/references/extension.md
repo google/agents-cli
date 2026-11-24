@@ -113,7 +113,8 @@ An extension changes commands. To run a different agent framework, scaffold from
 
 ### Trust
 
-- Extensions from `google/agents-cli`, `google/agents-cli-extensions` and `google/adk-recipes` are trusted automatically, whether added via the **shorthand** form (`extension add <name>`), an `org/repo` reference, or an https or ssh URL. So is the `pypi@google-agents-cli-extensions` package when it comes from PyPI index.
+- Extensions from `google/agents-cli`, `google/agents-cli-extensions` and `google/adk-recipes` are trusted automatically at a release tag (`vX.Y.Z`). The **shorthand** form (`extension add <name>`) pins one by default; `--ref main`, another branch, a commit, or an `org/repo`/URL without `--ref` prompts.
+- The `pypi@google-agents-cli-extensions` package is trusted automatically at any version when it comes from the PyPI index.
 - Every other reference — any other repo or URL, any other `pypi@` package, and a local path — **prompts before install** (its commands run arbitrary code when invoked). `--yes` skips the prompt (blanket trust — use only for automation/bootstrap).
 
 ### Pinning and updates
@@ -121,7 +122,8 @@ An extension changes commands. To run a different agent framework, scaffold from
 - `extension add` resolves the reference to an exact pin and records it under `extensions:` in `agents-cli-extensions.yaml` (its own file at both scopes, so the writer can never touch your project manifest), vendoring a working copy under `extensions/`.
   - A git entry records `source` / `ref` / `sha`; `sha` is the commit.
   - A `pypi@` entry records `source` / `version` / `sha`; `source` holds the `==<version>` pin, `version` is that release, and `sha` is the wheel's sha256.
-- `agents-cli install` re-materializes any missing/stale vendored copy from the pinned SHA (verified by a stamp file) — CI and fresh checkouts get the exact reviewed code, command overrides and skills. It never advances a pin.
+- `agents-cli install` fetches any missing vendored copy from the pinned SHA — CI and fresh checkouts get the exact reviewed code, command overrides and skills. It never advances a pin.
+  - It never replaces an existing git or `pypi@` copy. If the copy's stamp file doesn't match the pin, it warns and leaves the copy and its skills alone: delete the copy and rerun `install` to use the pin, or run `extension update <name> --to <ref>` to move it. A `local@` copy is re-copied when its source changed. A symlink or file at a copy's path is always left alone.
   - It also deletes the skills of extensions that are no longer recorded.
   - It deletes none when an extension list for that skills folder cannot be fully read, or when the project's or the user's `.agents/skills` folder is reached through a link.
   - A project whose `.agents` folder links to `~/.agents` is protected only while `install` runs in that project. `install` in another project can delete its skills from `~/.agents/skills`, and `install` in that project brings them back.
